@@ -126,7 +126,9 @@ Examples:
 EOF
 }
 
+ANY_FLAG=0
 while [ $# -gt 0 ]; do
+    ANY_FLAG=1
     case "$1" in
         --check)                CHECK_ONLY=1 ;;
         --deps-only)            DO_BUILD=0; DO_INSTALL=0 ;;
@@ -560,14 +562,311 @@ install_zen() {
     info "  • run ${C_BOLD}zen${C_RESET} inside an existing Wayland session (nested, for development)"
 }
 
+# ------------------------------------------------------------------- tui ----
+#
+# Arrow-key menus, the way archinstall works. Deliberately hand-rolled ANSI
+# rather than dialog/whiptail: this script's whole job is running on a machine
+# where nothing is installed yet, so it cannot depend on a TUI toolkit being
+# there. Everything below is bash builtins and escape codes.
+#
+# Flags still work and still win. The wizard only appears when the script is run
+# with no arguments on a real terminal, so scripting and CI are unaffected.
+
+UI_TTY=0
+if [ -t 0 ] && [ -t 1 ]; then UI_TTY=1; fi
+
+ui_cursor_hide() { [ "$UI_TTY" = 1 ] && printf '\033[?25l' || true; }
+ui_cursor_show() { [ "$UI_TTY" = 1 ] && printf '\033[?25h' || true; }
+
+# Always give the terminal its cursor back, however we leave.
+trap 'ui_cursor_show' EXIT INT TERM
+
+# Reads one keypress and echoes a name for it.
+ui_key() {
+    local k rest
+    IFS= read -rsn1 k 2>/dev/null || { echo quit; return; }
+    case "$k" in
+        '')  echo enter ;;
+        ' ') echo space ;;
+        q|Q) echo quit ;;
+        $'\033')
+            if IFS= read -rsn2 -t 0.02 rest 2>/dev/null; then
+                case "$rest" in
+                    '[A') echo up ;;
+                    '[B') echo down ;;
+                    *)    echo other ;;
+                esac
+            else
+                echo quit
+            fi ;;
+        *) echo other ;;
+    esac
+}
+
+# ui_menu "Title" "option" ...  -> UI_CHOICE = selected index, or returns 1
+UI_CHOICE=0
+ui_menu() {
+    local title="$1"; shift
+    local n=$# sel=0 drawn=0 i opt
+    local -a opts=("$@")
+
+    ui_cursor_hide
+    while :; do
+        [ "$drawn" = 1 ] && printf '\033[%dA' "$((n + 3))"
+        drawn=1
+
+        printf '  %s%s%s\033[K\n\n' "$C_BOLD" "$title" "$C_RESET"
+        i=0
+        for opt in "${opts[@]}"; do
+            if [ "$i" = "$sel" ]; then
+                printf '   %s>%s %s%s%s\033[K\n' "$C_BLUE" "$C_RESET" "$C_BOLD" "$opt" "$C_RESET"
+            else
+                printf '     %s%s%s\033[K\n' "$C_DIM" "$opt" "$C_RESET"
+            fi
+            i=$((i + 1))
+        done
+        printf '\n   %sup/down to move, enter to select, q to quit%s\033[K\n' \
+               "$C_DIM" "$C_RESET"
+        printf '\033[%dA' 1
+
+        case "$(ui_key)" in
+            up)    sel=$(( (sel - 1 + n) % n )) ;;
+            down)  sel=$(( (sel + 1) % n )) ;;
+            enter) printf '\n'; ui_cursor_show; UI_CHOICE=$sel; return 0 ;;
+            quit)  printf '\n'; ui_cursor_show; return 1 ;;
+        esac
+    done
+}
+
+# ui_multi "Title" "label:on" ... -> UI_PICKED = space separated indices chosen
+UI_PICKED=""
+ui_multi() {
+    local title="$1"; shift
+    local n=$# sel=0 drawn=0 i entry label mark
+    local -a opts=("$@") state=()
+
+    for entry in "${opts[@]}"; do
+        case "$entry" in
+            *:on)  state+=(1) ;;
+            *)     state+=(0) ;;
+        esac
+    done
+
+    ui_cursor_hide
+    while :; do
+        [ "$drawn" = 1 ] && printf '\033[%dA' "$((n + 3))"
+        drawn=1
+
+        printf '  %s%s%s\033[K\n\n' "$C_BOLD" "$title" "$C_RESET"
+        i=0
+        for entry in "${opts[@]}"; do
+            label="${entry%:*}"
+            if [ "${state[$i]}" = 1 ]; then mark="[x]"; else mark="[ ]"; fi
+            if [ "$i" = "$sel" ]; then
+                printf '   %s>%s %s %s%s%s\033[K\n' \
+                       "$C_BLUE" "$C_RESET" "$mark" "$C_BOLD" "$label" "$C_RESET"
+            else
+                printf '     %s %s%s%s\033[K\n' "$mark" "$C_DIM" "$label" "$C_RESET"
+            fi
+            i=$((i + 1))
+        done
+        printf '\n   %sspace to toggle, enter to confirm, q to cancel%s\033[K\n' \
+               "$C_DIM" "$C_RESET"
+        printf '\033[%dA' 1
+
+        case "$(ui_key)" in
+            up)    sel=$(( (sel - 1 + n) % n )) ;;
+            down)  sel=$(( (sel + 1) % n )) ;;
+            space) if [ "${state[$sel]}" = 1 ]; then state[$sel]=0; else state[$sel]=1; fi ;;
+            enter)
+                printf '\n'; ui_cursor_show
+                UI_PICKED=""
+                i=0
+                for entry in "${opts[@]}"; do
+                    [ "${state[$i]}" = 1 ] && UI_PICKED="$UI_PICKED $i"
+                    i=$((i + 1))
+                done
+                UI_PICKED="${UI_PICKED# }"
+                return 0 ;;
+            quit)  printf '\n'; ui_cursor_show; return 1 ;;
+        esac
+    done
+}
+
+# --------------------------------------------------------- extra install ----
+#
+# The steps a person otherwise has to find out about by reading a guide on their
+# phone. Every one of these was manual friction the first time around.
+
+DESKTOP_APPS="alacritty fuzzel"
+EXTRA_APPS="firefox swaybg mako swaylock"
+GREETER_PKGS="greetd cage greetd-regreet"
+
+pacman_install() {
+    [ "$PKG_MGR" = pacman ] || {
+        warn "only pacman is supported for this step; install these yourself: $*"
+        return 1
+    }
+    need_root
+    $SUDO pacman -S --needed --noconfirm "$@"
+}
+
+install_desktop_apps() {
+    step "Installing the apps ZEN's default keybinds expect"
+    dim "Mod+T opens a terminal, Mod+Space opens the launcher"
+    pacman_install $DESKTOP_APPS && ok "terminal and launcher installed"
+}
+
+install_extra_apps() {
+    step "Installing optional extras"
+    pacman_install $EXTRA_APPS && ok "extras installed"
+}
+
+write_user_config() {
+    step "Writing your config"
+    local dir="${XDG_CONFIG_HOME:-$HOME/.config}/zen"
+    local dst="$dir/config.kdl"
+
+    if [ -f "$dst" ]; then
+        ok "config already exists at $dst, left alone"
+        return 0
+    fi
+    mkdir -p "$dir"
+    cp resources/default-config.kdl "$dst"
+    ok "wrote $dst"
+    dim "it is heavily commented, and reloads live while ZEN is running"
+}
+
+install_greeter() {
+    step "Installing the login screen"
+    dim "greetd runs the session, ReGreet draws it, cage hosts it"
+
+    pacman_install $GREETER_PKGS || return 1
+
+    need_root
+    if [ -f /etc/greetd/config.toml ] && ! grep -q regreet /etc/greetd/config.toml 2>/dev/null; then
+        $SUDO cp /etc/greetd/config.toml /etc/greetd/config.toml.bak
+        dim "existing config saved as /etc/greetd/config.toml.bak"
+    fi
+
+    $SUDO mkdir -p /etc/greetd
+    printf '%s\n' \
+        '[terminal]' \
+        'vt = 1' \
+        '' \
+        '[default_session]' \
+        'command = "cage -s -- regreet"' \
+        'user = "greeter"' \
+        | $SUDO tee /etc/greetd/config.toml >/dev/null
+
+    if [ ! -f /etc/greetd/regreet.toml ]; then
+        printf '%s\n' \
+            '[background]' \
+            'path = "/usr/share/pixmaps/zen.png"' \
+            'fit = "Cover"' \
+            '' \
+            '[GTK]' \
+            'application_prefer_dark_theme = true' \
+            'cursor_theme_name = "Adwaita"' \
+            'font_name = "Cantarell 14"' \
+            | $SUDO tee /etc/greetd/regreet.toml >/dev/null
+    fi
+
+    ok "greetd configured"
+    printf '\n'
+    warn "NOT enabling it yet, on purpose."
+    info "Test ZEN from a TTY first:  ${C_BOLD}zen${C_RESET}"
+    info "If that works, enable the login screen with:"
+    info "  ${C_BOLD}sudo systemctl enable --now greetd${C_RESET}"
+    info "If a login screen ever leaves you at a black screen, press"
+    info "  ${C_BOLD}Ctrl+Alt+F2${C_RESET} and run ${C_BOLD}sudo systemctl disable --now greetd${C_RESET}"
+}
+
+# ---------------------------------------------------------------- wizard ----
+
+wizard_summary() {
+    printf '\n  %sAbout to do this:%s\n\n' "$C_BOLD" "$C_RESET"
+    [ "$DO_DEPS"     = 1 ] && info "• install build dependencies"
+    [ "$W_APPS"      = 1 ] && info "• install a terminal and an app launcher"
+    [ "$W_EXTRAS"    = 1 ] && info "• install optional extras ($EXTRA_APPS)"
+    [ "$DO_BUILD"    = 1 ] && info "• build ZEN (this is the slow part, 5 to 15 minutes)"
+    [ "$DO_INSTALL"  = 1 ] && info "• install ZEN to $PREFIX"
+    [ "$W_CONFIG"    = 1 ] && info "• write your config file"
+    [ "$W_GREETER"   = 1 ] && info "• install and configure the login screen"
+    printf '\n'
+}
+
+W_APPS=0
+W_EXTRAS=0
+W_CONFIG=0
+W_GREETER=0
+
+wizard() {
+    banner
+
+    ui_menu "What would you like to do?" \
+        "Install ZEN  (everything: deps, build, apps, config)" \
+        "Choose what to install" \
+        "Just check what is missing, change nothing" \
+        "Quit" || return 1
+
+    case "$UI_CHOICE" in
+        0)  DO_DEPS=1; DO_BUILD=1; DO_INSTALL=1
+            W_APPS=1; W_CONFIG=1
+            ui_menu "Also set up a graphical login screen?" \
+                "Yes, install and configure greetd" \
+                "No, I will start ZEN from a TTY" || return 1
+            [ "$UI_CHOICE" = 0 ] && W_GREETER=1
+            ;;
+        1)  ui_multi "Pick what to do  (space toggles)" \
+                "Install build dependencies:on" \
+                "Build ZEN:on" \
+                "Install ZEN system-wide:on" \
+                "Install a terminal and launcher:on" \
+                "Write my config file:on" \
+                "Install the login screen:off" \
+                "Install optional extras (browser, wallpaper, notifications):off" \
+                || return 1
+            DO_DEPS=0; DO_BUILD=0; DO_INSTALL=0
+            local idx
+            for idx in $UI_PICKED; do
+                case "$idx" in
+                    0) DO_DEPS=1 ;;
+                    1) DO_BUILD=1 ;;
+                    2) DO_INSTALL=1 ;;
+                    3) W_APPS=1 ;;
+                    4) W_CONFIG=1 ;;
+                    5) W_GREETER=1 ;;
+                    6) W_EXTRAS=1 ;;
+                esac
+            done
+            ;;
+        2)  CHECK_ONLY=1; return 0 ;;
+        3)  return 1 ;;
+    esac
+
+    wizard_summary
+    ui_menu "Go ahead?" "Yes, do it" "No, quit" || return 1
+    [ "$UI_CHOICE" = 0 ] || return 1
+    return 0
+}
+
 # ------------------------------------------------------------------ main ----
 
 main() {
     { [ -f Cargo.toml ] && grep -q '^name = "zen"' Cargo.toml; } \
         || die "run this from the root of the ZEN repository"
 
-    banner
-    printf '\n%sZEN setup%s\n' "$C_BOLD$C_BLUE" "$C_RESET"
+    # A bare `./setup.sh` on a real terminal gets the guided flow. Anything with a
+    # flag, or piped into a script, keeps the old non-interactive behaviour.
+    if [ "$ANY_FLAG" = 0 ] && [ "$UI_TTY" = 1 ]; then
+        detect_distro
+        wizard || { printf '\n%snothing done%s\n' "$C_DIM" "$C_RESET"; exit 0; }
+        ASSUME_YES=1
+    else
+        banner
+        printf '\n%sZEN setup%s\n' "$C_BOLD$C_BLUE" "$C_RESET"
+    fi
 
     if [ "$CHECK_ONLY" = 1 ]; then
         check_deps
@@ -583,8 +882,12 @@ main() {
     fi
 
     if [ "$DO_DEPS" = 1 ]; then check_deps; install_deps; fi
+    if [ "$W_APPS" = 1 ]; then install_desktop_apps; fi
+    if [ "$W_EXTRAS" = 1 ]; then install_extra_apps; fi
     if [ "$DO_BUILD" = 1 ]; then ensure_rust; build; fi
     if [ "$DO_INSTALL" = 1 ]; then install_zen; fi
+    if [ "$W_CONFIG" = 1 ]; then write_user_config; fi
+    if [ "$W_GREETER" = 1 ]; then install_greeter; fi
 
     printf '\n%sdone%s\n' "$C_GREEN$C_BOLD" "$C_RESET"
     if [ "$DO_BUILD" = 1 ] && [ "$DO_INSTALL" = 0 ]; then
