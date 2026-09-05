@@ -834,6 +834,7 @@ write_user_config() {
 
     seed_wallpapers
     theme_launcher
+    theme_terminal
 }
 
 # Themes the app launcher, unless you already have a config of your own.
@@ -851,6 +852,23 @@ theme_launcher() {
     mkdir -p "$dir"
     cp resources/fuzzel.ini "$dst"
     ok "themed the app launcher: $dst"
+}
+
+# Themes the terminal, unless you already have a config of your own.
+#
+# Without this the terminal is opaque, which hides the glass material entirely and
+# makes a fresh install look like any other compositor.
+theme_terminal() {
+    local dir="${XDG_CONFIG_HOME:-$HOME/.config}/alacritty"
+    local dst="$dir/alacritty.toml"
+
+    if [ -f "$dst" ]; then
+        dim "you already have an alacritty config, left alone: $dst"
+        return 0
+    fi
+    mkdir -p "$dir"
+    cp resources/alacritty.toml "$dst"
+    ok "themed the terminal: $dst"
 }
 
 # Puts the shipped wallpaper where the picker looks, so a fresh install has one.

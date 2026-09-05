@@ -1,0 +1,57 @@
+# ZEN's terminal theme.
+#
+# The material only shows through pixels a client leaves translucent, so a fully
+# opaque terminal sits on top of the glass and hides it. This sets an opacity
+# that lets the backdrop read without costing legibility, and a palette that
+# matches the launcher and the focus ring.
+#
+# Installed to ~/.config/alacritty/alacritty.toml only if you do not already
+# have one. It is yours after that; ZEN will not overwrite it.
+
+[window]
+opacity = 0.78
+decorations = "None"
+dynamic_padding = true
+padding = { x = 14, y = 12 }
+
+[font]
+size = 11
+
+[font.normal]
+family = "monospace"
+
+[cursor]
+style = { shape = "Beam", blinking = "On" }
+
+[colors.primary]
+background = "#0e1014"
+foreground = "#e8eaed"
+dim_foreground = "#8a90a0"
+
+[colors.cursor]
+text = "#0e1014"
+cursor = "#cfe6ff"
+
+[colors.selection]
+text = "#ffffff"
+background = "#7fc8ff40"
+
+[colors.normal]
+black = "#1a1d24"
+red = "#e06c75"
+green = "#8fd18a"
+yellow = "#e5c07b"
+blue = "#7fc8ff"
+magenta = "#c39ee0"
+cyan = "#6fd2d2"
+white = "#c7ccd4"
+
+[colors.bright]
+black = "#3a3f4b"
+red = "#ff8b93"
+green = "#a9e0a3"
+yellow = "#f2d3a0"
+blue = "#a3d9ff"
+magenta = "#d6b8ee"
+cyan = "#92e2e2"
+white = "#f0f2f5"

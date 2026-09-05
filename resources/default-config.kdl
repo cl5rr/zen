@@ -120,16 +120,6 @@ input {
 // Refraction still shapes the rim at any opacity, so even a fully opaque pane
 // reads as a solid object rather than a flat rectangle.
 glass {
-    // Remove this line to turn the material on, then ask for it per window
-    // with a rule:
-    //
-    //     window-rule {
-    //         geometry-corner-radius 12
-    //         clip-to-geometry true
-    //         background-effect { glass true; blur true; }
-    //     }
-    off
-
     opacity 0.15
     tint "#ffffff"
 
@@ -225,7 +215,7 @@ camera {
 
 layout {
     // Set gaps around windows in logical pixels.
-    gaps 16
+    gaps 20
 
     // When to center a column when changing focus, options are:
     // - "never", default behavior, focusing an off-screen column will keep at the left
@@ -273,7 +263,7 @@ layout {
         // off
 
         // How many logical pixels the ring extends out from the windows.
-        width 4
+        width 2
 
         // Colors can be set in a variety of ways:
         // - CSS named colors: "red"
@@ -281,13 +271,13 @@ layout {
         // - CSS-like notation: "rgb(255, 127, 0)", rgba(), hsl() and a few others.
 
         // Color of the ring on the active monitor.
-        active-color "#7fc8ff"
+        active-color "#cfe6ffcc"
 
         // Color of the ring on inactive monitors.
         //
         // The focus ring only draws around the active window, so the only place
         // where you can see its inactive-color is on other monitors.
-        inactive-color "#505050"
+        inactive-color "#ffffff1f"
 
         // You can also use gradients. They take precedence over solid colors.
         // Gradients are rendered the same as CSS linear-gradient(angle, from, to).
@@ -328,8 +318,7 @@ layout {
 
     // You can enable drop shadows for windows.
     shadow {
-        // Uncomment the next line to enable shadows.
-        // on
+        on
 
         // By default, the shadow draws only around its window, and not behind it.
         // Uncomment this setting to make the shadow draw behind its window.
@@ -345,22 +334,22 @@ layout {
         // window. These will also remove client-side shadows if the window
         // draws any.
         //
-        // draw-behind-window true
+        draw-behind-window true
 
         // You can change how shadows look. The values below are in logical
         // pixels and match the CSS box-shadow properties.
 
         // Softness controls the shadow blur radius.
-        softness 30
+        softness 34
 
         // Spread expands the shadow.
-        spread 5
+        spread 2
 
         // Offset moves the shadow relative to the window.
-        offset x=0 y=5
+        offset x=0 y=10
 
         // You can also change the shadow color and opacity.
-        color "#0007"
+        color "#00000099"
     }
 
     // Struts shrink the area occupied by windows, similarly to layer-shell panels.
@@ -421,7 +410,7 @@ hotkey-overlay {
 // Additionally, clients will be informed that they are tiled, removing some client-side rounded corners.
 // This option will also fix border/focus ring drawing behind some semitransparent windows.
 // After enabling or disabling this, you need to restart the apps for this to take effect.
-// prefer-no-csd
+prefer-no-csd
 
 // You can change the path where screenshots are saved.
 // A ~ at the front will be expanded to the home directory.
@@ -501,11 +490,18 @@ window-rule {
     // block-out-from "screencast"
 }
 
-// Example: enable rounded corners for all windows.
-// (This example rule is commented out with a "/-" in front.)
-/-window-rule {
+// look
+//
+// Drop "background-effect" here, or override it per app, if you want the
+// material off; the capture and blur cost is paid per window that has it.
+window-rule {
     geometry-corner-radius 12
     clip-to-geometry true
+
+    background-effect {
+        glass true
+        blur true
+    }
 }
 
 binds {
