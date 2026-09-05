@@ -17,6 +17,7 @@ ASSUME_YES=0
 DO_DEPS=1
 DO_BUILD=1
 DO_INSTALL=0
+DO_UPDATE=0
 CHECK_ONLY=0
 WITH_VISUAL_TESTS=0
 BUILD_PROFILE=release
@@ -99,6 +100,8 @@ Usage: ./setup.sh [options]
 
   --check            Report what is installed and what is missing, then exit.
                      Changes nothing. Safe to run first.
+  --update           Pull, rebuild and reinstall. Shows what changed, and any
+                     config options you have not got yet.
   --deps-only        Install missing dependencies and exit.
   --build-only       Skip dependency handling; just build.
   --install          Install ZEN after building (needs root for PREFIX).
@@ -131,6 +134,7 @@ while [ $# -gt 0 ]; do
     ANY_FLAG=1
     case "$1" in
         --check)                CHECK_ONLY=1 ;;
+        --update)               DO_UPDATE=1; DO_BUILD=1; DO_INSTALL=1 ;;
         --deps-only)            DO_BUILD=0; DO_INSTALL=0 ;;
         --build-only)           DO_DEPS=0 ;;
         --install)              DO_INSTALL=1 ;;
@@ -562,6 +566,90 @@ install_zen() {
     info "  • run ${C_BOLD}zen${C_RESET} inside an existing Wayland session (nested, for development)"
 }
 
+# ---------------------------------------------------------------- update ----
+
+# Reports config options that exist in the shipped default but not in yours.
+#
+# Your config is a *copy* taken at install time, not a live view of the default, so
+# options added later never appear in it. They fall back to their defaults, which is
+# harmless, but you would never learn they exist. This is a hint, not a merge: your
+# file is yours, and nothing here edits it.
+config_drift() {
+    local user="${XDG_CONFIG_HOME:-$HOME/.config}/zen/config.kdl"
+    local shipped="resources/default-config.kdl"
+    [ -f "$user" ] || return 0
+    [ -f "$shipped" ] || return 0
+
+    local missing="" sec
+    for sec in $(grep -oE '^[a-z][a-z-]* \{' "$shipped" | sed 's/ {$//' | sort -u); do
+        grep -qE "^[[:space:]]*$sec[[:space:]]*\{" "$user" || missing="$missing $sec"
+    done
+
+    missing="${missing# }"
+    [ -n "$missing" ] || return 0
+
+    printf '\n'
+    info "New config sections you do not have yet:"
+    info "  ${C_BOLD}$missing${C_RESET}"
+    dim "they are using their defaults; see resources/default-config.kdl"
+    dim "compare with: diff $user resources/default-config.kdl"
+}
+
+# Whether a ZEN session is running right now, so we can say when the update lands.
+zen_is_running() {
+    pgrep -x zen >/dev/null 2>&1
+}
+
+update_zen() {
+    step "Updating ZEN"
+
+    have git   || die "git is not installed"
+    [ -d .git ] || die "this is not a git checkout, so there is nothing to pull"
+
+    if ! git diff --quiet HEAD 2>/dev/null; then
+        warn "you have uncommitted changes in this checkout"
+        dim "a pull may conflict; commit or stash them first if you care about them"
+        confirm || return 1
+    fi
+
+    local before after
+    before=$(git rev-parse HEAD)
+
+    info "fetching"
+    git pull --ff-only || die "pull failed - if it says 'diverged', your local commits
+    and the remote have both moved; sort that out by hand"
+
+    after=$(git rev-parse HEAD)
+
+    if [ "$before" = "$after" ]; then
+        ok "already up to date at $(git rev-parse --short HEAD)"
+        DO_BUILD=0
+        DO_INSTALL=0
+        return 0
+    fi
+
+    printf '\n'
+    info "What changed:"
+    git --no-pager log --oneline --no-decorate "$before..$after" | head -20 | while read -r l; do
+        dim "$l"
+    done
+    printf '\n'
+}
+
+update_epilogue() {
+    config_drift
+
+    printf '\n'
+    if zen_is_running; then
+        warn "the ZEN you are running is still the old one."
+        info "Replacing the binary cannot change a process that is already running, and a"
+        info "compositor cannot swap itself out without taking your windows with it."
+        info "The update applies when you next start a session: log out and back in."
+    else
+        info "Start it with ${C_BOLD}zen${C_RESET}, or log in through your greeter."
+    fi
+}
+
 # ------------------------------------------------------------------- tui ----
 #
 # Arrow-key menus, the way archinstall works. Deliberately hand-rolled ANSI
@@ -786,6 +874,7 @@ install_greeter() {
 
 wizard_summary() {
     printf '\n  %sAbout to do this:%s\n\n' "$C_BOLD" "$C_RESET"
+    [ "$DO_UPDATE"   = 1 ] && info "• pull the latest ZEN and show what changed"
     [ "$DO_DEPS"     = 1 ] && info "• install build dependencies"
     [ "$W_APPS"      = 1 ] && info "• install a terminal and an app launcher"
     [ "$W_EXTRAS"    = 1 ] && info "• install optional extras ($EXTRA_APPS)"
@@ -804,8 +893,12 @@ W_GREETER=0
 wizard() {
     banner
 
+    local installed=""
+    have zen && installed=" (you have it already)"
+
     ui_menu "What would you like to do?" \
         "Install ZEN  (everything: deps, build, apps, config)" \
+        "Update ZEN   (pull, rebuild, reinstall)$installed" \
         "Choose what to install" \
         "Just check what is missing, change nothing" \
         "Quit" || return 1
@@ -818,7 +911,8 @@ wizard() {
                 "No, I will start ZEN from a TTY" || return 1
             [ "$UI_CHOICE" = 0 ] && W_GREETER=1
             ;;
-        1)  ui_multi "Pick what to do  (space toggles)" \
+        1)  DO_UPDATE=1; DO_DEPS=0; DO_BUILD=1; DO_INSTALL=1 ;;
+        2)  ui_multi "Pick what to do  (space toggles)" \
                 "Install build dependencies:on" \
                 "Build ZEN:on" \
                 "Install ZEN system-wide:on" \
@@ -841,8 +935,8 @@ wizard() {
                 esac
             done
             ;;
-        2)  CHECK_ONLY=1; return 0 ;;
-        3)  return 1 ;;
+        3)  CHECK_ONLY=1; return 0 ;;
+        4)  return 1 ;;
     esac
 
     wizard_summary
@@ -881,6 +975,7 @@ main() {
         exit 0
     fi
 
+    if [ "$DO_UPDATE" = 1 ]; then update_zen || exit 1; fi
     if [ "$DO_DEPS" = 1 ]; then check_deps; install_deps; fi
     if [ "$W_APPS" = 1 ]; then install_desktop_apps; fi
     if [ "$W_EXTRAS" = 1 ]; then install_extra_apps; fi
@@ -890,6 +985,7 @@ main() {
     if [ "$W_GREETER" = 1 ]; then install_greeter; fi
 
     printf '\n%sdone%s\n' "$C_GREEN$C_BOLD" "$C_RESET"
+    if [ "$DO_UPDATE" = 1 ]; then update_epilogue; fi
     if [ "$DO_BUILD" = 1 ] && [ "$DO_INSTALL" = 0 ]; then
         dim "binary at target/$BUILD_PROFILE/zen - ./setup.sh --install to install it"
     fi
