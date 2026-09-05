@@ -42,16 +42,8 @@ impl Shadow {
     ) {
         let ceil = |logical: f64| (logical * scale).ceil() / scale;
 
-        // All of this stuff should end up aligned to physical pixels because:
-        // * Window size is rounded to physical pixels before being passed to this function.
-        // * We will ceil the corner radii below.
-        // * We do not divide anything, only add, subtract and multiply by integers.
-        // * At rendering time, tile positions are rounded to physical pixels.
-
         let width = self.config.softness;
-        // Like in CSS box-shadow.
         let sigma = width / 2.;
-        // Adjust width to draw all necessary pixels.
         let width = ceil(sigma * 3.);
 
         let offset = self.config.offset;
@@ -66,7 +58,6 @@ impl Shadow {
         let box_size = if spread >= 0. {
             win_size + Size::from((spread, spread)).upscale(2.)
         } else {
-            // This is a saturating sub.
             win_size - Size::from((-spread, -spread)).upscale(2.)
         };
         let radius = win_radius.expanded_by(spread as f32);
@@ -76,7 +67,6 @@ impl Shadow {
         let color = if is_active {
             self.config.color
         } else {
-            // Default to slightly more transparent.
             self.config
                 .inactive_color
                 .unwrap_or(self.config.color * 0.75)
@@ -84,7 +74,6 @@ impl Shadow {
 
         let shader_geo = Rectangle::new(Point::from((-width, -width)), shader_size);
 
-        // This is actually offset relative to shader_geo, this is handled below.
         let window_geo = Rectangle::new(Point::from((0., 0.)), win_size);
 
         if !self.config.draw_behind_window {

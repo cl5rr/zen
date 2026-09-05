@@ -1,12 +1,3 @@
-//! Dragging the canvas with the pointer.
-//!
-//! ZEN is a camera over an unbounded space, and until this existed the only way to move that
-//! camera was a keyboard step. On a canvas that is like being given a map and no hands.
-//!
-//! The grab is deliberately unsmoothed: `camera_pan_immediate` rather than the spring that
-//! keyboard steps use. When you drag something with a pointer it has to sit under the pointer.
-//! Anything that eases or springs turns direct manipulation into steering a boat.
-
 use smithay::input::pointer::{
     AxisFrame, ButtonEvent, CursorImageStatus, GestureHoldBeginEvent, GestureHoldEndEvent,
     GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
@@ -41,7 +32,6 @@ impl CameraPanGrab {
         }
 
         data.zen.layout.camera_pan_immediate(delta);
-        // FIXME: granular.
         data.zen.queue_redraw_all();
     }
 }
@@ -54,7 +44,6 @@ impl PointerGrab<State> for CameraPanGrab {
         _focus: Option<(<State as SeatHandler>::PointerFocus, Point<f64, Logical>)>,
         event: &MotionEvent,
     ) {
-        // No client holds pointer focus while the canvas is being dragged.
         handle.motion(data, None, event);
         self.pan_to(data, event.location);
     }
@@ -77,7 +66,6 @@ impl PointerGrab<State> for CameraPanGrab {
     ) {
         handle.button(data, event);
 
-        // Let go once every button is up, so the drag ends with the button that started it.
         if handle.current_pressed().is_empty() {
             handle.unset_grab(self, data, event.serial, event.time, true);
             data.zen

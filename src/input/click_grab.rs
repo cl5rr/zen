@@ -7,14 +7,6 @@ use smithay::input::pointer::{
 use smithay::input::SeatHandler;
 use smithay::utils::{Logical, Point};
 
-// ClickGrab from Smithay, but without the grab location updates.
-//
-// When clicking on a partially off-screen window, such that it will scroll into the view, updating
-// the focus location will cause a move event, essentially a short DnD, which might result in some
-// unintended action.
-//
-// Not updating in this case avoids any unintentional DnD. It does cause offset cursor movement if
-// you hold and keep moving, but that can't cause mistakes as easily, so it's the lesser evil.
 pub struct ClickGrab<D: SeatHandler> {
     start_data: GrabStartData<D>,
     focus: Option<(D::PointerFocus, Point<f64, Logical>)>,
@@ -58,7 +50,6 @@ impl<D: SeatHandler + 'static> PointerGrab<D> for ClickGrab<D> {
     ) {
         handle.button(data, event);
         if handle.current_pressed().is_empty() {
-            // no more buttons are pressed, release the grab
             handle.unset_grab(self, data, event.serial, event.time, false);
         }
     }

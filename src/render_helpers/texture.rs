@@ -8,7 +8,6 @@ use smithay::utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, T
 
 use super::memory::MemoryBuffer;
 
-/// Smithay's texture buffer, but with fractional scale.
 #[derive(Debug, Clone)]
 pub struct TextureBuffer<T: Texture> {
     id: Id,
@@ -20,7 +19,6 @@ pub struct TextureBuffer<T: Texture> {
     opaque_regions: Vec<Rectangle<i32, Buffer>>,
 }
 
-/// Render element for a [`TextureBuffer`].
 #[derive(Debug, Clone)]
 pub struct TextureRenderElement<T: Texture> {
     buffer: TextureBuffer<T>,

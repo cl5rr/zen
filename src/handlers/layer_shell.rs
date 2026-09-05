@@ -95,15 +95,12 @@ impl State {
         };
 
         if surface != &root_surface {
-            // This is an unsync layer-shell subsurface.
             self.zen.queue_redraw(&output);
             return true;
         }
 
         let mut map = layer_map_for_output(&output);
 
-        // Arrange the layers before sending the initial configure to respect any size the
-        // client may have sent.
         map.arrange();
 
         let layer = map
@@ -113,7 +110,6 @@ impl State {
         if is_mapped(surface) {
             let was_unmapped = self.zen.unmapped_layer_surfaces.remove(surface);
 
-            // Resolve rules for newly mapped layer surfaces.
             if was_unmapped {
                 let config = self.zen.config.borrow();
 
@@ -142,9 +138,7 @@ impl State {
                     error!("MappedLayer was present for an unmapped surface");
                 }
             } else {
-                // The surface remains mapped.
                 if let Some(mapped) = self.zen.mapped_layer_surfaces.get_mut(layer) {
-                    // Check if the layer changed.
                     if mapped.take_recompute_rules_on_commit() {
                         let config = self.zen.config.borrow();
                         if mapped
@@ -158,35 +152,15 @@ impl State {
                 }
             }
 
-            // Give focus to newly mapped on-demand surfaces. Some launchers like lxqt-runner rely
-            // on this behavior. While this behavior doesn't make much sense for other clients like
-            // panels, the consensus seems to be that it's not a big deal since panels generally
-            // only open once at the start of the session.
-            //
-            // Note that:
-            // 1) Exclusive layer surfaces already get focus automatically in
-            //    update_keyboard_focus().
-            // 2) Same-layer exclusive layer surfaces are already preferred to on-demand surfaces in
-            //    update_keyboard_focus(), so we don't need to check for that here.
-            //
-            // upstream issue #641
             let on_demand = layer.cached_state().keyboard_interactivity
                 == wlr_layer::KeyboardInteractivity::OnDemand;
             if was_unmapped && on_demand {
-                // I guess it'd make sense to check that no higher-layer on-demand surface
-                // has focus, but Smithay's Layer doesn't implement Ord so this would be a
-                // little annoying.
                 self.zen.layer_shell_on_demand_focus = Some(layer.clone());
             }
         } else {
-            // The surface is unmapped.
             if self.zen.mapped_layer_surfaces.remove(layer).is_some() {
-                // A mapped surface got unmapped via a null commit. Now it needs to do a new
-                // initial commit again.
                 self.zen.unmapped_layer_surfaces.insert(surface.clone());
             } else {
-                // An unmapped surface remains unmapped. If we haven't sent an initial configure
-                // yet, we should do so.
                 let initial_configure_sent = with_states(surface, |states| {
                     states
                         .data_map
@@ -205,14 +179,11 @@ impl State {
 
                     layer.layer_surface().send_configure();
                 }
-                // If we already sent an initial configure, then map.arrange() above had just sent
-                // it a new configure, if needed.
             }
         }
 
         drop(map);
 
-        // This will call queue_redraw() inside.
         self.zen.output_resized(&output);
 
         true

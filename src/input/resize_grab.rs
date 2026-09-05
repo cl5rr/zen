@@ -21,7 +21,6 @@ pub struct ResizeGrab {
     start_data: AnyStartData<State>,
     window: Window,
 
-    // Accumulated and applied in frame().
     new_location: Point<f64, Logical>,
 }
 
@@ -67,7 +66,6 @@ impl PointerGrab<State> for ResizeGrab {
         _focus: Option<(<State as SeatHandler>::PointerFocus, Point<f64, Logical>)>,
         event: &MotionEvent,
     ) {
-        // While the grab is active, no client has pointer focus.
         handle.motion(data, None, event);
 
         self.new_location = event.location;
@@ -80,7 +78,6 @@ impl PointerGrab<State> for ResizeGrab {
         _focus: Option<(<State as SeatHandler>::PointerFocus, Point<f64, Logical>)>,
         event: &RelativeMotionEvent,
     ) {
-        // While the grab is active, no client has pointer focus.
         handle.relative_motion(data, None, event);
     }
 
@@ -93,7 +90,6 @@ impl PointerGrab<State> for ResizeGrab {
         handle.button(data, event);
 
         if handle.current_pressed().is_empty() {
-            // No more buttons are pressed, release the grab.
             handle.unset_grab(self, data, event.serial, event.time, true);
         }
     }
@@ -111,7 +107,6 @@ impl PointerGrab<State> for ResizeGrab {
         handle.frame(data);
 
         if !self.on_frame(data) {
-            // The gesture is no longer ongoing.
             handle.unset_grab(
                 self,
                 data,
@@ -249,7 +244,6 @@ impl TouchGrab<State> for ResizeGrab {
         handle.frame(data);
 
         if !self.on_frame(data) {
-            // The gesture is no longer ongoing.
             handle.unset_grab(self, data);
         }
     }
@@ -359,7 +353,6 @@ impl TabletToolGrab<State> for ResizeGrab {
         handle.frame(data, time);
 
         if !self.on_frame(data) {
-            // The gesture is no longer ongoing.
             handle.unset_grab(
                 self,
                 data,

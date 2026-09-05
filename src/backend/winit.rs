@@ -45,7 +45,6 @@ impl Winit {
 
         let builder = WindowAttributes::default()
             .with_surface_size(LogicalSize::new(1280.0, 800.0))
-            // .with_resizable(false)
             .with_title("ZEN")
             .with_platform_attributes(Box::new(
                 WindowAttributesWayland::default().with_name("zen", ""),
@@ -152,7 +151,6 @@ impl Winit {
     pub fn init(&mut self, zen: &mut Zen) {
         let renderer = self.backend.renderer();
         if let Err(err) = renderer.bind_wl_display(&zen.display_handle) {
-            // wl_drm is on its way out so this is expected on most modern distros.
             trace!("error binding legacy EGL to wl_display: {err}");
         } else {
             debug!("bound legacy EGL to wl_display");
@@ -198,7 +196,6 @@ impl Winit {
                 .context("error building dmabuf feedback")
         };
 
-        // Fallback to dmabuf v3 if we failed to build feedback.
         let dmabuf_global = match default_feedback() {
             Ok(feedback) => zen
                 .dmabuf_state
@@ -227,7 +224,6 @@ impl Winit {
     pub fn render(&mut self, zen: &mut Zen, output: &Output) -> RenderResult {
         let _span = tracy_client::span!("Winit::render");
 
-        // Render the elements.
         let ctx = RenderCtx {
             renderer: self.backend.renderer(),
             target: RenderTarget::Output,
@@ -235,18 +231,13 @@ impl Winit {
         };
         let mut elements = zen.render_to_vec(ctx, output, true);
 
-        // Visualize the damage, if enabled.
         if zen.debug_draw_damage {
             let output_state = zen.output_state.get_mut(output).unwrap();
             draw_damage(&mut output_state.debug_damage_tracker, &mut elements);
         }
 
-        // Hand them over to winit.
         let res = {
             let (renderer, mut framebuffer) = self.backend.bind().unwrap();
-            // FIXME: currently impossible to call due to a mutable borrow.
-            //
-            // let age = self.backend.buffer_age().unwrap();
             let age = 0;
             self.damage_tracker
                 .render_output(renderer, &mut framebuffer, age, &elements, [0.; 4])
@@ -295,8 +286,6 @@ impl Winit {
 
         output_state.frame_callback_sequence = output_state.frame_callback_sequence.wrapping_add(1);
 
-        // FIXME: this should wait until a frame callback from the host compositor, but it redraws
-        // right away instead.
         if output_state.unfinished_animations_remain {
             self.backend.window().request_redraw();
         }

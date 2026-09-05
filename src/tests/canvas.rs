@@ -1,13 +1,3 @@
-//! Phase 2.5: the canvas is unbounded.
-//!
-//! zen stored floating positions as a *fraction of the working area* and clamped every one of
-//! them so at least a sliver stayed on screen (`Data::recompute_logical_pos`, numbers taken
-//! from Mutter). Both are wrong for ZEN: fractions make a window's place in the world shift
-//! when a monitor changes size, and the clamp means there is nowhere to pan *to* -- which would
-//! make camera-maximize's "you can pan away from it" promise undemonstrable.
-//!
-//! Positions are now absolute canvas coordinates, bounded only by `CANVAS_LIMIT`.
-
 use smithay::utils::{Logical, Point};
 
 use super::*;
@@ -37,7 +27,6 @@ fn fixture_with_floating_window() -> Fixture {
     f
 }
 
-/// Is any part of a window visible on the output?
 fn window_visible(f: &mut Fixture) -> bool {
     for y in (2..i32::from(OUTPUT_H)).step_by(8) {
         for x in (2..i32::from(OUTPUT_W)).step_by(8) {
@@ -53,7 +42,6 @@ fn window_visible(f: &mut Fixture) -> bool {
     false
 }
 
-/// The load-bearing test: a window moved off-screen must stay off-screen.
 #[test]
 fn a_window_can_leave_the_viewport_and_stay_gone() {
     let mut f = fixture_with_floating_window();
@@ -62,7 +50,6 @@ fn a_window_can_leave_the_viewport_and_stay_gone() {
         "window should start visible, before anything has moved it"
     );
 
-    // Well past the right edge of a 1280-wide output.
     f.zen().layout.move_floating_window(
         None,
         PositionChange::SetFixed(4000.),
@@ -78,7 +65,6 @@ fn a_window_can_leave_the_viewport_and_stay_gone() {
     );
 }
 
-/// And FitAllWindows must be able to find it again.
 #[test]
 fn fit_all_windows_brings_a_lost_window_back() {
     let mut f = fixture_with_floating_window();
@@ -105,10 +91,6 @@ fn fit_all_windows_brings_a_lost_window_back() {
     );
 }
 
-/// Absolute coordinates must not be rescaled by an output size change.
-///
-/// This is the behaviour that flipped: zen stored fractions of the working area, so a window
-/// moved when its monitor resized. On a canvas, a window's place in the world should not.
 #[test]
 fn positions_survive_an_output_resize() {
     let mut f = fixture_with_floating_window();
@@ -123,12 +105,9 @@ fn positions_survive_an_output_resize() {
     let before = f.zen().layout.camera_fit_all();
     assert!(before);
 
-    // A second, larger output changes the working area in play.
     f.add_output(2, (1920, 1080));
     f.zen_complete_animations();
 
-    // The window should still be framable at the same place; if positions had been rescaled by
-    // the working area, the bbox would have moved.
     assert!(f.zen().layout.camera_fit_all());
 }
 
@@ -138,7 +117,6 @@ fn canvas_limit_is_finite_and_generous() {
     assert!(CANVAS_LIMIT >= 1.0e5, "canvas should be effectively unbounded for a human");
 }
 
-/// The clock's time formatting must work and must not be able to take the compositor down.
 #[test]
 fn local_time_formatting() {
     use crate::utils::format_local_time;
@@ -147,18 +125,10 @@ fn local_time_formatting() {
     assert_eq!(hhmm.len(), 5, "expected HH:MM, got {hhmm:?}");
     assert_eq!(&hhmm[2..3], ":");
 
-    // A format that produces nothing is a None, not a panic.
     assert!(format_local_time("").is_none());
-    // And an embedded nul is rejected rather than truncating.
     assert!(format_local_time("a\0b").is_none());
 }
 
-/// Phase 3: camera-maximize must not touch the window.
-///
-/// This is the whole idea. A normal maximize sends an xdg_toplevel.configure with new
-/// dimensions and the client relayouts -- terminals rewrap, browsers reflow. ZEN's maximize
-/// moves the viewport instead, so the client never learns anything happened. The proof is that
-/// it receives no configure at all.
 #[test]
 fn camera_maximize_sends_no_configure() {
     let mut f = Fixture::new();
@@ -179,7 +149,6 @@ fn camera_maximize_sends_no_configure() {
     f.zen_complete_animations();
     f.double_roundtrip(id);
 
-    // Clear anything the setup produced, so what follows is attributable.
     let _ = f.client(id).window(&surface).format_recent_configures();
 
     let zoom_before = f.zen().layout.camera_zoom();
@@ -196,7 +165,6 @@ fn camera_maximize_sends_no_configure() {
         "camera-maximize must not touch the window, but it received:\n{configures}"
     );
 
-    // And it must actually have done something.
     let zoom_after = f.zen().layout.camera_zoom();
     assert!(
         zoom_after > zoom_before,
@@ -204,7 +172,6 @@ fn camera_maximize_sends_no_configure() {
     );
 }
 
-/// Panning away from a camera-maximized window must leave the window where it was.
 #[test]
 fn you_can_pan_away_from_a_camera_maximized_window() {
     let mut f = fixture_with_floating_window();
@@ -221,9 +188,6 @@ fn you_can_pan_away_from_a_camera_maximized_window() {
     f.zen_complete_animations();
     assert!(window_visible(&mut f), "window should be framed and visible");
 
-    // Pan far enough that the framed window leaves the viewport entirely. The exact-delta
-    // primitive, because `camera_pan_by` is a held-key velocity: it ignores magnitude and
-    // covers ground per frame, so a loop of calls with no frames between them moves nothing.
     f.zen()
         .layout
         .camera_pan_immediate(Point::from((-16000., 0.)));
@@ -236,30 +200,19 @@ fn you_can_pan_away_from_a_camera_maximized_window() {
     );
 }
 
-/// Camera magnification must ask clients for more pixels, not stretch a 1x buffer.
-///
-/// This is PLAN.md's top-ranked risk: without it camera-maximize is a bigger, blurrier window,
-/// which would make the headline feature feel cheap. Confirmed visually by A/B screenshot too --
-/// with the fix, magnified terminal text has thin sharp strokes; without it they are thick and
-/// soft.
 #[test]
 fn camera_scale_quantization() {
     use crate::layout::monitor::quantize_camera_scale;
 
-    // At or below 1:1 we never ask for less than the output scale. Dropping below would leave
-    // windows blurry the instant you zoomed back in.
     assert_eq!(quantize_camera_scale(1.0), 1.0);
     assert_eq!(quantize_camera_scale(0.5), 1.0);
     assert_eq!(quantize_camera_scale(0.1), 1.0);
 
-    // Above 1:1, quarter steps -- so a smooth zoom produces a handful of configures rather
-    // than one per frame.
     assert_eq!(quantize_camera_scale(2.0), 2.0);
     assert_eq!(quantize_camera_scale(2.10), 2.0);
     assert_eq!(quantize_camera_scale(2.13), 2.25);
     assert_eq!(quantize_camera_scale(2.89), 3.0);
 
-    // Monotonic, so zooming in never asks for less.
     let mut prev = 0.;
     for i in 0..200 {
         let v = quantize_camera_scale(f64::from(i) * 0.05);
@@ -268,7 +221,6 @@ fn camera_scale_quantization() {
     }
 }
 
-/// The camera must follow a framed window that moves under it.
 #[test]
 fn camera_follows_a_window_that_moves() {
     let mut f = fixture_with_floating_window();
@@ -284,7 +236,6 @@ fn camera_follows_a_window_that_moves() {
     f.zen_complete_animations();
     let pan_before = f.zen().layout.camera_pan();
 
-    // Move the window out from under the camera.
     f.zen().layout.move_floating_window(
         None,
         PositionChange::SetFixed(900.),
@@ -303,10 +254,6 @@ fn camera_follows_a_window_that_moves() {
     );
 }
 
-/// Panning by hand must end the follow -- and must not spring back.
-///
-/// Snapping back to a window you just deliberately looked away from is the easiest way to make
-/// camera-maximize feel broken, so this is the behaviour worth pinning down.
 #[test]
 fn manual_pan_breaks_the_follow() {
     let mut f = fixture_with_floating_window();
@@ -321,13 +268,11 @@ fn manual_pan_breaks_the_follow() {
     assert!(f.zen().layout.camera_maximize());
     f.zen_complete_animations();
 
-    // Take the camera by hand.
     let delta = Point::<f64, Logical>::from((-120., 60.));
     f.zen().layout.camera_pan_immediate(delta);
     f.zen_complete_animations();
     let pan_after_manual = f.zen().layout.camera_pan();
 
-    // Now move the window. The camera must ignore it.
     f.zen().layout.move_floating_window(
         None,
         PositionChange::SetFixed(900.),

@@ -58,7 +58,6 @@ use crate::render_helpers::{
 use crate::screencasting::CastRenderElement;
 use crate::utils::{get_monotonic_time, CastSessionId, CastStreamId};
 
-// Give a 0.1 ms allowance for presentation time errors.
 const CAST_DELAY_ALLOWANCE: Duration = Duration::from_micros(100);
 
 const CURSOR_FORMAT: spa_video_format = SPA_VIDEO_FORMAT_BGRA;
@@ -89,7 +88,6 @@ pub struct Cast {
     event_loop: LoopHandle<'static, State>,
     pub session_id: CastSessionId,
     pub stream_id: CastStreamId,
-    // Listener is dropped before Stream to prevent a use-after-free.
     _listener: StreamListener<()>,
     pub stream: StreamRc,
     pub target: CastTarget,
@@ -99,12 +97,10 @@ pub struct Cast {
     cursor_mode: CursorMode,
     pub last_frame_time: Duration,
     scheduled_redraw: Option<RegistrationToken>,
-    // Incremented once per successful frame, stored in buffer meta.
     sequence_counter: u64,
     inner: Rc<RefCell<CastInner>>,
 }
 
-/// Mutable `Cast` state shared with PipeWire callbacks.
 #[derive(Debug)]
 struct CastInner {
     is_active: bool,
@@ -113,12 +109,6 @@ struct CastInner {
     refresh: u32,
     min_time_between_frames: Duration,
     dmabufs: HashMap<i64, Dmabuf>,
-    /// Buffers dequeued from PipeWire in process of rendering.
-    ///
-    /// This is an ordered list of buffers that we started rendering to and waiting for the
-    /// rendering to complete. The completion can be checked from the `SyncPoint`s. The buffers are
-    /// stored in order from oldest to newest, and the same ordering should be preserved when
-    /// submitting completed buffers to PipeWire.
     rendering_buffers: Vec<(NonNull<pw_buffer>, SyncPoint)>,
 }
 
@@ -139,7 +129,6 @@ enum CastState {
         alpha: bool,
         modifier: Modifier,
         plane_count: i32,
-        // Lazily-initialized to keep the initialization to a single place.
         damage_tracker: Option<OutputDamageTracker>,
         cursor_damage_tracker: Option<OutputDamageTracker>,
         last_cursor_location: Option<Point<i32, Physical>>,
@@ -152,30 +141,13 @@ pub enum CastSizeChange {
     Pending,
 }
 
-/// Data for drawing a cursor either as metadata or embedded.
-///
-/// The cursor elements are expected to be at the start of the main elements slice. `elem_count` is
-/// the count of the pointer elements. This way, the full slice includes both main and cursor
-/// elements for embedded mode, and `&elements[elem_count..]` gives just the main elements for
-/// metadata mode.
-///
-/// We have weird borrowed references here in order to support both metadata and embedded cases.
-/// The cursor damage tracker needs a slice of impl Element at (0, 0), so we pass it `relocated`
-/// (luckily, &impl Element also impls Element). Then, if we need to embed the cursor, we use the
-/// full elements slice which starts with non-relocated pointer elements (that we borrow from).
 #[derive(Debug)]
 pub struct CursorData<'a, E> {
-    /// Count of the pointer elements in the slice (index of the first non-pointer element).
     elem_count: usize,
-    /// Cursor elements relocated to (0, 0).
     relocated: Vec<RelocateRenderElement<&'a E>>,
-    /// Location of the cursor's hotspot in the video buffer.
     location: Point<i32, Physical>,
-    /// Location of the cursor's hotspot on the cursor bitmap.
     hotspot: Point<i32, Physical>,
-    /// Size of the elements' encompassing geo.
     size: Size<i32, Physical>,
-    /// Scale the elements should be rendered at.
     scale: Scale<f64>,
 }
 
@@ -241,7 +213,6 @@ impl PipeWire {
             .error(move |id, seq, res, message| {
                 warn!(id, seq, res, message, "pw error");
 
-                // Reset PipeWire on connection errors.
                 if id == PW_ID_CORE && res == -32 {
                     if let Err(err) = to_zen_.send(PwToZen::FatalError) {
                         warn!("error sending FatalError to zen: {err:?}");
@@ -322,7 +293,6 @@ impl PipeWire {
 
         let pending_size = Size::from((size.w as u32, size.h as u32));
 
-        // Like in good old wayland-rs times...
         let inner = Rc::new(RefCell::new(CastInner {
             is_active: false,
             node_id: None,
@@ -530,7 +500,6 @@ impl PipeWire {
                         return;
                     }
 
-                    // Verify that alpha and modifier didn't change.
                     let plane_count = match &*state {
                         CastState::ConfirmationPending {
                             size,
@@ -579,8 +548,6 @@ impl PipeWire {
                             plane_count
                         }
                         _ => {
-                            // We're negotiating a single modifier, or alpha or modifier changed,
-                            // so we need to do a test allocation.
                             let (modifier, plane_count) = match find_preferred_modifier(
                                 &gbm,
                                 format_size,
@@ -614,10 +581,6 @@ impl PipeWire {
                             plane_count as i32
                         }
                     };
-
-                    // const BPP: u32 = 4;
-                    // let stride = format.size().width * BPP;
-                    // let size = stride * format.size().height;
 
                     let o1 = pod::object!(
                         SpaTypes::ObjectParamBuffers,
@@ -737,10 +700,6 @@ impl PipeWire {
 
                             (*spa_data).type_ = DataType::DmaBuf.as_raw();
 
-                            // With DMA-BUFs, consumers should ignore the maxsize field, and
-                            // producers are allowed to set it to 0.
-                            //
-                            // https://docs.pipewire.org/page_dma_buf.html
                             (*spa_data).maxsize = 1;
                             (*spa_data).fd = fd.as_raw_fd() as i64;
                             (*spa_data).flags = SPA_DATA_FLAG_READWRITE;
@@ -759,8 +718,6 @@ impl PipeWire {
                         assert!(inner.dmabufs.insert(fd, dmabuf).is_none());
                     }
 
-                    // During size re-negotiation, the stream sometimes just keeps running, in
-                    // which case we may need to force a redraw once we got a newly sized buffer.
                     if inner.dmabufs.len() == 1 && stream.state() == StreamState::Streaming {
                         redraw_();
                     }
@@ -904,7 +861,6 @@ impl Cast {
         }
 
         if target_frame_time < last {
-            // Record frame with a warning; in case it was an overflow this will fix it.
             warn!(
                 ?target_frame_time,
                 ?last,
@@ -941,7 +897,6 @@ impl Cast {
         let token = self
             .event_loop
             .insert_source(timer, move |_, _, state| {
-                // Guard against output disconnecting before the timer has a chance to run.
                 if state.zen.output_state.contains_key(&output) {
                     state.zen.queue_redraw(&output);
                 }
@@ -958,13 +913,6 @@ impl Cast {
         }
     }
 
-    /// Checks whether this frame should be skipped because it's too soon.
-    ///
-    /// If the frame should be skipped, schedules a redraw and returns `true`. Otherwise, removes a
-    /// scheduled redraw, if any, and returns `false`.
-    ///
-    /// When this method returns `false`, the calling code is assumed to follow up with
-    /// [`Cast::dequeue_buffer_and_render()`].
     pub fn check_time_and_schedule(
         &mut self,
         output: &Output,
@@ -988,10 +936,6 @@ impl Cast {
     fn queue_completed_buffers(&mut self) {
         let mut inner = self.inner.borrow_mut();
 
-        // We want to queue buffers in order, so find the first still-rendering buffer, and queue
-        // everything up to that. Even if there are completed buffers past the first
-        // still-rendering buffer, we do not want to queue them, since that would send frames out
-        // of order.
         let first_in_progress_idx = inner
             .rendering_buffers
             .iter()
@@ -1015,17 +959,6 @@ impl Cast {
         let sync_fd = match sync_point.export() {
             Some(sync_fd) => Some(sync_fd),
             None => {
-                // There are two main ways this can happen. First is that the SyncPoint is
-                // pre-signalled, then the buffer is already ready and no waiting is needed. Second
-                // is that the SyncPoint is potentially still not signalled, but exporting a fence
-                // fd had failed. In this case, there's not much we can do (perhaps do a blocking
-                // wait for the SyncPoint, which itself might fail).
-                //
-                // So let's hope for the best and mark the buffer as submittable. We do not reuse
-                // the original SyncPoint because if we do hit the second case (when it's not
-                // signalled), then without a sync fd we cannot schedule a queue upon its
-                // completion, effectively going stuck. It's better to queue an incomplete buffer
-                // than getting stuck.
                 sync_point = SyncPoint::signaled();
                 None
             }
@@ -1037,7 +970,6 @@ impl Cast {
         match sync_fd {
             None => {
                 trace!("sync_fd is None, queueing completed buffers");
-                // In case this is the only buffer in the list, we will queue it right away.
                 self.queue_completed_buffers();
             }
             Some(sync_fd) => {
@@ -1090,7 +1022,6 @@ impl Cast {
             )
         });
 
-        // Size change will drop the damage tracker, but scale change won't, so check it here.
         let OutputModeSource::Static { scale: t_scale, .. } = damage_tracker.mode() else {
             unreachable!();
         };
@@ -1106,8 +1037,6 @@ impl Cast {
         let mut has_cursor_update = false;
         let mut redraw_cursor = false;
 
-        // For embedded cursor, pass the full slice (cursor + main) to the damage tracker.
-        // For metadata or hidden cursor, pass only the main elements.
         if self.cursor_mode == CursorMode::Metadata || self.cursor_mode == CursorMode::Hidden {
             elements = &elements[cursor_data.elem_count..];
         }
@@ -1149,9 +1078,6 @@ impl Cast {
                 add_cursor_metadata(renderer, spa_buffer, cursor_data, redraw_cursor);
             }
 
-            // FIXME: would be good to skip rendering the full frame if only the pointer changed.
-            // Unfortunately, I think the OBS PipeWire code needs to be updated first to cleanly
-            // allow for that codepath.
             let fd = (*(*spa_buffer).datas).fd;
             let dmabuf = inner_.dmabufs[&fd].clone();
 
@@ -1177,7 +1103,6 @@ impl Cast {
     pub fn dequeue_buffer_and_clear(&mut self, renderer: &mut GlesRenderer) -> bool {
         let mut inner = self.inner.borrow_mut();
 
-        // Clear out the damage tracker if we're in Ready state.
         if let CastState::Ready {
             damage_tracker,
             cursor_damage_tracker,
@@ -1241,8 +1166,6 @@ impl CastState {
 }
 
 fn pw_version_supports_cursor_metadata() -> bool {
-    // This PipeWire version fixed a critical memory issue with cursor metadata:
-    // https://gitlab.freedesktop.org/pipewire/pipewire/-/merge_requests/2538
     unsafe { pw_check_library_version(1, 4, 8) }
 }
 
@@ -1345,8 +1268,6 @@ fn find_preferred_modifier(
         .context("error exporting GBM buffer object as dmabuf")?;
     let plane_count = dmabuf.num_planes();
 
-    // FIXME: Ideally this also needs to try binding the dmabuf for rendering.
-
     Ok((modifier, plane_count))
 }
 
@@ -1396,12 +1317,9 @@ fn allocate_dmabuf(
 }
 
 unsafe fn return_unused_buffer(stream: &Stream, pw_buffer: NonNull<pw_buffer>) {
-    // pw_stream_return_buffer() requires too new PipeWire (1.4.0). So, mark as
-    // corrupted and queue.
     let pw_buffer = pw_buffer.as_ptr();
     let spa_buffer = (*pw_buffer).buffer;
     let chunk = (*(*spa_buffer).datas).chunk;
-    // Some (older?) consumers will check for size == 0 instead of the CORRUPTED flag.
     (*chunk).size = 0;
     (*chunk).flags = SPA_CHUNK_FLAG_CORRUPTED as i32;
 
@@ -1418,29 +1336,15 @@ unsafe fn mark_buffer_as_good(pw_buffer: NonNull<pw_buffer>, sequence: &mut u64)
     let spa_buffer = (*pw_buffer).buffer;
     let chunk = (*(*spa_buffer).datas).chunk;
 
-    // With DMA-BUFs, consumers should ignore the size field, and producers are allowed
-    // to set it to 0.
-    //
-    // https://docs.pipewire.org/page_dma_buf.html
-    //
-    // However, OBS checks for size != 0 as a workaround for old compositor versions,
-    // so we set it to 1.
     (*chunk).size = 1;
-    // Clear the corrupted flag we may have set before.
     (*chunk).flags = SPA_CHUNK_FLAG_NONE as i32;
 
     *sequence = sequence.wrapping_add(1);
     if let Some(header) = find_meta_header(spa_buffer) {
         let header = header.as_ptr();
-        // Clear the corrupted flag we may have set before.
         (*header).flags = 0;
         (*header).seq = *sequence;
 
-        // Set buffer timestamp as unknown.
-        //
-        // FIXME: we could try passing real presentation timestamps for rendered frames here.
-        // However, then we must also ensure that the time base never jumps (e.g. when switching a
-        // dynamic cast between outputs) as this would mess up the timing downstream.
         (*header).pts = -1;
     }
 }
@@ -1462,7 +1366,6 @@ unsafe fn add_invisible_cursor(spa_buffer: *mut spa_buffer) {
             return;
         };
 
-        // The cursor is present but invisible.
         cursor_meta.id = 1;
         cursor_meta.position.x = 0;
         cursor_meta.position.y = 0;
@@ -1475,16 +1378,6 @@ unsafe fn add_invisible_cursor(spa_buffer: *mut spa_buffer) {
             .cast::<spa_meta_bitmap>();
         let bitmap_meta = &mut *bitmap_meta_ptr;
 
-        // HACK: PipeWire docs say offset = 0 means invisible.
-        //
-        // Unfortunately, OBS doesn't actually check that, instead it checks that size isn't zero:
-        // https://github.com/obsproject/obs-studio/blob/f4aaa5f0417c5ec40a3799551e125129fce1e007/plugins/linux-pipewire/pipewire.c#L900
-        //
-        // Unfortunately, libwebrtc, on top of ignoring offset, also treats size = 0 as "preserve
-        // previous cursor":
-        // https://webrtc.googlesource.com/src/+/97b46e12582606a238d4f0c8524365cf5bdcb411/modules/desktop_capture/linux/wayland/shared_screencast_stream.cc#765
-        //
-        // So, send a 1x1 transparent pixel instead...
         bitmap_meta.offset = BITMAP_DATA_OFFSET as _;
         bitmap_meta.size.width = 1;
         bitmap_meta.size.height = 1;
@@ -1533,7 +1426,6 @@ unsafe fn add_cursor_metadata(
             .cast::<spa_meta_bitmap>();
         let bitmap_meta = &mut *bitmap_meta_ptr;
 
-        // Start with a 1x1 transparent pixel; see comment in add_invisible_cursor().
         bitmap_meta.offset = BITMAP_DATA_OFFSET as _;
         bitmap_meta.size.width = 1;
         bitmap_meta.size.height = 1;
@@ -1555,13 +1447,6 @@ unsafe fn add_cursor_metadata(
 
         let _span = tracy_client::span!("add_cursor_metadata render cursor");
 
-        // FIXME: use a reliable buffer whenever we're rendering the cursor.
-        //
-        // PipeWire buffers are not normally guaranteed to reach the destination, so our buffer
-        // with the rendered cursor bitmap may not reach the consumer.
-        //
-        // Reliable buffers should be available starting from 1.6.0:
-        // https://gitlab.freedesktop.org/pipewire/pipewire/-/issues/4885
         let mapping = match render_and_download(
             renderer,
             size,
@@ -1586,7 +1471,6 @@ unsafe fn add_cursor_metadata(
 
         bitmap_slice[..pixels.len()].copy_from_slice(pixels);
 
-        // Fill the metadata now that everything succeeded.
         bitmap_meta.size.width = size.w as _;
         bitmap_meta.size.height = size.h as _;
         bitmap_meta.stride = size.w * CURSOR_BPP as i32;

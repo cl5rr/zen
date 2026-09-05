@@ -9,38 +9,22 @@ use smithay::utils::{Logical, Physical, Point, Rectangle, Scale, Size, Transform
 use super::{render_to_encompassing_texture, ToRenderElement};
 use crate::render_helpers::{RenderCtx, RenderTarget};
 
-/// Snapshot of a render.
 #[derive(Debug)]
 pub struct RenderSnapshot<C, B> {
-    /// Contents for a normal render.
-    ///
-    /// Relative to the geometry.
     pub contents: Vec<C>,
 
-    /// Contents that are not blocked out, but the background is blocked out.
-    ///
-    /// If `None` then the background doesn't have any blocked-out surfaces, and normal `contents`
-    /// can be used instead.
     pub contents_with_blocked_out_bg: Option<Vec<C>>,
 
-    /// Blocked-out contents.
-    ///
-    /// Relative to the geometry.
     pub blocked_out_contents: Vec<B>,
 
-    /// Where the contents were blocked out from at the time of the snapshot.
     pub block_out_from: Option<BlockOutFrom>,
 
-    /// Visual size of the element at the point of the snapshot.
     pub size: Size<f64, Logical>,
 
-    /// Contents rendered into a texture (lazily).
     pub texture: OnceCell<Option<(GlesTexture, Rectangle<i32, Physical>)>>,
 
-    /// Contents with blocked-out bg rendered into a texture (lazily).
     pub texture_with_blocked_out_bg: OnceCell<Option<(GlesTexture, Rectangle<i32, Physical>)>>,
 
-    /// Blocked-out contents rendered into a texture (lazily).
     pub blocked_out_texture: OnceCell<Option<(GlesTexture, Rectangle<i32, Physical>)>>,
 }
 

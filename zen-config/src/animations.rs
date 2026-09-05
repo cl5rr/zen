@@ -82,8 +82,6 @@ impl MergeWith<AnimationsPart> for Animations {
 
         merge!((self, part), slowdown);
 
-        // Animation properties are fairly tied together, except maybe `off`. So let's just save
-        // ourselves the work and not merge within individual animations.
         merge_clone!(
             (self, part),
             workspace_switch,
@@ -641,8 +639,6 @@ impl Animation {
                                     "missing x1 coordinate for cubic Bézier curve control point",
                                 )
                             })?;
-                            // the X axis represents time frame so it cannot be negative
-                            // or larger than 1
                             let x1: FloatOrInt<0, 1> =
                                 knuffel::traits::DecodeScalar::decode(val, ctx)?;
                             let val = iter_args.next().ok_or_else(|| {
@@ -724,18 +720,13 @@ impl Animation {
         }
 
         let kind = if let Some(spring_params) = spring_params {
-            // Configured spring.
             Kind::Spring(spring_params)
         } else if easing_params == OptionalEasingParams::default() {
-            // Did not configure anything.
             default.kind
         } else {
-            // Configured easing.
             let default = if let Kind::Easing(easing) = default.kind {
                 easing
             } else {
-                // Generic fallback values for when the default animation is spring, but the user
-                // configured an easing animation.
                 EasingParams {
                     duration_ms: 250,
                     curve: Curve::EaseOutCubic,

@@ -22,36 +22,24 @@ use crate::utils::{baba_is_float_offset, round_logical_in_physical};
 
 #[derive(Debug)]
 pub struct MappedLayer {
-    /// The surface itself.
     surface: LayerSurface,
 
-    /// Pre-commit hook that we have on all mapped layer surfaces.
     pre_commit_hook: HookId,
 
-    /// Up-to-date rules.
     rules: ResolvedLayerRules,
 
-    /// Whether to recompute layer rules on the next commit.
-    ///
-    /// Set in the pre-commit hook when the layer changes; consumed in the commit handler.
     recompute_rules_on_commit: bool,
 
-    /// Buffer to draw instead of the surface when it should be blocked out.
     block_out_buffer: SolidColorBuffer,
 
-    /// The shadow around the surface.
     shadow: Shadow,
 
-    /// The blur config, passed for background effect rendering.
     blur_config: zen_config::Blur,
 
-    /// The view size for the layer surface's output.
     view_size: Size<f64, Logical>,
 
-    /// Scale of the output the layer surface is on (and rounds its sizes to).
     scale: f64,
 
-    /// Clock for driving animations.
     clock: Clock,
 }
 
@@ -75,7 +63,6 @@ impl MappedLayer {
         config: &Config,
     ) -> Self {
         let mut shadow_config = config.layout.shadow;
-        // Shadows for layer surfaces need to be explicitly enabled.
         shadow_config.on = false;
         shadow_config.merge_with(&rules.shadow);
 
@@ -95,7 +82,6 @@ impl MappedLayer {
 
     pub fn update_config(&mut self, config: &Config) {
         let mut shadow_config = config.layout.shadow;
-        // Shadows for layer surfaces need to be explicitly enabled.
         shadow_config.on = false;
         shadow_config.merge_with(&self.rules.shadow);
         self.shadow.update_config(shadow_config);
@@ -113,7 +99,6 @@ impl MappedLayer {
     }
 
     pub fn update_render_elements(&mut self, size: Size<f64, Logical>) {
-        // Round to physical pixels.
         let size = size
             .to_physical_precise_round(self.scale)
             .to_logical(self.scale);
@@ -121,7 +106,6 @@ impl MappedLayer {
         self.block_out_buffer.resize(size);
 
         let radius = self.rules.geometry_corner_radius.unwrap_or_default();
-        // FIXME: is_active based on keyboard focus?
         self.shadow
             .update_render_elements(size, true, radius, self.scale, 1.);
     }
@@ -138,7 +122,6 @@ impl MappedLayer {
         &self.rules
     }
 
-    /// Recomputes the resolved layer rules and returns whether they changed.
     pub fn recompute_layer_rules(&mut self, rules: &[LayerRule], is_at_startup: bool) -> bool {
         let new_rules = ResolvedLayerRules::compute(rules, &self.surface, is_at_startup);
         if new_rules == self.rules {
@@ -203,10 +186,8 @@ impl MappedLayer {
 
         let should_block_out = ctx.target.should_block_out(self.rules.block_out_from);
         if should_block_out {
-            // Round to physical pixels.
             let location = location.to_physical_precise_round(scale).to_logical(scale);
 
-            // FIXME: take geometry-corner-radius into account.
             let elem = SolidColorRenderElement::from_buffer(
                 &self.block_out_buffer,
                 location,
@@ -215,7 +196,6 @@ impl MappedLayer {
             );
             push(elem.into());
         } else {
-            // Layer surfaces don't have extra geometry like windows.
             let buf_pos = location;
 
             push_elements_from_surface_tree(
@@ -234,7 +214,7 @@ impl MappedLayer {
             .render(ctx.renderer, location, &mut |elem| push(elem.into()));
 
         let geometry = Rectangle::new(location, self.block_out_buffer.size());
-        let surface_off = Point::new(0., 0.); // No geometry on layer surfaces.
+        let surface_off = Point::new(0., 0.);
         let surface_anim_scale = Scale::from(1.);
         let radius = self.rules.geometry_corner_radius.unwrap_or_default();
         background_effect::render_for_tile(
@@ -278,7 +258,6 @@ impl MappedLayer {
         for (popup, offset) in PopupManager::popups_for_surface(surface) {
             let popup_rules = match popup {
                 PopupKind::Xdg(_) => self.rules.popups,
-                // IME popups aren't affected by rules for regular popups.
                 PopupKind::InputMethod(_) => zen_config::ResolvedPopupsRules::default(),
             };
             let alpha = alpha * popup_rules.opacity.unwrap_or(1.).clamp(0., 1.);
@@ -301,7 +280,6 @@ impl MappedLayer {
             let surface_off = popup_geo.loc.upscale(-1).to_f64();
             let surface_anim_scale = Scale::from(1.);
             let mut effect = popup_rules.background_effect;
-            // Default xray to false for pop-ups since they're always on top of something.
             if effect.xray.is_none() {
                 effect.xray = Some(false);
             }

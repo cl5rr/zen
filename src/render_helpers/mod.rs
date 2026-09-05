@@ -51,9 +51,6 @@ pub mod surface;
 pub mod texture;
 pub mod xray;
 
-/// A rendering context.
-///
-/// Bundles together things needed by most rendering code.
 pub struct RenderCtx<'a, R> {
     pub renderer: &'a mut R,
     pub target: RenderTarget,
@@ -61,7 +58,6 @@ pub struct RenderCtx<'a, R> {
 }
 
 impl<'a, R> RenderCtx<'a, R> {
-    /// Reborrows this context with a smaller lifetime.
     #[inline]
     pub fn r<'b>(&'b mut self) -> RenderCtx<'b, R> {
         RenderCtx {
@@ -82,18 +78,13 @@ impl<'a, R: AsGlesRenderer> RenderCtx<'a, R> {
     }
 }
 
-/// What we're rendering for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderTarget {
-    /// Rendering to display on screen.
     Output = 0,
-    /// Rendering for a screencast.
     Screencast,
-    /// Rendering for any other screen capture.
     ScreenCapture,
 }
 
-/// Buffer with location, src and dst.
 #[derive(Debug)]
 pub struct BakedBuffer<B> {
     pub buffer: B,
@@ -310,7 +301,6 @@ pub fn render_to_shm(
         let fourcc = Fourcc::Xrgb8888;
 
         ensure!(
-            // The buffer prefers pixels in little endian ...
             buffer_data.format == wl_shm::Format::Xrgb8888
                 && buffer_data.width == size.w
                 && buffer_data.height == size.h

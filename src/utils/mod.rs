@@ -50,7 +50,6 @@ pub static IS_SYSTEMD_SERVICE: AtomicBool = AtomicBool::new(false);
 
 use id::IdCounter;
 
-/// Unique ID for a screencast session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CastSessionId(u64);
 
@@ -77,7 +76,6 @@ impl From<u64> for CastSessionId {
     }
 }
 
-/// Unique ID for a screencast stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CastStreamId(u64);
 
@@ -172,7 +170,6 @@ pub fn center_f64(rect: Rectangle<f64, Logical>) -> Point<f64, Logical> {
     rect.loc + rect.size.downscale(2.0).to_point()
 }
 
-/// Convert logical pixels to physical, rounding to physical pixels.
 pub fn to_physical_precise_round<N: Coordinate>(scale: f64, logical: impl Coordinate) -> N {
     N::from_f64((logical.to_f64() * scale).round())
 }
@@ -251,7 +248,6 @@ pub fn ipc_transform_to_smithay(transform: zen_ipc::Transform) -> Transform {
 }
 
 pub fn is_mapped(surface: &WlSurface) -> bool {
-    // None if the surface hadn't committed yet.
     with_renderer_surface_state(surface, |state| state.buffer().is_some()).unwrap_or(false)
 }
 
@@ -276,10 +272,6 @@ pub fn expand_home(path: &Path) -> anyhow::Result<Option<PathBuf>> {
     }
 }
 
-/// Formats the current local time with a strftime format string.
-///
-/// Returns `None` rather than erroring: a clock that cannot read the clock should quietly not
-/// draw, not take the compositor down with it.
 pub fn format_local_time(format: &str) -> Option<String> {
     let format = CString::new(format).ok()?;
 
@@ -353,9 +345,6 @@ pub fn is_laptop_panel(connector: &str) -> bool {
     matches!(connector.get(..4), Some("eDP-" | "LVDS" | "DSI-"))
 }
 
-/// Returns the geometry of the surface.
-///
-/// Returns `None` if the surface isn't mapped.
 pub fn surface_geo(states: &SurfaceData) -> Option<Rectangle<i32, Logical>> {
     let data = states.data_map.get::<RendererSurfaceStateUserData>();
     data.and_then(|d| d.lock().unwrap().view())
@@ -415,21 +404,18 @@ pub fn with_toplevel_last_uncommitted_configure<T>(
         let mut guard = states.cached_state.get::<ToplevelCachedState>();
 
         if let Some(last_pending) = role.pending_configures().last() {
-            // Configure not yet acked by the client.
             f(Some(last_pending))
         } else if let Some(last_acked) = &role.last_acked {
             let mut configure = Some(last_acked);
 
             if let Some(committed) = &guard.current().last_acked {
                 if committed.serial.is_no_older_than(&last_acked.serial) {
-                    // Already committed to this configure.
                     configure = None;
                 }
             }
 
             f(configure)
         } else {
-            // Surface hadn't been configured yet.
             f(None)
         }
     })
@@ -440,43 +426,14 @@ pub fn update_tiled_state(
     prefer_no_csd: bool,
     force_tiled: Option<bool>,
 ) {
-    // Determine the default value for our tiled state. The idea is to use the tiled state to
-    // make windows rectangular even if they don't support xdg-decoration (e.g. GTK).
-    //
-    // If the user prefers no CSD, it's a reasonable assumption that they would prefer to get
-    // rid of the various client-side rounded corners also by using the tiled state.
     let should_tile = || {
-        // Figure out if the client bound any decoration globals for this window. In this case,
-        // the pending decoration mode will be set to something (we always set it upon binding the
-        // global and never reset to None).
-        //
-        // If the client bound a decoration global, use the mode that we negotiated. This way,
-        // changing the decoration mode on the client at runtime will synchronize with the
-        // default tiled state.
         if let Some(mode) = toplevel.with_pending_state(|state| state.decoration_mode) {
             mode == zxdg_toplevel_decoration_v1::Mode::ServerSide
         } else if let Some(mode) = with_states(toplevel.wl_surface(), |states| {
             states.data_map.get::<KdeDecorationsModeState>().cloned()
         }) {
-            // Actually, make the KDE decoration overridable with prefer_no_csd. GTK 3 likes to
-            // always request CSD through it, and we want prefer_no_csd to set the tiled state
-            // automatically for GTK 3. Also, unlike xdg-decoration, KDE decoration is not
-            // synchronized to commits, so that argument is less important.
             mode.is_server() || prefer_no_csd
         } else {
-            // The client doesn't see or doesn't care about the decoration protocols. In this
-            // case, use the current prefer_no_csd value as the user's intention.
-            //
-            // This is a bit weird because it makes it seem like prefer_no_csd can apply live,
-            // while that isn't really the case. That's because prefer_no_csd controls two separate
-            // things: whether the client sees the decoration globals, and the tiled state.
-            //
-            // A more accurate way would perhaps be to check if the client cannot see the
-            // decoration globals, and in this case behave as if prefer_no_csd was false. However,
-            // this also regresses the common case of GTK 4 applications that do not react to
-            // xdg-decoration in any way, and therefore the tiled state *is* the "no CSD" mode from
-            // the user's perspective, so by artificially gating it we would artificially make it
-            // impossible to apply it live for GTK 4 applications.
             prefer_no_csd
         }
     };
@@ -542,7 +499,6 @@ pub fn clamp_preferring_top_left_in_area(
     rect.loc.x = f64::min(rect.loc.x, area.loc.x + area.size.w - rect.size.w);
     rect.loc.y = f64::min(rect.loc.y, area.loc.y + area.size.h - rect.size.h);
 
-    // Clamp by top and left last so it takes precedence.
     rect.loc.x = f64::max(rect.loc.x, area.loc.x);
     rect.loc.y = f64::max(rect.loc.y, area.loc.y);
 }
@@ -574,7 +530,6 @@ pub fn show_screenshot_notification(image_path: Option<&Path>) -> anyhow::Result
 
     let conn = zbus::blocking::Connection::session()?;
 
-    // Try to add the screenshot as an image if possible.
     let mut image_url = None;
     if let Some(path) = image_path {
         match path.canonicalize() {

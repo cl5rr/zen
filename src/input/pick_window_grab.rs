@@ -28,7 +28,6 @@ impl PickWindowGrab {
             .zen
             .cursor_manager
             .set_cursor_image(CursorImageStatus::default_named());
-        // Redraw to update the cursor.
         state.zen.queue_redraw_all();
     }
 }
@@ -64,7 +63,6 @@ impl PointerGrab<State> for PickWindowGrab {
             return;
         }
 
-        // We're handling this press, don't send the release to the window.
         data.zen.suppressed_buttons.insert(event.button);
 
         if let Some(tx) = data.zen.pick_window.take() {

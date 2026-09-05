@@ -16,7 +16,6 @@ use super::shaders::{mat3_uniform, ProgramType, Shaders};
 use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
 use crate::render_helpers::renderer::AsGlesFrame as _;
 
-/// Renders a rounded rectangle shadow.
 #[derive(Debug, Clone)]
 pub struct ShadowRenderElement {
     inner: ShaderRenderElement,
@@ -30,7 +29,6 @@ struct Parameters {
     color: Color,
     sigma: f32,
     corner_radius: CornerRadius,
-    // Should only be used for visual improvements, i.e. corner radius anti-aliasing.
     scale: f32,
     alpha: f32,
 

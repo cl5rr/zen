@@ -12,25 +12,17 @@ use smithay::wayland::compositor::{
 use crate::state::State;
 use crate::utils::region::region_to_non_overlapping_rects;
 
-/// Per-surface cache for processed blur region (non-overlapping rects).
 #[derive(Default)]
 struct CachedBlurRegionUserData(Mutex<CachedBlurRegionInner>);
 
 #[derive(Default)]
 struct CachedBlurRegionInner {
-    /// Whether a region change is pending to be committed.
     pending_dirty: bool,
-    /// Whether the region must be recomputed.
     dirty: bool,
-    /// Whether the post-commit hook has been registered for this surface.
     hook_registered: bool,
-    /// Cached non-overlapping rects in surface-local coordinates.
-    ///
-    /// `None` means there's no blur region.
     rects: Option<Arc<Vec<Rectangle<i32, Logical>>>>,
 }
 
-/// Gets the cached blur region for a surface, lazily recomputing if dirty.
 pub fn get_cached_blur_region(states: &SurfaceData) -> Option<Arc<Vec<Rectangle<i32, Logical>>>> {
     let cache = states
         .data_map

@@ -96,13 +96,10 @@ impl SeatHandler for State {
     }
 
     fn cursor_image(&mut self, _seat: &Seat<Self>, mut image: CursorImageStatus) {
-        // FIXME: this hack should be removable once the screenshot UI is tracked with a
-        // PointerFocus properly.
         if self.zen.screenshot_ui.is_open() {
             image = CursorImageStatus::Named(CursorIcon::Crosshair);
         }
         self.zen.cursor_manager.set_cursor_image(image);
-        // FIXME: more granular
         self.zen.queue_redraw_all();
     }
 
@@ -138,17 +135,13 @@ impl TabletSeatHandler for State {
     type ToolFocus = WlSurface;
 
     fn tablet_tool_image(&mut self, _tool: &TabletToolDescriptor, image: CursorImageStatus) {
-        // FIXME: tablet tools should have their own cursors.
         self.zen.cursor_manager.set_cursor_image(image);
-        // FIXME: granular.
         self.zen.queue_redraw_all();
     }
 }
 
 impl PointerConstraintsHandler for State {
     fn new_constraint(&mut self, _surface: &WlSurface, _pointer: &PointerHandle<Self>) {
-        // Pointer constraints track pointer focus internally, so make sure it's up to date before
-        // activating a new one.
         self.refresh_pointer_contents();
 
         self.zen.maybe_activate_pointer_constraint();
@@ -168,15 +161,6 @@ impl PointerConstraintsHandler for State {
             return;
         }
 
-        // Note: this is surface under pointer, not pointer focus. So if you start, say, a
-        // middle-drag in Blender, then touchpad-swipe the window away, the surface under pointer
-        // will change, even though the real pointer focus remains on the Blender surface due to
-        // the click grab.
-        //
-        // Ideally we would just use the constraint surface, but we need its origin. So this is
-        // more of a hack because pointer contents has the surface origin available.
-        //
-        // FIXME: use the constraint surface somehow, don't use pointer contents.
         let Some((ref surface_under_pointer, origin)) = self.zen.pointer_contents.surface else {
             return;
         };
@@ -195,7 +179,6 @@ impl PointerConstraintsHandler for State {
             .output_for_root(&root)
             .and_then(|output| self.zen.global_space.output_geometry(output))
             .map_or(origin + location, |mut output_geometry| {
-                // i32 sizes are exclusive, but f64 sizes are inclusive.
                 output_geometry.size -= (1, 1).into();
                 (origin + location).constrain(output_geometry.to_f64())
             });
@@ -208,30 +191,17 @@ impl PointerConstraintsHandler for State {
         pointer: &PointerHandle<Self>,
         _constraint: Option<&PointerConstraint>,
     ) {
-        // Since a pointer constraint is broken when a surface loses pointer focus, and one surface
-        // can only have a single pointer constraint at once, assume there can be only one
-        // constraint active at once, and therefore the global position hint should come from that
-        // one constraint that just got removed.
         let Some(target) = self.zen.pointer_constraint_position_hint.take() else {
-            // The client never sent a position hint.
             return;
         };
 
-        // If the constraint was broken by the pointer forcibly leaving the surface (e.g. the user
-        // opened the overview), then it doesn't make much sense to warp it.
-        //
-        // Furthermore, when the constraint is removed as part of the pointer leaving the surface,
-        // this call happens with locked pointer data, and calling set_location() will try to lock
-        // it again and deadlock.
         if pointer.last_enter().is_none() {
             return;
         }
 
         pointer.set_location(target);
 
-        // Redraw to update the cursor position if it's visible.
         if self.zen.pointer_visibility.is_visible() {
-            // FIXME: redraw only outputs overlapping the cursor.
             self.zen.queue_redraw_all();
         }
     }
@@ -282,7 +252,6 @@ impl KeyboardShortcutsInhibitHandler for State {
     }
 
     fn new_inhibitor(&mut self, inhibitor: KeyboardShortcutsInhibitor) {
-        // FIXME: show a confirmation dialog with a "remember for this application" kind of toggle.
         inhibitor.activate();
         self.zen
             .keyboard_shortcuts_inhibiting_surfaces
@@ -311,7 +280,6 @@ impl SelectionHandler for State {
 
         let buf = user_data.clone();
         thread::spawn(move || {
-            // Clear O_NONBLOCK, otherwise File::write_all() will stop halfway.
             if let Err(err) = fcntl_setfl(&fd, OFlags::empty()) {
                 warn!("error clearing flags on selection target fd: {err:?}");
             }
@@ -358,7 +326,6 @@ impl WaylandDndGrabHandler for State {
             }
         }
 
-        // FIXME: more granular
         self.zen.queue_redraw_all();
     }
 }
@@ -374,11 +341,8 @@ impl DndGrabHandler for State {
         let target: Option<&WlSurface> = target.map(DndTarget::into_inner);
         trace!("dnd dropped, target: {target:?}, validated: {validated}");
 
-        // End DnD before activating a specific window below so that it takes precedence.
         self.zen.on_maybe_dnd_ended();
 
-        // Activate the target output, since that's how Firefox drag-tab-into-new-window works for
-        // example. On successful drop, additionally activate the target window.
         let mut activate_output = true;
         if let Some(target) = validated.then_some(target).flatten() {
             let root = self.zen.find_root_shell_surface(target);
@@ -391,7 +355,6 @@ impl DndGrabHandler for State {
         }
 
         if activate_output {
-            // Find the output from drop coordinates.
             if let Some((output, _)) = self.zen.output_under(location) {
                 let output = output.clone();
                 self.zen.layout.focus_output(&output);
@@ -410,7 +373,6 @@ impl crate::state::Zen {
     fn on_maybe_dnd_ended(&mut self) {
         self.layout.dnd_end();
         self.dnd_icon = None;
-        // FIXME: more granular
         self.queue_redraw_all();
     }
 }
@@ -613,9 +575,7 @@ impl ExtWorkspaceHandler for State {
                 self.zen.layout.focus_output(&output);
             }
             self.zen.layout.switch_workspace(index);
-            // No mouse warp: assuming the layer-shell bar workspaces use-case.
 
-            // FIXME: granular
             self.zen.queue_redraw_all();
         }
     }
@@ -632,14 +592,11 @@ impl ExtWorkspaceHandler for State {
 
 impl ScreencopyHandler for State {
     fn frame(&mut self, manager: &ZwlrScreencopyManagerV1, screencopy: Screencopy) {
-        // This can happen if the output was removed before this was called.
         if !self.zen.output_exists(screencopy.output()) {
             trace!("screencopy output no longer exists");
             return;
         }
 
-        // If with_damage then push it onto the queue for redraw of the output,
-        // otherwise render it immediately.
         if screencopy.with_damage() {
             self.zen.screencopy_state.push(manager, screencopy);
         } else {
@@ -736,7 +693,7 @@ impl GammaControlHandler for State {
 
     fn get_gamma_size(&mut self, output: &Output) -> Option<u32> {
         match self.backend.tty().get_gamma_size(output) {
-            Ok(0) => None, // Setting gamma is not supported.
+            Ok(0) => None,
             Ok(size) => Some(size),
             Err(err) => {
                 warn!(
@@ -767,10 +724,6 @@ impl XdgActivationHandler for State {
     }
 
     fn token_created(&mut self, _token: XdgActivationToken, data: XdgActivationTokenData) -> bool {
-        // Tokens without a serial are urgency-only. This is not specified, but it seems to be the
-        // common client behavior.
-        //
-        // See also: https://gitlab.freedesktop.org/wayland/wayland-protocols/-/issues/150
         let Some((serial, seat)) = data.serial else {
             data.user_data.insert_if_missing(|| UrgentOnlyMarker);
             return true;
@@ -779,20 +732,11 @@ impl XdgActivationHandler for State {
             return false;
         };
 
-        // Widely-used clients such as Discord and Telegram make new tokens (with invalid serials)
-        // upon clicking on their tray icon or on their notification. This debug flag makes that
-        // work.
-        //
-        // Clicking on a notification sends clients a perfectly valid activation token from the
-        // notification daemon, but alas they ignore it. Maybe in the future the clients are fixed,
-        // and we can remove this debug flag.
         let config = self.zen.config.borrow();
         if config.debug.honor_xdg_activation_with_invalid_serial {
             return true;
         }
 
-        // Check the serial against both a keyboard and a pointer, since layer-shell surfaces
-        // with no keyboard interactivity won't have any keyboard focus.
         let kb_last_enter = seat.get_keyboard().unwrap().last_enter();
         if kb_last_enter.is_some_and(|last_enter| serial.is_no_older_than(&last_enter)) {
             return true;

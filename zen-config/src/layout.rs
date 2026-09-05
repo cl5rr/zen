@@ -160,13 +160,9 @@ pub struct Struts {
 
 #[derive(knuffel::DecodeScalar, Debug, Default, PartialEq, Eq, Clone, Copy)]
 pub enum CenterFocusedColumn {
-    /// Focusing a column will not center the column.
     #[default]
     Never,
-    /// The focused column will always be centered.
     Always,
-    /// Focusing a column will center it if it doesn't fit on the screen together with the
-    /// previously focused column.
     OnOverflow,
 }
 

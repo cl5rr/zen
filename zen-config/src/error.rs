@@ -8,17 +8,9 @@ use miette::Diagnostic;
 pub struct ConfigParseResult<T, E> {
     pub config: Result<T, E>,
 
-    // We always try to return includes for the file watcher.
-    //
-    // If the main config is valid, but an included file fails to parse, config will be an Err(),
-    // but includes will still be filled, so that fixing just the included file is enough to
-    // trigger a reload.
     pub includes: Vec<PathBuf>,
 }
 
-/// Error type that chains main errors with include errors.
-///
-/// Allows miette's Report formatting to have main + include errors all in one.
 #[derive(Debug)]
 pub struct ConfigIncludeError {
     pub main: knuffel::Error,

@@ -29,22 +29,17 @@ use pw_utils::{Cast, CastSizeChange, CursorData, PipeWire, PwToZen};
 pub struct Screencasting {
     pub casts: Vec<Cast>,
 
-    /// Dynamic-target casts waiting for their first target to start.
     pub pending_dynamic_casts: Vec<PendingCast>,
 
     pub pw_to_zen: calloop::channel::Sender<PwToZen>,
 
-    /// Screencast output for each mapped window.
     pub mapped_cast_output: HashMap<Window, Output>,
 
-    /// Window ID for the "dynamic cast" special window for the xdp-gnome picker.
     pub dynamic_cast_id_for_portal: MappedId,
 
-    // Drop PipeWire last, and specifically after casts, to prevent a double-free (yay).
     pub pipewire: Option<PipeWire>,
 }
 
-/// A screencast request that hasn't been started yet.
 pub struct PendingCast {
     pub session_id: CastSessionId,
     pub stream_id: CastStreamId,
@@ -83,7 +78,6 @@ impl State {
             .gbm_device()
             .context("no GBM device available")?;
 
-        // Ensure PipeWire is initialized.
         if self.zen.casting.pipewire.is_none() {
             let pw = PipeWire::new(
                 self.zen.event_loop.clone(),
@@ -165,11 +159,9 @@ impl State {
             CastTarget::Window { id } => *id,
         };
 
-        // Lack of partial borrowing strikes again...
         let mut casts = mem::take(&mut self.zen.casting.casts);
         let cast = &mut casts[idx];
         let mut stop = false;
-        // Use a loop {} so we can break instead of early-return.
         #[allow(clippy::never_loop)]
         loop {
             let mut windows = self.zen.layout.windows();
@@ -177,8 +169,6 @@ impl State {
                 break;
             };
 
-            // Use the cached output since it will be present even if the output was
-            // currently disconnected.
             let Some(output) = self.zen.casting.mapped_cast_output.get(&mapped.window) else {
                 break;
             };
@@ -207,10 +197,6 @@ impl State {
                     if let Some((pointer_pos, win_pos)) =
                         self.zen.pointer_pos_for_window_cast(mapped)
                     {
-                        // Pointer location must be relative to the screencast buffer.
-                        // - win_pos is the position of the main window surface in output-local
-                        //   coordinates
-                        // - bbox.loc moves us relative to the screencast buffer
                         let buf_pos = win_pos + bbox.loc.to_f64().to_logical(scale);
                         let output_pos =
                             self.zen.global_space.output_geometry(output).unwrap().loc;
@@ -259,8 +245,6 @@ impl State {
 
         let mut refresh = None;
         match &target {
-            // Leave refresh as is when clearing. Chances are, the next refresh will match it,
-            // then we'll avoid reconfiguring.
             CastTarget::Nothing => (),
             CastTarget::Output { output, .. } => {
                 if let Some(output) = output.upgrade() {
@@ -300,7 +284,6 @@ impl State {
             self.redraw_cast(id);
         }
 
-        // Start any pending dynamic casts if we have a real target.
         if !matches!(target, CastTarget::Nothing) {
             self.start_pending_dynamic_casts(&target);
         }
@@ -315,7 +298,6 @@ impl State {
 
         let _span = tracy_client::span!("State::start_pending_dynamic_casts");
 
-        // We don't stop dynamic casts on missing output/window.
         let (size, refresh) = match target {
             CastTarget::Nothing => panic!("dynamic cast starting target must not be Nothing"),
             CastTarget::Output { output, .. } => {
@@ -348,10 +330,8 @@ impl State {
         };
         let pw = self.zen.casting.pipewire.as_ref().unwrap();
 
-        // Alpha is always true since the dynamic target can change between window & output.
         let alpha = true;
 
-        // Start each pending cast.
         let mut to_stop = HashSet::new();
         for pending in self.zen.casting.pending_dynamic_casts.drain(..) {
             let res = pw.start_cast(
@@ -469,10 +449,8 @@ impl State {
 
 impl Zen {
     pub fn refresh_mapped_cast_window_rules(&mut self) {
-        // O(N^2) but should be fine since there aren't many casts usually.
         self.layout.with_windows_mut(|mapped, _| {
             let id = mapped.id().get();
-            // Find regardless of cast.is_active.
             let value = self
                 .casting
                 .casts
@@ -582,8 +560,6 @@ impl Zen {
                     let pointer_loc = self
                         .tablet_cursor_location
                         .unwrap_or_else(|| self.seat.get_pointer().unwrap().current_location());
-                    // Only render when the pointer is within the output. Otherwise, it will
-                    // happily appear anywhere outside the output video source in OBS.
                     if output_geo.contains(pointer_loc) {
                         pointer_pos = pointer_loc - output_geo.loc;
                         self.render_pointer(renderer, output, &mut |elem| {
@@ -670,10 +646,6 @@ impl Zen {
 
             if self.pointer_visibility.is_visible() {
                 if let Some((pointer_pos, win_pos)) = self.pointer_pos_for_window_cast(mapped) {
-                    // Pointer location must be relative to the screencast buffer.
-                    // - win_pos is the position of the main window surface in output-local
-                    //   coordinates
-                    // - bbox.loc moves us relative to the screencast buffer
                     let buf_pos = win_pos + bbox.loc.to_f64().to_logical(scale);
                     let output_pos = self.global_space.output_geometry(output).unwrap().loc;
                     pointer_location = pointer_pos - output_pos.to_f64() - buf_pos;
@@ -743,7 +715,6 @@ impl Zen {
     pub fn stop_casts_for_target(&mut self, target: CastTarget) {
         let _span = tracy_client::span!("Zen::stop_casts_for_target");
 
-        // This is O(N^2) but it shouldn't be a problem I think.
         let mut saw_dynamic = false;
         let mut ids = Vec::new();
         for cast in &self.casting.casts {
@@ -763,7 +734,6 @@ impl Zen {
             self.stop_cast(id);
         }
 
-        // We don't stop dynamic casts, instead we switch them to Nothing.
         if saw_dynamic {
             self.event_loop
                 .insert_idle(|state| state.set_dynamic_cast_target(CastTarget::Nothing));

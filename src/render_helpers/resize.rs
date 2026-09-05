@@ -42,7 +42,6 @@ impl ResizeRenderElement {
         let scale_prev = area.size / size_prev;
         let scale_next = area.size / size_next;
 
-        // Compute the area necessary to fit a crossfade.
         let tex_prev_geo_scaled = tex_prev_geo.to_f64().upscale(scale_prev);
         let tex_next_geo_scaled = tex_next_geo.to_f64().upscale(scale_next);
         let combined_geo = tex_prev_geo_scaled.merge(tex_next_geo_scaled).to_i32_up();
@@ -52,7 +51,6 @@ impl ResizeRenderElement {
             combined_geo.size.to_logical(scale),
         );
 
-        // Convert Smithay types into glam types.
         let area_loc = Vec2::new(area.loc.x as f32, area.loc.y as f32);
         let area_size = Vec2::new(area.size.w as f32, area.size.h as f32);
 
@@ -70,7 +68,6 @@ impl ResizeRenderElement {
 
         let scale = Vec2::new(scale.x as f32, scale.y as f32);
 
-        // Compute the transformation matrices.
         let input_to_curr_geo = Mat3::from_scale(area_size / curr_geo_size)
             * Mat3::from_translation((area_loc - curr_geo_loc) / area_size);
 
@@ -85,7 +82,6 @@ impl ResizeRenderElement {
         let corner_radius = corner_radius.fit_to(curr_geo_size.x, curr_geo_size.y);
         let clip_to_geometry = if clip_to_geometry { 1. } else { 0. };
 
-        // Create the shader.
         Self(
             ShaderRenderElement::new(
                 ProgramType::Resize,

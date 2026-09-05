@@ -10,20 +10,12 @@ pub use merge_with::*;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Percent(pub f64);
 
-// MIN and MAX generics are only used during parsing to check the value.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct FloatOrInt<const MIN: i32, const MAX: i32>(pub f64);
 
-/// Flag, with an optional explicit value.
-///
-/// Intended to be used as an `Option<MaybeBool>` field, as a tri-state:
-/// - (missing): unset, `None`
-/// - just `field`: set, `Some(true)`
-/// - explicitly `field true` or `field false`: set, `Some(true)` or `Some(false)`
 #[derive(knuffel::Decode, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Flag(#[knuffel(argument, default = true)] pub bool);
 
-/// `Regex` that implements `PartialEq` by its string form.
 #[derive(Debug, Clone)]
 pub struct RegexEq(pub Regex);
 

@@ -72,15 +72,12 @@ impl XdgShellHandler for State {
 
         let mut grab_start_data = None;
 
-        // See if this comes from a pointer grab.
         let pointer = self.zen.seat.get_pointer().unwrap();
         pointer.with_grab(|grab_serial, grab| {
             if grab_serial == serial {
                 let start_data = grab.start_data();
                 if let Some((focus, _)) = &start_data.focus {
                     if focus.id().same_client_as(&wl_surface.id()) {
-                        // Deny move requests from DnD grabs to work around
-                        // https://gitlab.gnome.org/GNOME/gtk/-/issues/7113
                         let is_dnd_grab = Self::is_dnd_grab(grab.as_any());
 
                         if !is_dnd_grab {
@@ -91,15 +88,12 @@ impl XdgShellHandler for State {
             }
         });
 
-        // See if this comes from a touch grab.
         if let Some(touch) = self.zen.seat.get_touch() {
             touch.with_grab(|grab_serial, grab| {
                 if grab_serial == serial {
                     let start_data = grab.start_data();
                     if let Some((focus, _)) = &start_data.focus {
                         if focus.id().same_client_as(&wl_surface.id()) {
-                            // Deny move requests from DnD grabs to work around
-                            // https://gitlab.gnome.org/GNOME/gtk/-/issues/7113
                             let is_dnd_grab = Self::is_dnd_grab(grab.as_any());
 
                             if !is_dnd_grab {
@@ -111,7 +105,6 @@ impl XdgShellHandler for State {
             });
         }
 
-        // See if this comes from a tablet tool grab.
         let mut tablet_tool = None;
         self.zen.seat.tablet_seat().with_tools(|tools| {
             for tool in tools.values() {
@@ -120,8 +113,6 @@ impl XdgShellHandler for State {
                         let start_data = grab.start_data();
                         if let Some((focus, _)) = &start_data.focus {
                             if focus.id().same_client_as(&wl_surface.id()) {
-                                // Deny move requests from DnD grabs to work around
-                                // https://gitlab.gnome.org/GNOME/gtk/-/issues/7113
                                 let is_dnd_grab = Self::is_dnd_grab(grab.as_any());
 
                                 if !is_dnd_grab {
@@ -192,7 +183,6 @@ impl XdgShellHandler for State {
 
         let mut grab_start_data = None;
 
-        // See if this comes from a pointer grab.
         let pointer = self.zen.seat.get_pointer().unwrap();
         if pointer.has_grab(serial) {
             if let Some(start_data) = pointer.grab_start_data() {
@@ -204,7 +194,6 @@ impl XdgShellHandler for State {
             }
         }
 
-        // See if this comes from a touch grab.
         if let Some(touch) = self.zen.seat.get_touch() {
             if touch.has_grab(serial) {
                 if let Some(start_data) = touch.grab_start_data() {
@@ -217,7 +206,6 @@ impl XdgShellHandler for State {
             }
         }
 
-        // See if this comes from a tablet tool grab.
         let mut tablet_tool = None;
         self.zen.seat.tablet_seat().with_tools(|tools| {
             'outer: for tool in tools.values() {
@@ -246,14 +234,11 @@ impl XdgShellHandler for State {
         let edges = ResizeEdge::from(edges);
         let window = mapped.window.clone();
 
-        // See if we got a double resize-click gesture.
         let time = get_monotonic_time();
         let last_cell = mapped.last_interactive_resize_start();
         let mut last = last_cell.get();
         last_cell.set(Some((time, edges)));
 
-        // Floating windows don't have either of the double-resize-click gestures, so just allow it
-        // to resize.
         if mapped.is_floating() {
             last = None;
             last_cell.set(None);
@@ -261,12 +246,10 @@ impl XdgShellHandler for State {
 
         if let Some((last_time, last_edges)) = last {
             if time.saturating_sub(last_time) <= DOUBLE_CLICK_TIME {
-                // Allow quick resize after a triple click.
                 last_cell.set(None);
 
                 let intersection = edges.intersection(last_edges);
                 if intersection.intersects(ResizeEdge::LEFT_RIGHT) {
-                    // FIXME: don't activate once we can pass specific windows to actions.
                     self.zen.layout.activate_window(&window);
                     self.zen.layer_shell_on_demand_focus = None;
                     self.zen.layout.toggle_full_width();
@@ -275,7 +258,6 @@ impl XdgShellHandler for State {
                     self.zen.layer_shell_on_demand_focus = None;
                     self.zen.layout.reset_window_height(Some(&window));
                 }
-                // FIXME: granular.
                 self.zen.queue_redraw_all();
                 return;
             }
@@ -331,9 +313,6 @@ impl XdgShellHandler for State {
             return;
         };
 
-        // We need to hand out the grab in a way consistent with what update_keyboard_focus()
-        // thinks the current focus is, otherwise it will desync and cause weird issues with
-        // keyboard focus being at the wrong place.
         if self.zen.exit_confirm_dialog.is_open() {
             trace!("ignoring popup grab because the exit confirm dialog is open");
             let _ = PopupManager::dismiss_popup(&root, &popup);
@@ -351,12 +330,7 @@ impl XdgShellHandler for State {
         } else if let Some(output) = self.zen.layout.active_output() {
             let layers = layer_map_for_output(output);
 
-            // FIXME: somewhere here we probably need to check is_overview_open to match the logic
-            // in update_keyboard_focus().
-
             if let Some(layer) = layers.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL) {
-                // This is a grab for a layer surface.
-
                 if let Some(mapped) = self.zen.mapped_layer_surfaces.get(layer) {
                     if mapped.place_within_backdrop() {
                         trace!("ignoring popup grab for a layer surface within overview backdrop");
@@ -365,9 +339,6 @@ impl XdgShellHandler for State {
                     }
                 }
             } else {
-                // This is a grab for a regular window; check that there's no layer surface with a
-                // higher input priority.
-
                 if layers.layers_on(Layer::Overlay).any(|l| {
                     (l.cached_state().keyboard_interactivity
                         == wlr_layer::KeyboardInteractivity::Exclusive
@@ -422,12 +393,6 @@ impl XdgShellHandler for State {
         let keyboard = seat.get_keyboard().unwrap();
         let pointer = seat.get_pointer().unwrap();
 
-        // Smithay cannot do overlapping grabs, so if we have an IME keyboard grab, don't overwrite
-        // it with a popup keyboard grab. This makes the popup menu work in Telegram while an IME
-        // is active (otherwise it hits the grab mismatch check below).
-        //
-        // The second check is for layer surfaces that can't receive keyboard focus, without it
-        // popups don't work properly in Waybar (GTK 3).
         let can_receive_keyboard_focus = !self.zen.seat.input_method().keyboard_grabbed()
             && self
                 .zen
@@ -470,8 +435,6 @@ impl XdgShellHandler for State {
             .layout
             .find_window_and_output_mut(toplevel.wl_surface())
         {
-            // A configure is required in response to this event regardless if there are pending
-            // changes.
             mapped.set_needs_configure();
 
             let window = mapped.window.clone();
@@ -482,8 +445,6 @@ impl XdgShellHandler for State {
                     wants_maximized, ..
                 } => {
                     *wants_maximized = true;
-
-                    // The required configure will be the initial configure.
                 }
                 InitialConfigureState::Configured {
                     rules,
@@ -491,13 +452,10 @@ impl XdgShellHandler for State {
                     is_pending_maximized,
                     ..
                 } => {
-                    // Figure out the monitor following a similar logic to initial configure.
-                    // FIXME: deduplicate.
                     let mon = output
                         .as_ref()
                         .and_then(|o| self.zen.layout.monitor_for_output(o))
                         .map(|mon| (mon, false))
-                        // If not, check if we have a parent with a monitor.
                         .or_else(|| {
                             toplevel
                                 .parent()
@@ -506,7 +464,6 @@ impl XdgShellHandler for State {
                                 .and_then(|o| self.zen.layout.monitor_for_output(o))
                                 .map(|mon| (mon, true))
                         })
-                        // If not, fall back to the active monitor.
                         .or_else(|| {
                             self.zen
                                 .layout
@@ -524,9 +481,6 @@ impl XdgShellHandler for State {
                         .or_else(|| self.zen.layout.active_workspace());
 
                     if let Some(ws) = ws {
-                        // If the window is pending fullscreen, then this will do nothing. But
-                        // that's expected: the window remains fullscreen, and we simply remember
-                        // that it is now pending maximized.
                         *is_pending_maximized = true;
                         toplevel.with_pending_state(|state| {
                             if !state.states.contains(xdg_toplevel::State::Fullscreen) {
@@ -536,7 +490,6 @@ impl XdgShellHandler for State {
                         ws.configure_new_window(&unmapped.window, None, None, false, rules);
                     }
 
-                    // We already sent the initial configure, so we need to reconfigure.
                     toplevel.send_configure();
                 }
             }
@@ -553,8 +506,6 @@ impl XdgShellHandler for State {
             .layout
             .find_window_and_output_mut(toplevel.wl_surface())
         {
-            // A configure is required in response to this event regardless if there are pending
-            // changes.
             mapped.set_needs_configure();
 
             let window = mapped.window.clone();
@@ -565,8 +516,6 @@ impl XdgShellHandler for State {
                     wants_maximized, ..
                 } => {
                     *wants_maximized = false;
-
-                    // The required configure will be the initial configure.
                 }
                 InitialConfigureState::Configured {
                     rules,
@@ -579,8 +528,6 @@ impl XdgShellHandler for State {
                     workspace_name,
                     is_pending_maximized,
                 } => {
-                    // Figure out the monitor following a similar logic to initial configure.
-                    // FIXME: deduplicate.
                     let mon = workspace_name
                         .as_deref()
                         .and_then(|name| self.zen.layout.monitor_for_workspace(name))
@@ -591,7 +538,6 @@ impl XdgShellHandler for State {
                             .as_ref()
                             .and_then(|o| self.zen.layout.monitor_for_output(o))
                             .map(|mon| (mon, false))
-                            // If not, check if we have a parent with a monitor.
                             .or_else(|| {
                                 toplevel
                                     .parent()
@@ -602,7 +548,6 @@ impl XdgShellHandler for State {
                                     .and_then(|o| self.zen.layout.monitor_for_output(o))
                                     .map(|mon| (mon, true))
                             })
-                            // If not, fall back to the active monitor.
                             .or_else(|| {
                                 self.zen
                                     .layout
@@ -625,10 +570,6 @@ impl XdgShellHandler for State {
                         });
 
                     if let Some(ws) = ws {
-                        // If the window is pending fullscreen, then this will do nothing since
-                        // then the Maximized state is already unset. But that's expected: the
-                        // window remains fullscreen, and we simply remember that it is no
-                        // longer pending maximized.
                         *is_pending_maximized = false;
                         toplevel.with_pending_state(|state| {
                             state.states.unset(xdg_toplevel::State::Maximized);
@@ -657,7 +598,6 @@ impl XdgShellHandler for State {
                         );
                     }
 
-                    // We already sent the initial configure, so we need to reconfigure.
                     toplevel.send_configure();
                 }
             }
@@ -679,8 +619,6 @@ impl XdgShellHandler for State {
             .layout
             .find_window_and_output_mut(toplevel.wl_surface())
         {
-            // A configure is required in response to this event regardless if there are pending
-            // changes.
             mapped.set_needs_configure();
 
             let window = mapped.window.clone();
@@ -703,19 +641,13 @@ impl XdgShellHandler for State {
                     wants_fullscreen, ..
                 } => {
                     *wants_fullscreen = Some(requested_output);
-
-                    // The required configure will be the initial configure.
                 }
                 InitialConfigureState::Configured { rules, output, .. } => {
-                    // Figure out the monitor following a similar logic to initial configure.
-                    // FIXME: deduplicate.
                     let mon = requested_output
                         .as_ref()
-                        // If none requested, try currently configured output.
                         .or(output.as_ref())
                         .and_then(|o| self.zen.layout.monitor_for_output(o))
                         .map(|mon| (mon, false))
-                        // If not, check if we have a parent with a monitor.
                         .or_else(|| {
                             toplevel
                                 .parent()
@@ -724,7 +656,6 @@ impl XdgShellHandler for State {
                                 .and_then(|o| self.zen.layout.monitor_for_output(o))
                                 .map(|mon| (mon, true))
                         })
-                        // If not, fall back to the active monitor.
                         .or_else(|| {
                             self.zen
                                 .layout
@@ -749,7 +680,6 @@ impl XdgShellHandler for State {
                         ws.configure_new_window(&unmapped.window, None, None, false, rules);
                     }
 
-                    // We already sent the initial configure, so we need to reconfigure.
                     toplevel.send_configure();
                 }
             }
@@ -766,8 +696,6 @@ impl XdgShellHandler for State {
             .layout
             .find_window_and_output_mut(toplevel.wl_surface())
         {
-            // A configure is required in response to this event regardless if there are pending
-            // changes.
             mapped.set_needs_configure();
 
             let window = mapped.window.clone();
@@ -778,8 +706,6 @@ impl XdgShellHandler for State {
                     wants_fullscreen, ..
                 } => {
                     *wants_fullscreen = None;
-
-                    // The required configure will be the initial configure.
                 }
                 InitialConfigureState::Configured {
                     rules,
@@ -792,8 +718,6 @@ impl XdgShellHandler for State {
                     workspace_name,
                     is_pending_maximized,
                 } => {
-                    // Figure out the monitor following a similar logic to initial configure.
-                    // FIXME: deduplicate.
                     let mon = workspace_name
                         .as_deref()
                         .and_then(|name| self.zen.layout.monitor_for_workspace(name))
@@ -804,7 +728,6 @@ impl XdgShellHandler for State {
                             .as_ref()
                             .and_then(|o| self.zen.layout.monitor_for_output(o))
                             .map(|mon| (mon, false))
-                            // If not, check if we have a parent with a monitor.
                             .or_else(|| {
                                 toplevel
                                     .parent()
@@ -815,7 +738,6 @@ impl XdgShellHandler for State {
                                     .and_then(|o| self.zen.layout.monitor_for_output(o))
                                     .map(|mon| (mon, true))
                             })
-                            // If not, fall back to the active monitor.
                             .or_else(|| {
                                 self.zen
                                     .layout
@@ -869,7 +791,6 @@ impl XdgShellHandler for State {
                         );
                     }
 
-                    // We already sent the initial configure, so we need to reconfigure.
                     toplevel.send_configure();
                 }
             }
@@ -886,7 +807,6 @@ impl XdgShellHandler for State {
             .remove(surface.wl_surface())
             .is_some()
         {
-            // An unmapped toplevel got destroyed.
             return;
         }
 
@@ -896,8 +816,6 @@ impl XdgShellHandler for State {
             .find_window_and_output(surface.wl_surface());
 
         let Some((mapped, output)) = win_out else {
-            // I have no idea how this can happen, but I saw it happen once, in a weird interaction
-            // involving laptop going to sleep and resuming.
             error!("toplevel missing from both unmapped_windows and layout");
             return;
         };
@@ -925,16 +843,10 @@ impl XdgShellHandler for State {
         self.zen.layout.remove_window(&window, transaction.clone());
 
         let surface = surface.wl_surface();
-        // This check is necessary because implicit resource destruction is done with
-        // undefined order, so the surface might get destroyed before toplevel_destroyed() is
-        // called. In this case, adding the default pre-commit hook here would leak it, since the
-        // place that removes it is WlSurface::destroyed(), which had already been called by now.
         if surface.is_alive() {
             self.add_default_dmabuf_pre_commit_hook(surface);
         }
 
-        // If this is the only instance, then this transaction will complete immediately, so no
-        // need to set the timer.
         if !transaction.is_last() {
             transaction.register_deadline_timer(&self.zen.event_loop);
         }
@@ -982,29 +894,17 @@ impl XdgShellHandler for State {
 
 impl XdgDecorationHandler for State {
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {
-        // If we want CSD, we hide this global altogether.
         toplevel.with_pending_state(|state| {
             state.decoration_mode = Some(zxdg_toplevel_decoration_v1::Mode::ServerSide);
         });
     }
 
     fn request_mode(&mut self, toplevel: ToplevelSurface, mode: zxdg_toplevel_decoration_v1::Mode) {
-        // Set whatever the client wants, rather than our preferred mode. This especially matters
-        // for SDL2 which has a bug where forcing a different (client-side) decoration mode during
-        // their window creation sequence would leave the window permanently hidden.
-        //
-        // https://github.com/libsdl-org/SDL/issues/8173
-        //
-        // The bug has been fixed, but there's a ton of apps which will use the buggy version for a
-        // long while...
         toplevel.with_pending_state(|state| {
             state.decoration_mode = Some(mode);
         });
 
-        // A configure is required in response to this event. However, if an initial configure
-        // wasn't sent, then we will send this as part of the initial configure later.
         if toplevel.is_initial_configure_sent() {
-            // If this is a mapped window, flag it as needs configure to avoid duplicate configures.
             let surface = toplevel.wl_surface();
             if let Some((mapped, _)) = self.zen.layout.find_window_and_output_mut(surface) {
                 mapped.set_needs_configure();
@@ -1015,15 +915,11 @@ impl XdgDecorationHandler for State {
     }
 
     fn unset_mode(&mut self, toplevel: ToplevelSurface) {
-        // If we want CSD, we hide this global altogether.
         toplevel.with_pending_state(|state| {
             state.decoration_mode = Some(zxdg_toplevel_decoration_v1::Mode::ServerSide);
         });
 
-        // A configure is required in response to this event. However, if an initial configure
-        // wasn't sent, then we will send this as part of the initial configure later.
         if toplevel.is_initial_configure_sent() {
-            // If this is a mapped window, flag it as needs configure to avoid duplicate configures.
             let surface = toplevel.wl_surface();
             if let Some((mapped, _)) = self.zen.layout.find_window_and_output_mut(surface) {
                 mapped.set_needs_configure();
@@ -1034,7 +930,6 @@ impl XdgDecorationHandler for State {
     }
 }
 
-/// Whether KDE server decorations are in use.
 #[derive(Default, Clone)]
 pub struct KdeDecorationsModeState {
     server: Cell<bool>,
@@ -1107,13 +1002,11 @@ impl State {
             return;
         };
 
-        // Pick the target monitor. First, check if we had a workspace set in the window rules.
         let mon = rules
             .open_on_workspace
             .as_deref()
             .and_then(|name| self.zen.layout.monitor_for_workspace(name));
 
-        // If not, check if we had an output set in the window rules.
         let mon = mon.or_else(|| {
             rules
                 .open_on_output
@@ -1127,16 +1020,13 @@ impl State {
                 .and_then(|o| self.zen.layout.monitor_for_output(o))
         });
 
-        // If not, check if the window requested one for fullscreen.
         let mon = mon.or_else(|| {
             wants_fullscreen
                 .as_ref()
                 .and_then(|x| x.as_ref())
-                // The monitor might not exist if the output was disconnected.
                 .and_then(|o| self.zen.layout.monitor_for_output(o))
         });
 
-        // If not, check if this is a dialog with a parent, to place it next to the parent.
         let mon = mon.map(|mon| (mon, false)).or_else(|| {
             toplevel
                 .parent()
@@ -1146,7 +1036,6 @@ impl State {
                 .map(|mon| (mon, true))
         });
 
-        // If not, use the active monitor.
         let mon = mon.or_else(|| {
             self.zen
                 .layout
@@ -1154,8 +1043,6 @@ impl State {
                 .map(|mon| (mon, false))
         });
 
-        // If we're following the parent, don't set the target output, so that when the window is
-        // mapped, it fetches the possibly changed parent's output again, and shows up there.
         let output = mon
             .filter(|(_, parent)| !parent)
             .map(|(mon, _)| mon.output().clone());
@@ -1169,7 +1056,6 @@ impl State {
         let is_floating =
             rules.compute_open_floating(toplevel, self.zen.layout.opens_on_canvas());
 
-        // Tell the surface the preferred size and bounds for its likely output.
         let ws = rules
             .open_on_workspace
             .as_deref()
@@ -1181,7 +1067,6 @@ impl State {
 
         let mut is_pending_maximized = false;
         if let Some(ws) = ws {
-            // Set a fullscreen and maximized state based on window request and window rule.
             is_pending_maximized = (*wants_maximized && rules.open_maximized_to_edges.is_none())
                 || rules.open_maximized_to_edges == Some(true);
 
@@ -1219,10 +1104,8 @@ impl State {
             );
         }
 
-        // Set the tiled state for the initial configure.
         update_tiled_state(toplevel, config.prefer_no_csd, rules.tiled_state);
 
-        // Set the configured settings.
         *state = InitialConfigureState::Configured {
             rules,
             width,
@@ -1240,8 +1123,6 @@ impl State {
     }
 
     pub fn queue_initial_configure(&self, toplevel: ToplevelSurface) {
-        // Send the initial configure in an idle, in case the client sent some more info after the
-        // initial commit.
         self.zen.event_loop.insert_idle(move |state| {
             if !toplevel.alive() {
                 return;
@@ -1255,7 +1136,6 @@ impl State {
         });
     }
 
-    /// Should be called on `WlSurface::commit`
     pub fn popups_handle_commit(&mut self, surface: &WlSurface) {
         self.zen.popups.commit(surface);
 
@@ -1274,8 +1154,6 @@ impl State {
                         popup.send_configure().expect("initial configure failed");
                     }
                 }
-                // Input method popup can arbitrary change its geometry, so we need to unconstrain
-                // it on commit.
                 PopupKind::InputMethod(_) => {
                     self.unconstrain_popup(&popup);
                 }
@@ -1291,13 +1169,10 @@ impl State {
     pub fn unconstrain_popup(&self, popup: &PopupKind) {
         let _span = tracy_client::span!("Zen::unconstrain_popup");
 
-        // Popups with a NULL parent will get repositioned in their respective protocol handlers
-        // (i.e. layer-shell).
         let Ok(root) = find_popup_root_surface(popup) else {
             return;
         };
 
-        // Figure out if the root is a window or a layer surface.
         if let Some((mapped, _)) = self.zen.layout.find_window_and_output(&root) {
             self.unconstrain_window_popup(popup, &mapped.window);
         } else if let Some((layer_surface, output)) = self.zen.layout.outputs().find_map(|o| {
@@ -1310,8 +1185,6 @@ impl State {
     }
 
     fn unconstrain_window_popup(&self, popup: &PopupKind, window: &Window) {
-        // The target geometry for the positioner should be relative to its parent's geometry, so
-        // we will compute that here.
         let mut target = self.zen.layout.popup_target_rect(window);
         target.loc -= get_popup_toplevel_coords(popup).to_f64();
 
@@ -1330,18 +1203,8 @@ impl State {
             return;
         };
 
-        // The target geometry for the positioner should be relative to its parent's geometry, so
-        // we will compute that here.
         let mut target = Rectangle::from_size(output_geo.size);
 
-        // Background and bottom layer popups render below the top and the overlay layer, so let's
-        // put them into the non-exclusive zone.
-        //
-        // FIXME: ideally this should use the "top and overlay layer" non-exclusive zone, but
-        // Smithay only computes the "all layers" non-exclusive zone atm.
-        //
-        // FIXME: related to the above, top layer popups should use the "overlay layer"
-        // non-exclusive zone.
         if matches!(layer_surface.layer(), Layer::Background | Layer::Bottom) {
             target = map.non_exclusive_zone();
         }
@@ -1349,7 +1212,6 @@ impl State {
         target.loc -= layer_geo.loc;
         target.loc -= get_popup_toplevel_coords(popup);
 
-        // Don't add padding to layer-shell popups. It's not really needed, and it's unexpected.
         self.position_popup_within_rect(popup, target.to_f64(), false);
     }
 
@@ -1377,16 +1239,13 @@ impl State {
                     utils::bbox_from_surface_tree(popup.wl_surface(), text_input_rectangle.loc)
                         .to_f64();
 
-                // Position bbox horizontally first.
                 let overflow_x = (bbox.loc.x + bbox.size.w) - (target.loc.x + target.size.w);
                 if overflow_x > 0. {
                     bbox.loc.x -= overflow_x;
                 }
 
-                // Ensure that the popup starts within the window.
                 bbox.loc.x = f64::max(bbox.loc.x, target.loc.x);
 
-                // Try to position IME popup below the text input rectangle.
                 let mut below = bbox;
                 below.loc.y += f64::from(text_input_rectangle.size.h);
 
@@ -1458,8 +1317,6 @@ fn unconstrain_with_padding(
     positioner: PositionerState,
     target: Rectangle<f64, Logical>,
 ) -> Rectangle<i32, Logical> {
-    // Try unconstraining with a small padding first which looks nicer, then if it doesn't fit try
-    // unconstraining without padding.
     const PADDING: f64 = 8.;
 
     let mut padded = target;
@@ -1472,12 +1329,10 @@ fn unconstrain_with_padding(
         padded.size.h -= PADDING * 2.;
     }
 
-    // No padding, so just unconstrain with the original target.
     if padded == target {
         return positioner.get_unconstrained_geometry(target.to_i32_round());
     }
 
-    // Do not try to resize to fit the padded target rectangle.
     let mut no_resize = positioner;
     no_resize
         .constraint_adjustment
@@ -1491,7 +1346,6 @@ fn unconstrain_with_padding(
         return geo;
     }
 
-    // Could not unconstrain into the padded target, so resort to the regular one.
     positioner.get_unconstrained_geometry(target.to_i32_round())
 }
 
@@ -1537,24 +1391,14 @@ pub fn add_mapped_toplevel_pre_commit_hook(toplevel: &ToplevelSurface) -> HookId
                 span.record("serial", format!("{serial:?}"));
             }
 
-            // trace!("taking pending transaction");
             if let Some(transaction) = mapped.take_pending_transaction(serial) {
-                // Transaction can be already completed if it ran past the deadline.
                 let disable = state.zen.config.borrow().debug.disable_transactions;
                 if !transaction.is_completed() && !disable {
-                    // Register the deadline even if this is the last pending, since dmabuf
-                    // rendering can still run over the deadline.
                     transaction.register_deadline_timer(&state.zen.event_loop);
 
                     let is_last = transaction.is_last();
 
-                    // If this is the last transaction, we don't need to add a separate
-                    // notification, because the transaction will complete in our dmabuf blocker
-                    // callback, which already calls blocker_cleared(), or by the end of this
-                    // function, in which case there would be no blocker in the first place.
                     if !is_last {
-                        // Waiting for some other surface; register a notification and add a
-                        // transaction blocker.
                         if let Some(client) = surface.client() {
                             transaction.add_notification(
                                 state.zen.blocker_cleared_tx.clone(),
@@ -1564,9 +1408,6 @@ pub fn add_mapped_toplevel_pre_commit_hook(toplevel: &ToplevelSurface) -> HookId
                         }
                     }
 
-                    // Delay dropping (and completing) the transaction until the dmabuf is ready.
-                    // If there's no dmabuf, this will be dropped by the end of this pre-commit
-                    // hook.
                     transaction_for_dmabuf = Some(transaction);
                 }
             }
@@ -1584,7 +1425,6 @@ pub fn add_mapped_toplevel_pre_commit_hook(toplevel: &ToplevelSurface) -> HookId
                     .zen
                     .event_loop
                     .insert_source(source, move |_, _, state| {
-                        // This surface is now ready for the transaction.
                         drop(transaction_for_dmabuf.take());
 
                         let display_handle = state.zen.display_handle.clone();
@@ -1612,7 +1452,6 @@ pub fn add_mapped_toplevel_pre_commit_hook(toplevel: &ToplevelSurface) -> HookId
                 });
             }
 
-            // The toplevel remains mapped; clear any stored unmap snapshot.
             state.zen.layout.clear_unmap_snapshot(&window);
         }
     })

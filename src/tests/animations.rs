@@ -17,9 +17,6 @@ fn format_tiles(zen: &Zen) -> String {
     let ws = zen.layout.active_workspace().unwrap();
     let mut tiles: Vec<_> = ws.tiles_with_render_positions().collect();
 
-    // We sort by id since that gives us a consistent order (from first opened to last), but we
-    // don't print the id since it's nondeterministic (the id is a global counter across all
-    // running tests in the same binary).
     tiles.sort_by_key(|(tile, _, _)| tile.window().id().get());
     for (tile, pos, _visible) in tiles {
         let Size { w, h, .. } = tile.animated_tile_size();
@@ -45,11 +42,6 @@ fn create_window(f: &mut Fixture, id: ClientId, w: u16, h: u16) -> WlSurface {
 }
 
 fn set_time(zen: &mut Zen, time: Duration) {
-    // This is a bit involved because we're dealing with an AdjustableClock that maintains its own
-    // internal current_time.
-
-    // First, reset current_time to zero by matching unadjusted time to it (at rate 0.0), then
-    // setting unadjusted time to zero at rate 1.0 (causing current_time to also go to zero).
     let now = zen.clock.now();
     zen.clock.set_unadjusted(now);
     let _ = zen.clock.now();
@@ -57,16 +49,12 @@ fn set_time(zen: &mut Zen, time: Duration) {
     zen.clock.set_rate(1.0);
     let _ = zen.clock.now();
 
-    // Now, set the desired time at rate 1.0.
     zen.clock.set_unadjusted(time);
     let _ = zen.clock.now();
 
-    // Freeze the clock so that clear() inside the zen loop callback followed by some get()
-    // doesn't replace it with the monotonic time.
     zen.clock.set_rate(0.0);
 }
 
-// Sets up a fixture with linear animations, a renderer, and an output.
 fn set_up() -> Fixture {
     const LINEAR: Kind = Kind::Easing(EasingParams {
         duration_ms: 1000,
@@ -97,12 +85,10 @@ fn set_up_two_in_column() -> (Fixture, ClientId, WlSurface, WlSurface) {
     let _ = f.client(id).window(&surface1).recent_configures();
     let _ = f.client(id).window(&surface2).recent_configures();
 
-    // Consume into one column.
     f.zen().layout.focus_left();
     f.zen().layout.consume_into_column();
     f.double_roundtrip(id);
 
-    // Commit for the column consume.
     let window = f.client(id).window(&surface1);
     window.ack_last_and_commit();
 
@@ -121,43 +107,35 @@ fn set_up_two_in_column() -> (Fixture, ClientId, WlSurface, WlSurface) {
 fn egl_height_resize_animates_next_y() {
     let (mut f, id, surface1, surface2) = set_up_two_in_column();
 
-    // Issue a resize.
     f.zen()
         .layout
         .set_window_height(None, SizeChange::AdjustFixed(-50));
     f.double_roundtrip(id);
 
-    // The top window shrinks in response, the bottom remains as is.
     let window = f.client(id).window(&surface1);
     window.set_size(100, 50);
     window.ack_last_and_commit();
     let window = f.client(id).window(&surface2);
     window.ack_last_and_commit();
 
-    // This starts the resize animation for the top window and the Y move for the bottom.
     f.roundtrip(id);
 
-    // No time had passed yet, so we're at the initial state.
     assert_snapshot!(format_tiles(f.zen()), @r"
     100 × 100 at x:  0 y:  0
     200 × 200 at x:  0 y:100
     ");
 
-    // Advance the time halfway.
     set_time(f.zen(), Duration::from_millis(500));
     f.zen().advance_animations();
 
-    // Top window is half-resized at 75 px tall, bottom window is at y=75 matching it.
     assert_snapshot!(format_tiles(f.zen()), @r"
     100 ×  75 at x:  0 y:  0
     200 × 200 at x:  0 y: 75
     ");
 
-    // Advance the time to completion.
     set_time(f.zen(), Duration::from_millis(1000));
     f.zen().advance_animations();
 
-    // Final state at 50 px.
     assert_snapshot!(format_tiles(f.zen()), @r"
     100 ×  50 at x:  0 y:  0
     200 × 200 at x:  0 y: 50
@@ -168,21 +146,17 @@ fn egl_height_resize_animates_next_y() {
 fn egl_clientside_height_change_doesnt_animate() {
     let (mut f, id, surface1, _surface2) = set_up_two_in_column();
 
-    // The initial state.
     assert_snapshot!(format_tiles(f.zen()), @r"
     100 × 100 at x:  0 y:  0
     200 × 200 at x:  0 y:100
     ");
 
-    // The top window shrinks by itself, without a zen-issued resize.
     let window = f.client(id).window(&surface1);
     window.set_size(100, 50);
     window.commit();
 
-    // This does not start any animations.
     f.roundtrip(id);
 
-    // No time had passed yet, but we are at the final state right away.
     assert_snapshot!(format_tiles(f.zen()), @r"
     100 ×  50 at x:  0 y:  0
     200 × 200 at x:  0 y: 50

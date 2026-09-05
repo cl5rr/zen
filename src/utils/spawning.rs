@@ -21,7 +21,6 @@ pub static CHILD_DISPLAY: RwLock<Option<String>> = RwLock::new(None);
 static ORIGINAL_NOFILE_RLIMIT_CUR: Atomic<rlim_t> = Atomic::new(0);
 static ORIGINAL_NOFILE_RLIMIT_MAX: Atomic<rlim_t> = Atomic::new(0);
 
-/// Increases the nofile rlimit to the maximum and stores the original value.
 pub fn store_and_increase_nofile_rlimit() {
     let mut rlim = rlimit {
         rlim_cur: 0,
@@ -49,7 +48,6 @@ pub fn store_and_increase_nofile_rlimit() {
     }
 }
 
-/// Restores the original nofile rlimit.
 pub fn restore_nofile_rlimit() {
     let rlim_cur = ORIGINAL_NOFILE_RLIMIT_CUR.load(Ordering::SeqCst);
     let rlim_max = ORIGINAL_NOFILE_RLIMIT_MAX.load(Ordering::SeqCst);
@@ -62,7 +60,6 @@ pub fn restore_nofile_rlimit() {
     unsafe { setrlimit(RLIMIT_NOFILE, &rlim) };
 }
 
-/// Spawns the command to run independently of the compositor.
 pub fn spawn<T: AsRef<OsStr> + Send + 'static>(command: Vec<T>, token: Option<XdgActivationToken>) {
     let _span = tracy_client::span!();
 
@@ -70,7 +67,6 @@ pub fn spawn<T: AsRef<OsStr> + Send + 'static>(command: Vec<T>, token: Option<Xd
         return;
     }
 
-    // Spawning and waiting takes some milliseconds, so do it in a thread.
     let res = thread::Builder::new()
         .name("Command Spawner".to_owned())
         .spawn(move || {
@@ -83,12 +79,6 @@ pub fn spawn<T: AsRef<OsStr> + Send + 'static>(command: Vec<T>, token: Option<Xd
     }
 }
 
-/// Spawns the command through the shell.
-///
-/// We hardcode `sh -c`, consistent with other compositors:
-///
-/// - https://github.com/swaywm/sway/blob/b3dcde8d69c3f1304b076968a7a64f54d0c958be/sway/commands/exec_always.c#L64
-/// - https://github.com/hyprwm/Hyprland/blob/1ac1ff457ab8ef1ae6a8f2ab17ee7965adfa729f/src/managers/KeybindManager.cpp#L987
 pub fn spawn_sh(command: String, token: Option<XdgActivationToken>) {
     spawn(vec![String::from("sh"), String::from("-c"), command], token);
 }
@@ -102,7 +92,6 @@ fn spawn_sync(
 
     let mut command = command.as_ref();
 
-    // Expand `~` at the start.
     let expanded = expand_home(Path::new(command));
     match &expanded {
         Ok(Some(expanded)) => command = expanded.as_ref(),
@@ -119,7 +108,6 @@ fn spawn_sync(
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    // Remove RUST_BACKTRACE and RUST_LIB_BACKTRACE from the environment if needed.
     if REMOVE_ENV_RUST_BACKTRACE.load(Ordering::Relaxed) {
         process.env_remove("RUST_BACKTRACE");
     }
@@ -127,10 +115,8 @@ fn spawn_sync(
         process.env_remove("RUST_LIB_BACKTRACE");
     }
 
-    // Remove the systemd NOTIFY_SOCKET variable.
     process.env_remove("NOTIFY_SOCKET");
 
-    // Set DISPLAY if needed.
     let display = CHILD_DISPLAY.read().unwrap();
     if let Some(display) = &*display {
         process.env("DISPLAY", display);
@@ -138,7 +124,6 @@ fn spawn_sync(
         process.env_remove("DISPLAY");
     }
 
-    // Set configured environment.
     let env = CHILD_ENV.read().unwrap();
     for var in &env.0 {
         if let Some(value) = &var.value {
@@ -175,7 +160,6 @@ fn spawn_sync(
 #[cfg(not(feature = "systemd"))]
 fn do_spawn(command: &OsStr, mut process: Command) -> Option<Child> {
     unsafe {
-        // Double-fork to avoid having to waitpid the child.
         process.pre_exec(move || {
             match libc::fork() {
                 -1 => return Err(io::Error::last_os_error()),
@@ -219,7 +203,7 @@ mod systemd {
         #[cfg(target_os = "openbsd")]
         use libc::closefrom;
 
-        #[cfg(not(target_env = "gnu"))] // musl
+        #[cfg(not(target_env = "gnu"))]
         pub fn close_range(first: libc::c_uint, last: libc::c_uint, flags: libc::c_uint) -> i64 {
             unsafe {
                 libc::syscall(
@@ -231,32 +215,12 @@ mod systemd {
             }
         }
 
-        // When running as a systemd session, we want to put children into their own transient
-        // scopes in order to separate them from the zen process. This is helpful for
-        // example to prevent the OOM killer from taking down zen together with a
-        // misbehaving client.
-        //
-        // Putting a child into a scope is done by calling systemd's StartTransientUnit D-Bus method
-        // with a PID. Unfortunately, there seems to be a race in systemd where if the child exits
-        // at just the right time, the transient unit will be created but empty, so it will
-        // linger around forever.
-        //
-        // To prevent this, we'll use our double-fork (done for a separate reason) to help. In our
-        // intermediate child we will send back the grandchild PID, and in zen we will create a
-        // transient scope with both our intermediate child and the grandchild PIDs set. Only then
-        // we will signal our intermediate child to exit. This way, even if the grandchild
-        // exits quickly, a non-empty scope will be created (with just our intermediate
-        // child), then cleaned up when our intermediate child exits.
-
-        // Make a pipe to receive the grandchild PID.
-
         let (pipe_pid_read, pipe_pid_write) = pipe_with(PipeFlags::CLOEXEC)
             .map_err(|err| {
                 warn!("error creating a pipe to transfer child PID: {err:?}");
             })
             .ok()
             .unzip();
-        // Make a pipe to wait in the intermediate child.
         let (pipe_wait_read, pipe_wait_write) = pipe_with(PipeFlags::CLOEXEC)
             .map_err(|err| {
                 warn!("error creating a pipe for child to wait on: {err:?}");
@@ -265,17 +229,12 @@ mod systemd {
             .unzip();
 
         unsafe {
-            // The fds will be duplicated after a fork and closed on exec or exit automatically. Get
-            // the raw fd inside so that it's not closed any extra times.
             let mut pipe_pid_read_fd = pipe_pid_read.as_ref().map(|fd| fd.as_raw_fd());
             let mut pipe_pid_write_fd = pipe_pid_write.as_ref().map(|fd| fd.as_raw_fd());
             let mut pipe_wait_read_fd = pipe_wait_read.as_ref().map(|fd| fd.as_raw_fd());
             let mut pipe_wait_write_fd = pipe_wait_write.as_ref().map(|fd| fd.as_raw_fd());
 
-            // Double-fork to avoid having to waitpid the child.
             process.pre_exec(move || {
-                // Close FDs that we don't need. Especially important for the write ones to unblock
-                // the readers.
                 if let Some(fd) = pipe_pid_read_fd.take() {
                     close(fd);
                 }
@@ -283,7 +242,6 @@ mod systemd {
                     close(fd);
                 }
 
-                // Convert the FDs to OwnedFd, which will close them in all of our fork paths.
                 let pipe_pid_write = pipe_pid_write_fd.take().map(|fd| OwnedFd::from_raw_fd(fd));
                 let pipe_wait_read = pipe_wait_read_fd.take().map(|fd| OwnedFd::from_raw_fd(fd));
 
@@ -291,15 +249,11 @@ mod systemd {
                     -1 => return Err(io::Error::last_os_error()),
                     0 => (),
                     grandchild_pid => {
-                        // Send back the PID.
                         if let Some(pipe) = pipe_pid_write {
                             let _ = write_all(pipe, &grandchild_pid.to_ne_bytes());
                         }
 
-                        // Wait until the parent signals us to exit.
                         if let Some(pipe) = pipe_wait_read {
-                            // We're going to exit afterwards. Close all other FDs to allow
-                            // Command::spawn() to return in the parent process.
                             #[cfg(not(target_os = "openbsd"))]
                             {
                                 let raw = pipe.as_raw_fd() as u32;
@@ -339,7 +293,6 @@ mod systemd {
         drop(pipe_pid_write);
         drop(pipe_wait_read);
 
-        // Wait for the grandchild PID.
         if let Some(pipe) = pipe_pid_read {
             let mut buf = [0; 4];
             match read_all(pipe, &mut buf) {
@@ -347,7 +300,6 @@ mod systemd {
                     let pid = i32::from_ne_bytes(buf);
                     trace!("spawned PID: {pid}");
 
-                    // Start a systemd scope for the grandchild.
                     if let Err(err) = start_systemd_scope(command, child.id(), pid as u32) {
                         trace!("error starting systemd scope for spawned command: {err:?}");
                     }
@@ -358,8 +310,6 @@ mod systemd {
             }
         }
 
-        // Signal the intermediate child to exit now that we're done trying to creating a systemd
-        // scope.
         trace!("signaling child to exit");
         drop(pipe_wait_write);
 
@@ -396,10 +346,6 @@ mod systemd {
         }
     }
 
-    /// Puts a (newly spawned) pid into a transient systemd scope.
-    ///
-    /// This separates the pid from the compositor scope, which for example prevents the OOM killer
-    /// from bringing down the compositor together with a misbehaving client.
     fn start_systemd_scope(
         name: &OsStr,
         intermediate_pid: u32,
@@ -414,20 +360,16 @@ mod systemd {
 
         use crate::utils::IS_SYSTEMD_SERVICE;
 
-        // We only start transient scopes if we're a systemd service ourselves.
         if !IS_SYSTEMD_SERVICE.load(Ordering::Relaxed) {
             return Ok(());
         }
 
         let _span = tracy_client::span!();
 
-        // Extract the basename.
         let name = Path::new(name).file_name().unwrap_or(name);
 
         let mut scope_name = String::from("app-zen-");
 
-        // Escape for systemd similarly to libgnome-desktop, which says it had adapted this from
-        // systemd source.
         for &c in name.as_bytes() {
             if c.is_ascii_alphanumeric() || matches!(c, b':' | b'_' | b'.') {
                 scope_name.push(char::from(c));
@@ -438,7 +380,6 @@ mod systemd {
 
         let _ = write!(scope_name, "-{child_pid}.scope");
 
-        // Ask systemd to start a transient scope.
         static CONNECTION: OnceLock<zbus::Result<zbus::blocking::Connection>> = OnceLock::new();
         let conn = CONNECTION
             .get_or_init(zbus::blocking::Connection::session)
@@ -475,7 +416,6 @@ mod systemd {
                 body.deserialize().context("error parsing signal")?;
 
             if body.1 == job {
-                // Our transient unit had started, we're good to exit the intermediate child.
                 break;
             }
         }

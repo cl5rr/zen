@@ -2,7 +2,6 @@ use std::sync::atomic::Ordering;
 
 use portable_atomic::AtomicU64;
 
-/// Counter that returns unique IDs.
 pub struct IdCounter {
     value: AtomicU64,
 }
@@ -10,8 +9,6 @@ pub struct IdCounter {
 impl IdCounter {
     pub const fn new() -> Self {
         Self {
-            // Start from 1 to reduce the possibility that some other code that uses these IDs will
-            // get confused.
             value: AtomicU64::new(1),
         }
     }

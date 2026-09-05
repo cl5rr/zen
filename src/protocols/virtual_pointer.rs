@@ -104,7 +104,7 @@ pub struct VirtualPointerMotionEvent {
 
 impl Event<VirtualPointerInputBackend> for VirtualPointerMotionEvent {
     fn time(&self) -> u64 {
-        self.time as u64 * 1000 // millis to micros
+        self.time as u64 * 1000
     }
 
     fn device(&self) -> VirtualPointer {
@@ -141,7 +141,7 @@ pub struct VirtualPointerMotionAbsoluteEvent {
 
 impl Event<VirtualPointerInputBackend> for VirtualPointerMotionAbsoluteEvent {
     fn time(&self) -> u64 {
-        self.time as u64 * 1000 // millis to micros
+        self.time as u64 * 1000
     }
 
     fn device(&self) -> VirtualPointer {
@@ -176,7 +176,7 @@ pub struct VirtualPointerButtonEvent {
 
 impl Event<VirtualPointerInputBackend> for VirtualPointerButtonEvent {
     fn time(&self) -> u64 {
-        self.time as u64 * 1000 // millis to micros
+        self.time as u64 * 1000
     }
 
     fn device(&self) -> VirtualPointer {
@@ -201,7 +201,7 @@ pub struct VirtualPointerAxisEvent {
 
 impl Event<VirtualPointerInputBackend> for VirtualPointerAxisEvent {
     fn time(&self) -> u64 {
-        self.frame.time as u64 * 1000 // millis to micros
+        self.frame.time as u64 * 1000
     }
 
     fn device(&self) -> VirtualPointer {
@@ -422,10 +422,6 @@ where
                 button,
                 state,
             } => {
-                // state is an enum but wlroots treats it as a C boolean (zero or nonzero)
-                // so we emulate that behaviour too. ButtonState::Pressed and any invalid value
-                // counts as pressed.
-                // https://gitlab.freedesktop.org/wlroots/wlroots/-/blob/3187479c07c34a4de82c06a316a763a36a0499da/types/wlr_virtual_pointer_v1.c#L74
                 let state = match state {
                     WEnum::Value(wl_pointer::ButtonState::Released) => ButtonState::Released,
                     _ => ButtonState::Pressed,

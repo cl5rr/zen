@@ -32,7 +32,6 @@ pub struct MoveGrab {
     enable_view_offset: bool,
     move_icon: CursorIcon,
 
-    // Accumulated and applied in frame().
     new_location: Point<f64, Logical>,
     event_timestamp: Option<Duration>,
     relative_delta: Option<Point<f64, Logical>>,
@@ -64,7 +63,6 @@ impl MoveGrab {
             window,
             gesture: GestureState::Recognizing,
             enable_view_offset,
-            // Moving windows by their titlebars uses the default cursor by default.
             move_icon: move_icon.unwrap_or(CursorIcon::Default),
             new_location: location,
             event_timestamp: None,
@@ -84,9 +82,6 @@ impl MoveGrab {
         let layout = &mut data.zen.layout;
         match self.gesture {
             GestureState::Recognizing => {
-                // Activate the window on release. This is most prominent in the overview where
-                // windows are not activated on click. In the overview, we also try to do a nice
-                // synchronized workspace animation.
                 if layout.is_overview_open() {
                     let res = layout.workspaces().find_map(|(mon, ws_idx, ws)| {
                         ws.windows()
@@ -113,7 +108,6 @@ impl MoveGrab {
                 .set_cursor_image(CursorImageStatus::default_named());
         }
 
-        // FIXME: only redraw the window output.
         data.zen.queue_redraw_all();
     }
 
@@ -123,7 +117,6 @@ impl MoveGrab {
             &self.start_output,
             self.start_pos_within_output,
         ) {
-            // Can no longer start the move.
             return false;
         }
 
@@ -147,14 +140,12 @@ impl MoveGrab {
                 .then_some(ws_idx)?;
             let output = mon?.output();
 
-            // If the window moved to a different output, don't start the gesture.
             if *output != self.start_output {
                 return None;
             }
 
             Some(ws_idx)
         }) else {
-            // Can no longer start the gesture.
             return false;
         };
 
@@ -180,14 +171,11 @@ impl MoveGrab {
         let mut relative_delta = self.relative_delta.take().unwrap_or(delta);
         self.last_location = self.new_location;
 
-        // Try to recognize the gesture.
         if self.gesture == GestureState::Recognizing {
-            // Check if the window has closed.
             if !self.window.alive() {
                 return false;
             }
 
-            // Check if the gesture moved far enough to decide.
             let c = self.new_location - self.start_data.location();
             if c.x * c.x + c.y * c.y >= 8. * 8. {
                 let is_floating = data
@@ -213,7 +201,6 @@ impl MoveGrab {
                     return false;
                 }
 
-                // Apply the whole delta that accumulated during recognizing.
                 delta = c;
                 relative_delta = c;
             }
@@ -228,8 +215,6 @@ impl MoveGrab {
                 };
                 let output = output.clone();
 
-                // Interactive move always uses absolute delta since the window must remain pinned
-                // to the cursor even when it's clamped to monitor bounds.
                 let ongoing = data.zen.layout.interactive_move_update(
                     &self.window,
                     delta,
@@ -237,7 +222,6 @@ impl MoveGrab {
                     pos_within_output,
                 );
                 if ongoing {
-                    // FIXME: only redraw the previous and the new output.
                     data.zen.queue_redraw_all();
                     return true;
                 }
@@ -265,7 +249,6 @@ impl MoveGrab {
             return true;
         }
 
-        // Start move if still recognizing.
         if self.gesture == GestureState::Recognizing {
             let Some((output, pos_within_output)) = data.zen.output_under(self.last_location)
             else {
@@ -277,7 +260,6 @@ impl MoveGrab {
                 return false;
             }
 
-            // Apply the delta accumulated during recognizing.
             let ongoing = data.zen.layout.interactive_move_update(
                 &self.window,
                 self.last_location - self.start_data.location(),
@@ -304,12 +286,10 @@ impl PointerGrab<State> for MoveGrab {
         _focus: Option<(<State as SeatHandler>::PointerFocus, Point<f64, Logical>)>,
         event: &MotionEvent,
     ) {
-        // While the grab is active, no client has pointer focus.
         handle.motion(data, None, event);
 
         self.new_location = event.location;
 
-        // Relative motion takes precedence over normal motion.
         if self.relative_delta.is_none() {
             self.event_timestamp = Some(Duration::from_millis(u64::from(event.time)));
         }
@@ -322,7 +302,6 @@ impl PointerGrab<State> for MoveGrab {
         _focus: Option<(<State as SeatHandler>::PointerFocus, Point<f64, Logical>)>,
         event: &RelativeMotionEvent,
     ) {
-        // While the grab is active, no client has pointer focus.
         handle.relative_motion(data, None, event);
 
         *self.relative_delta.get_or_insert_default() += event.delta;
@@ -340,12 +319,10 @@ impl PointerGrab<State> for MoveGrab {
         let start_data = self.start_data.unwrap_pointer();
 
         if !handle.current_pressed().contains(&start_data.button) {
-            // The button that initiated the grab was released.
             handle.unset_grab(self, data, event.serial, event.time, true);
             return;
         }
 
-        // When moving with the left button, right toggles floating, and vice versa.
         let toggle_floating_button = if start_data.button == 0x110 {
             0x111
         } else {
@@ -373,7 +350,6 @@ impl PointerGrab<State> for MoveGrab {
         handle.frame(data);
 
         if !self.on_frame(data) {
-            // The gesture is no longer ongoing.
             handle.unset_grab(
                 self,
                 data,
@@ -518,7 +494,6 @@ impl TouchGrab<State> for MoveGrab {
         handle.frame(data);
 
         if !self.on_frame(data) {
-            // The gesture is no longer ongoing.
             handle.unset_grab(self, data);
         }
     }
@@ -629,7 +604,6 @@ impl TabletToolGrab<State> for MoveGrab {
         handle.frame(data, time);
 
         if !self.on_frame(data) {
-            // The gesture is no longer ongoing.
             handle.unset_grab(
                 self,
                 data,

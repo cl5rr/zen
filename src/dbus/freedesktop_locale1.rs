@@ -68,7 +68,6 @@ pub fn start(
             file: None,
         };
 
-        // Send the initial properties.
         if let Err(err) = to_zen.send(Locale1ToZen::XkbChanged(xkb.clone())) {
             warn!("error sending message to ZEN: {err:?}");
             return;

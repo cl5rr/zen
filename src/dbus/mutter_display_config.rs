@@ -48,7 +48,6 @@ pub struct LogicalMonitor {
     properties: HashMap<String, OwnedValue>,
 }
 
-// ApplyMonitorsConfig
 #[derive(Deserialize, Type)]
 pub struct LogicalMonitorConfiguration {
     x: i32,
@@ -69,12 +68,10 @@ impl DisplayConfig {
         Vec<LogicalMonitor>,
         HashMap<String, OwnedValue>,
     )> {
-        // Construct the DBus response.
         let mut monitors = Vec::new();
         let mut logical_monitors = Vec::new();
 
         for output in self.ipc_outputs.lock().unwrap().values() {
-            // Loosely matches the check in Mutter.
             let c = &output.name;
             let is_laptop_panel = is_laptop_panel(c);
             let display_name = make_display_name(output, is_laptop_panel);
@@ -127,8 +124,6 @@ impl DisplayConfig {
             let model = output.model.clone();
             let make = output.make.clone();
 
-            // Serial is used for session restore, so fall back to the connector name if it's
-            // not available.
             let serial = output.serial.as_ref().unwrap_or(&connector).clone();
 
             let names = (connector, make, model, serial);
@@ -163,7 +158,6 @@ impl DisplayConfig {
             });
         }
 
-        // Sort by connector.
         monitors.sort_unstable_by(|a, b| a.names.0.cmp(&b.names.0));
         logical_monitors.sort_unstable_by(|a, b| a.monitors[0].0.cmp(&b.monitors[0].0));
 
@@ -225,7 +219,6 @@ impl DisplayConfig {
                                 ))
                             })?,
                         }),
-                        // FIXME: VRR
                         ..Default::default()
                     }),
                 );
@@ -242,7 +235,6 @@ impl DisplayConfig {
             }
         }
         if method == 0 {
-            // 0 means "verify", so don't actually apply here
             return Ok(());
         }
         if let Err(err) = self.to_zen.send(new_conf) {
@@ -308,7 +300,6 @@ impl Start for DisplayConfig {
     }
 }
 
-// Adapted from Mutter.
 fn make_display_name(output: &zen_ipc::Output, is_laptop_panel: bool) -> String {
     if is_laptop_panel {
         return String::from("Built-in display");

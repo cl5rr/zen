@@ -33,59 +33,32 @@ use crate::utils::{
 };
 use crate::window::ResolvedWindowRules;
 
-/// By how many logical pixels the directional move commands move floating windows.
 pub const DIRECTIONAL_MOVE_PX: f64 = 50.;
 
-/// Space for floating windows.
 #[derive(Debug)]
 pub struct FloatingSpace<W: LayoutElement> {
-    /// Tiles in top-to-bottom order.
     tiles: Vec<Tile<W>>,
 
-    /// Extra per-tile data.
     data: Vec<Data>,
 
-    /// Id of the active window.
-    ///
-    /// The active window is not necessarily the topmost window. Focus-follows-mouse should
-    /// activate a window, but not bring it to the top, because that's very annoying.
-    ///
-    /// This is always set to `Some()` when `tiles` isn't empty.
     active_window_id: Option<W::Id>,
 
-    /// Ongoing interactive resize.
     interactive_resize: Option<InteractiveResize<W>>,
 
-    /// Windows in the closing animation.
     closing_windows: Vec<ClosingWindow>,
 
-    /// Where a window with no remembered position opens, in canvas coordinates.
-    ///
-    /// `None` means the old rule: the centre of the working area. That is still correct on a
-    /// bounded canvas, and is what every existing test sees.
     spawn_center: Option<Point<f64, Canvas>>,
 
-    /// Island membership: which windows are grouped, and where each group sits.
-    ///
-    /// This is a *partition* of `tiles` -- every tile belongs to exactly one island, and a lone
-    /// window is a one-item island. That is the detail that keeps the island layer cheap: with
-    /// one member the island follows its tile rather than driving it, so a single floating
-    /// window behaves exactly as it did before islands existed. See `sync_islands`.
     islands: IslandSpace<W::Id>,
 
-    /// View size for this space.
     view_size: Size<f64, Logical>,
 
-    /// Working area for this space.
     working_area: Rectangle<f64, Logical>,
 
-    /// Scale of the output the space is on (and rounds its sizes to).
     scale: f64,
 
-    /// Clock for driving animations.
     clock: Clock,
 
-    /// Configurable properties of the layout.
     options: Rc<Options>,
 }
 
@@ -96,38 +69,18 @@ zen_render_elements! {
     }
 }
 
-/// Extra per-tile data.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Data {
-    /// Requested absolute position on the canvas.
-    ///
-    /// This is what the user asked for. `logical_pos` is what they get, which differs only
-    /// when the canvas is bounded (see `infinite_canvas`).
     pos: Point<f64, Canvas>,
 
-    /// Cached position in logical coordinates.
-    ///
-    /// Not rounded to physical pixels.
     logical_pos: Point<f64, Logical>,
 
-    /// Cached actual size of the tile.
     size: Size<f64, Logical>,
 
-    /// Working area, used for clamping when the canvas is bounded.
     working_area: Rectangle<f64, Logical>,
 
-    /// Whether the tile may sit outside the working area.
     infinite_canvas: bool,
 
-    /// Canvas point to stay centred on until the window's real size is known.
-    ///
-    /// A window is placed before its client has said how big it wants to be -- a size request of
-    /// (0, 0) means "you choose" -- so centring at insert time centres a placeholder. The window
-    /// then commits its real size and sits wherever the placeholder's top-left happened to be,
-    /// which on a 1280-wide view was visibly up and to the left of where you were looking.
-    ///
-    /// Holding the anchor until the client answers is what makes a window actually open in the
-    /// middle of the view. Cleared the moment anything positions the tile explicitly.
     center_on: Option<Point<f64, Canvas>>,
 }
 
@@ -151,7 +104,6 @@ impl Data {
         rv
     }
 
-    /// Canvas coordinates are logical pixels, so this is a unit change plus a bounds check.
     pub fn canvas_to_logical(pos: Point<f64, Canvas>) -> Point<f64, Logical> {
         Point::from((
             pos.x.clamp(-CANVAS_LIMIT, CANVAS_LIMIT),
@@ -170,13 +122,10 @@ impl Data {
         let mut logical_pos = Self::canvas_to_logical(self.pos);
 
         if self.infinite_canvas {
-            // The canvas is unbounded: a window is allowed to sit anywhere, including entirely
-            // off-screen. Panning is how you get back to it, and FitAllWindows is the rescue.
             self.logical_pos = logical_pos;
             return;
         }
 
-        // Bounded canvas: keep the window mostly on-screen. Numbers taken from Mutter.
         let min_on_screen_hor = f64::clamp(self.size.w / 4., 10., 75.);
         let min_on_screen_ver = f64::clamp(self.size.h / 4., 10., 75.);
         let max_off_screen_hor = f64::max(0., self.size.w - min_on_screen_hor);
@@ -205,8 +154,6 @@ impl Data {
 
         self.working_area = working_area;
         self.infinite_canvas = infinite_canvas;
-        // Note that positions are absolute, so a working-area change no longer *moves* windows
-        // the way the old fraction-of-working-area storage did. It only re-applies the clamp.
         self.recompute_logical_pos();
     }
 
@@ -224,8 +171,6 @@ impl Data {
                 center.y - size.h / 2.,
             )));
 
-            // Once the client has told us a size, stop chasing it: a later resize is the user's,
-            // and re-centring on that would yank the window out from under them.
             if tile.window().expected_size().is_some() {
                 self.center_on = None;
             }
@@ -235,11 +180,9 @@ impl Data {
     }
 
     pub fn set_logical_pos(&mut self, logical_pos: Point<f64, Logical>) {
-        // Anything that positions the tile explicitly wins over the spawn anchor.
         self.center_on = None;
         self.pos = Self::logical_to_canvas(logical_pos);
 
-        // Clamps to the working area when the canvas is bounded.
         self.recompute_logical_pos();
     }
 
@@ -304,8 +247,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
     }
 
     pub fn advance_animations(&mut self) {
-        // Islands are reconciled here rather than in `update_render_elements` because this pass
-        // may ask a client to resize, and `update_render_elements` runs while rendering.
         self.sync_islands();
 
         for tile in &mut self.tiles {
@@ -334,7 +275,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
     ) {
         let active = self.active_window_id.clone();
         for (tile, offset) in self.tiles_with_offsets_mut() {
-            // Skip tiles belonging to a different render layer.
             if layer.is_normal() == tile.is_moving_between_workspaces() {
                 continue;
             }
@@ -374,7 +314,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
         let scale = self.scale;
         self.tiles_with_offsets().map(move |(tile, offset)| {
             let pos = offset + tile.render_offset();
-            // Round to physical pixels.
             let pos = pos.to_physical_precise_round(scale).to_logical(scale);
             (tile, pos)
         })
@@ -387,7 +326,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
         let scale = self.scale;
         self.tiles_with_offsets_mut().map(move |(tile, offset)| {
             let mut pos = offset + tile.render_offset();
-            // Round to physical pixels.
             if round {
                 pos = pos.to_physical_precise_round(scale).to_logical(scale);
             }
@@ -398,9 +336,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
     pub fn tiles_with_ipc_layouts(&self) -> impl Iterator<Item = (&Tile<W>, WindowLayout)> {
         let scale = self.scale;
         self.tiles_with_offsets().map(move |(tile, offset)| {
-            // Do not include animated render offset here to avoid IPC spam.
             let pos = offset;
-            // Round to physical pixels.
             let pos = pos.to_physical_precise_round(scale).to_logical(scale);
 
             let layout = WindowLayout {
@@ -416,9 +352,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
         compute_toplevel_bounds(border_config, self.working_area.size)
     }
 
-    /// Returns the geometry of the active window relative to and clamped to the working area.
-    ///
-    /// During animations, assumes the final tile position.
     pub fn active_window_visual_rectangle(&self) -> Option<Rectangle<f64, Logical>> {
         let active_id = self.active_window_id.as_ref()?;
         let (tile, offset) = self
@@ -435,7 +368,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
     pub fn popup_target_rect(&self, id: &W::Id) -> Option<Rectangle<f64, Logical>> {
         for (tile, pos) in self.tiles_with_offsets() {
             if tile.window().id() == id {
-                // Position within the working area.
                 let mut target = self.working_area;
                 target.loc -= pos;
                 target.loc -= tile.window_loc();
@@ -482,11 +414,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
         self.add_tile_at(0, tile, activate, None);
     }
 
-    /// Adds a tile straight into an existing island, tiling it beside what is already there.
-    ///
-    /// A stale island id is not an error: the window is opened in an island of its own rather
-    /// than refused, because failing to map a window is far worse than mapping it in the wrong
-    /// place.
     pub fn add_tile_to_island(&mut self, island: IslandId, tile: Tile<W>, activate: bool) {
         self.add_tile_at(0, tile, activate, Some(island));
     }
@@ -500,22 +427,14 @@ impl<W: LayoutElement> FloatingSpace<W> {
     ) {
         tile.update_config(self.view_size, self.scale, self.options.clone());
 
-        // Restore the previous floating window size, and in case the tile is fullscreen,
-        // unfullscreen it.
         let floating_size = tile.floating_window_size;
         let win = tile.window_mut();
         let mut size = if !win.pending_sizing_mode().is_normal() {
-            // If the window was fullscreen or maximized without a floating size, ask for (0, 0).
             floating_size.unwrap_or_default()
         } else {
-            // If the window wasn't fullscreen without a floating size (e.g. it was tiled before),
-            // ask for the current size. If the current size is unknown (the window was only ever
-            // fullscreen until now), fall back to (0, 0).
             floating_size.unwrap_or_else(|| win.expected_size().unwrap_or_default())
         };
 
-        // Apply min/max size window rules. If requesting a concrete size, apply completely; if
-        // requesting (0, 0), apply only when min/max results in a fixed size.
         let min_size = win.min_size();
         let max_size = win.max_size();
         size.w = ensure_min_max_size_maybe_zero(size.w, min_size.w, max_size.w);
@@ -527,7 +446,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
             self.active_window_id = Some(win.id().clone());
         }
 
-        // Make sure the tile isn't inserted below its parent.
         for (i, tile_above) in self.tiles.iter().enumerate().take(idx) {
             if win.is_child_of(tile_above.window()) {
                 idx = i;
@@ -551,8 +469,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
             &tile,
             pos,
         );
-        // `Data::new` positions from a size the client has not confirmed yet. Keep the anchor so
-        // the tile re-centres when it does.
         data.center_on = anchor.map(Data::logical_to_canvas);
         let win_id = tile.window().id().clone();
 
@@ -561,8 +477,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
         self.bring_up_descendants_of(idx);
 
-        // `bring_up_descendants_of` can shift the tile down, so look the index up again rather
-        // than trusting `idx`.
         let idx = self.idx_of(&win_id).unwrap();
         self.register_island(idx, join);
     }
@@ -577,10 +491,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
         let pos = self.clamp_within_working_area(pos, tile_size);
         tile.floating_pos = Some(self.logical_to_canvas(pos));
 
-        // Deliberately *not* joining the parent's island. A transient must follow its parent --
-        // that is what `NextTo` already does by centring it over the parent -- but tiling a modal
-        // dialog into a column beside its parent would shrink both for no gain. "Follow your
-        // parent" and "tile with your parent" are different requirements.
         self.add_tile_at(idx, tile, activate, None);
     }
 
@@ -588,8 +498,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
         let tile = &self.tiles[idx];
         let win = tile.window();
 
-        // We always maintain the correct stacking order, so walking descendants back to front
-        // should give us all of them.
         let mut descendants: Vec<usize> = Vec::new();
         for (i, tile_below) in self.tiles.iter().enumerate().skip(idx + 1).rev() {
             let win_below = tile_below.window();
@@ -602,8 +510,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
             }
         }
 
-        // Now, descendants is in back-to-front order, and repositioning them in the front-to-back
-        // order will preserve the subsequent indices and work out right.
         let mut idx = idx;
         #[allow(clippy::explicit_counter_loop)]
         for descendant_idx in descendants.into_iter().rev() {
@@ -626,22 +532,18 @@ impl<W: LayoutElement> FloatingSpace<W> {
         if self.tiles.is_empty() {
             self.active_window_id = None;
         } else if Some(tile.window().id()) == self.active_window_id.as_ref() {
-            // The active tile was removed, make the topmost tile active.
             self.active_window_id = Some(self.tiles[0].window().id().clone());
         }
 
-        // Stop interactive resize.
         if let Some(resize) = &self.interactive_resize {
             if tile.window().id() == &resize.window {
                 self.interactive_resize = None;
             }
         }
 
-        // Store the floating size if we have one.
         if let Some(size) = tile.window().expected_size() {
             tile.floating_window_size = Some(size);
         }
-        // Store the floating position.
         tile.floating_pos = Some(data.pos);
 
         let width = ColumnWidth::Fixed(tile.tile_expected_or_current_size().w);
@@ -770,7 +672,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
             if forwards {
                 it.position(|resolved| {
                     match resolved {
-                        // Some allowance for fractional scaling purposes.
                         ResolvedSize::Tile(resolved) => current_tile + 1. < resolved,
                         ResolvedSize::Window(resolved) => current_window + 1. < resolved,
                     }
@@ -779,7 +680,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
             } else {
                 it.rposition(|resolved| {
                     match resolved {
-                        // Some allowance for fractional scaling purposes.
                         ResolvedSize::Tile(resolved) => resolved + 1. < current_tile,
                         ResolvedSize::Window(resolved) => resolved + 1. < current_window,
                     }
@@ -831,7 +731,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
             if forwards {
                 it.position(|resolved| {
                     match resolved {
-                        // Some allowance for fractional scaling purposes.
                         ResolvedSize::Tile(resolved) => current_tile + 1. < resolved,
                         ResolvedSize::Window(resolved) => current_window + 1. < resolved,
                     }
@@ -840,7 +739,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
             } else {
                 it.rposition(|resolved| {
                     match resolved {
-                        // Some allowance for fractional scaling purposes.
                         ResolvedSize::Tile(resolved) => resolved + 1. < current_tile,
                         ResolvedSize::Window(resolved) => resolved + 1. < current_window,
                     }
@@ -952,21 +850,10 @@ impl<W: LayoutElement> FloatingSpace<W> {
         win.request_size_once(win_size, animate);
     }
 
-    /// The rectangle a tile occupies, for spatial queries.
     fn tile_rect(&self, idx: usize) -> Rectangle<f64, Logical> {
         Rectangle::new(self.data[idx].logical_pos, self.data[idx].size)
     }
 
-    /// Moves focus to the nearest window in a direction.
-    ///
-    /// The rule it replaces compared centres along one axis only -- `focus.x - other.x` -- and
-    /// ignored the other entirely, so "left" from a window would happily jump to something far
-    /// away and diagonal in preference to the window actually beside it. `nearest_in_direction`
-    /// prefers candidates whose perpendicular extent overlaps yours, which is what makes the
-    /// motion feel like moving through a space rather than through a list.
-    ///
-    /// It needs no island special-casing: a member of your own island is simply nearer than
-    /// anything in the next one, so direction walks the cluster first and leaves it at the edge.
     fn focus_directional(&mut self, dir: Direction) -> bool {
         let Some(active_id) = self.active_window_id.clone() else {
             return false;
@@ -1060,9 +947,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
             return;
         };
 
-        // In a cluster, the cluster moves. Sliding one member out of its own island would leave
-        // a hole and put the window somewhere `sync_islands` immediately undoes on the next
-        // frame, which reads as the move simply not working.
         if let Some(island) = self.island_of(&active_id) {
             if self.islands.get(island).is_some_and(|i| i.len() > 1) {
                 self.move_island_by(island, amount);
@@ -1170,7 +1054,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
         let resize = tile.window_mut().interactive_resize_data();
 
-        // Do this before calling update_window() so it can get up-to-date info.
         if let Some(serial) = serial {
             tile.window_mut().on_commit(serial);
         }
@@ -1180,7 +1063,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
         tile.update_window();
         data.update(tile);
 
-        // When resizing by top/left edge, update the position accordingly.
         if let Some(resize) = resize {
             let mut offset = Point::from((0., 0.));
             if resize.edges.contains(ResizeEdge::LEFT) {
@@ -1206,9 +1088,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
     ) {
         let scale = Scale::from(self.scale);
 
-        // Draw the closing windows on top of the other windows.
-        //
-        // FIXME: I guess this should rather preserve the stacking order when the window is closed.
         if layer.is_normal() {
             for closing in self.closing_windows.iter().rev() {
                 let elem = closing.render(ctx.as_gles(), view_rect, scale);
@@ -1218,12 +1097,10 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
         let active = self.active_window_id.clone();
         for (tile, tile_pos) in self.tiles_with_render_positions() {
-            // Skip tiles belonging to a different render layer.
             if layer.is_normal() == tile.is_moving_between_workspaces() {
                 continue;
             }
 
-            // For the active tile, draw the focus ring.
             let focus_ring = focus_ring && Some(tile.window().id()) == active.as_ref();
 
             let xray_pos = xray_pos.offset(tile_pos);
@@ -1334,8 +1211,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
             let bounds = compute_toplevel_bounds(border_config, self.working_area.size);
             win.set_bounds(bounds);
 
-            // If transactions are disabled, also disable combined throttling, for more
-            // intuitive behavior.
             let intent = if self.options.disable_resize_throttling {
                 ConfigureIntent::CanSend
             } else {
@@ -1363,10 +1238,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
         rect.loc
     }
 
-    /// Bounding box of every floating tile, in workspace-local logical coordinates.
-    ///
-    /// `None` when there is nothing to frame. Used by FitAllWindows, which is the way back when
-    /// you have panned somewhere empty on an unbounded canvas.
     pub fn tiles_bbox(&self) -> Option<Rectangle<f64, Logical>> {
         let mut acc: Option<Rectangle<f64, Logical>> = None;
         for data in &self.data {
@@ -1394,7 +1265,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
     }
 
     fn move_and_animate(&mut self, idx: usize, new_pos: Point<f64, Logical>) {
-        // Moves up to this logical pixel distance are not animated.
         const ANIMATION_THRESHOLD_SQ: f64 = 10. * 10.;
 
         let tile = &mut self.tiles[idx];
@@ -1499,41 +1369,13 @@ impl<W: LayoutElement> FloatingSpace<W> {
         &self.options
     }
 
+    // -
+    // -
 
-    // -----------------------------------------------------------------------------------------
-    // Islands
-    //
-    // An island is a cluster of floating windows that moves as one and tiles internally.
-    //
-    // Ownership deliberately stays here rather than moving into `Island` itself, which is a
-    // departure from PLAN.md's sketch of `Island { tiles: Vec<Tile<W>> }`. `FloatingSpace`
-    // already owns Z-order, hit-testing, interactive move and resize, the open and close
-    // animations, per-tile data and the invariant checks -- every one of which an island that
-    // owned tiles would have to reimplement. Islands as a membership-and-geometry layer on top
-    // are a few hundred lines; islands as the owner is `floating.rs` rewritten.
-    //
-    // The invariant that makes it safe is that `islands` *partitions* `tiles`: every tile is in
-    // exactly one island, and no island is empty. `verify_invariants` asserts the bijection, so
-    // drift is a test failure rather than a mystery.
-    // -----------------------------------------------------------------------------------------
-
-    /// Tells the space where the camera is looking, in canvas coordinates.
     pub fn set_spawn_center(&mut self, center: Option<Point<f64, Canvas>>) {
         self.spawn_center = center;
     }
 
-    /// The point a window with no remembered position should be centred on.
-    ///
-    /// The centre of what you are *looking at*, nudged off an exact overlap. Without the camera
-    /// term this is the centre of the working area -- which on an unbounded canvas is the centre
-    /// of wherever you happened to be when you started, so every window after the first pan
-    /// would open off-screen. With no camera (`spawn_center` unset) it reduces to exactly the
-    /// old expression.
-    ///
-    /// The nudge is returned as an *offset* from the viewport centre rather than folded into an
-    /// absolute point, because the tile re-centres once its real size arrives -- and if the
-    /// nudge were lost at that moment, three windows opened in a row would all snap back onto
-    /// the same spot, which is the exact thing the nudge exists to prevent.
     fn spawn_anchor(&self, size: Size<f64, Logical>) -> Point<f64, Logical> {
         let Some(center) = self.spawn_center else {
             let pos = center_preferring_top_left_in_area(self.working_area, size);
@@ -1559,7 +1401,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
             .map(|i| i.id())
     }
 
-    /// The windows in an island, in its internal order.
     pub fn island_windows(&self, island: IslandId) -> &[W::Id] {
         self.islands.get(island).map_or(&[], |i| i.items())
     }
@@ -1576,20 +1417,12 @@ impl<W: LayoutElement> FloatingSpace<W> {
         }
     }
 
-    /// How much an island grows to take in a tile of `size`.
-    ///
-    /// Joining widens the group rather than squeezing what is already there. Halving everyone's
-    /// width because one more window opened is the thing that makes tiling feel punitive, and on
-    /// an unbounded canvas there is no reason to pay it -- there is always more room sideways.
-    /// The working area is still the ceiling, so an island never grows past one screenful.
     fn grown_for(
         &self,
         current: Size<f64, Logical>,
         size: Size<f64, Logical>,
     ) -> Size<f64, Logical> {
         let gap = self.options.layout.gaps;
-        // Inset by the gap so a full-width island keeps the same outer margin every other
-        // window has, rather than running edge to edge and looking like a bug.
         let max: Size<f64, Logical> = Size::from((
             (self.working_area.size.w - gap * 2.).max(0.),
             (self.working_area.size.h - gap * 2.).max(0.),
@@ -1600,12 +1433,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
         ))
     }
 
-    /// Grows an island to take in a tile of `size`, keeping its centre where it was.
-    ///
-    /// Growing rightward only pushes a merged cluster off the edge: two 700px windows merged on
-    /// a 1280px output produced an island running 290px past the right edge of the view, so half
-    /// of what you had just asked for was off-screen. Growing about the centre keeps the cluster
-    /// where you were looking, which is where you asked for it.
     fn grow_island(&mut self, target: IslandId, size: Size<f64, Logical>) {
         let Some(island) = self.islands.get(target) else {
             return;
@@ -1624,7 +1451,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
         )));
     }
 
-    /// Puts a freshly inserted tile into an island: `join`'s, or one of its own.
     fn register_island(&mut self, idx: usize, join: Option<IslandId>) {
         let id = self.tiles[idx].window().id().clone();
         let data = self.data[idx];
@@ -1645,7 +1471,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
         self.islands.add(island);
     }
 
-    /// Takes a window out of whatever island holds it, dropping the island if it empties.
     fn unregister_island(&mut self, id: &W::Id) {
         let Some(island_id) = self.island_of(id) else {
             return;
@@ -1661,24 +1486,9 @@ impl<W: LayoutElement> FloatingSpace<W> {
         }
     }
 
-    /// Reconciles islands and tiles, in both directions.
-    ///
-    /// A one-item island *follows* its tile: drag the window and the island comes along, which is
-    /// what makes a lone floating window behave exactly as it did before islands existed. An
-    /// island with more than one item *drives* its tiles instead, laying them out inside its own
-    /// rect.
-    ///
-    /// That one rule also removes the need to shrink an island when a window leaves it: the
-    /// moment a single member is left, the rule flips and the island snaps to that tile rather
-    /// than stretching it across a rect sized for three.
-    ///
-    /// Idempotent, and cheap enough to run every frame -- it only touches a tile when the
-    /// geometry it wants differs from the geometry the tile has.
     fn sync_islands(&mut self) {
         let gap = self.options.layout.gaps;
 
-        // Collected first: the loop reads `self.islands`, `self.data` and `self.tiles` at once,
-        // and applying as it goes would need all three mutably.
         let mut follows: Vec<(IslandId, Point<f64, Canvas>, Size<f64, Logical>)> = Vec::new();
         let mut moves: Vec<(usize, Point<f64, Logical>)> = Vec::new();
         let mut resizes: Vec<(usize, Size<f64, Logical>)> = Vec::new();
@@ -1706,8 +1516,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
                     moves.push((idx, pos));
                 }
 
-                // Only ask when the answer would differ: `request_tile_size` is a Wayland
-                // configure, and one per window per frame is a configure storm.
                 let have = self.tiles[idx].tile_expected_or_current_size();
                 if (rect.size.w - have.w).abs() > 0.5 || (rect.size.h - have.h).abs() > 0.5 {
                     resizes.push((idx, rect.size));
@@ -1729,7 +1537,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
         }
     }
 
-    /// Moves an existing window into another island.
     pub fn join_island(&mut self, window: &W::Id, target: IslandId) -> bool {
         let Some(from) = self.island_of(window) else {
             return false;
@@ -1748,7 +1555,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
         self.unregister_island(window);
 
-        // The island may have vanished if `window` was its only member.
         if self.islands.get(target).is_none() {
             return false;
         }
@@ -1760,11 +1566,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
         true
     }
 
-    /// Pulls a window out of its island into one of its own.
-    ///
-    /// Dragging a window out with the pointer needs none of this: an interactive move takes the
-    /// tile out of the space entirely and adds it back when dropped, so it lands in a fresh
-    /// island for free.
     pub fn split_island(&mut self, window: &W::Id) -> bool {
         let Some(from) = self.island_of(window) else {
             return false;
@@ -1796,7 +1597,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
         true
     }
 
-    /// Moves an island by a canvas delta, taking its windows with it.
     pub fn move_island_by(&mut self, island: IslandId, delta: Point<f64, Logical>) -> bool {
         let Some(island) = self.islands.get_mut(island) else {
             return false;
@@ -1807,15 +1607,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
         true
     }
 
-    /// Focuses the nearest island in a direction and activates its active window.
-    ///
-    /// This is what the 24 direction functions route through. On a strip `focus_left` was index
-    /// arithmetic; a canvas has no index to do arithmetic on, so direction becomes a real spatial
-    /// query -- and a better-defined one, because it does the right thing for an arrangement an
-    /// index cannot describe at all.
     pub fn focus_island_in_direction(&mut self, dir: Direction) -> bool {
-        // Search from the *active window's* island, not from whatever `IslandSpace` last had
-        // active: focus follows the window, and the two can drift apart via `raise`.
         if let Some(active) = self.active_window_id.clone() {
             self.activate_island_of(&active);
         }
@@ -1837,15 +1629,11 @@ impl<W: LayoutElement> FloatingSpace<W> {
         self.activate_window(&win)
     }
 
-    /// Merges the active window into the neighbouring island in a direction.
-    ///
-    /// The gesture for building a cluster: point at the thing you want to sit beside and say so.
     pub fn move_active_to_island(&mut self, dir: Direction) -> bool {
         let Some(active) = self.active_window_id.clone() else {
             return false;
         };
 
-        // Search from the active window's island, not from whatever the space last had active.
         self.activate_island_of(&active);
 
         let Some(target) = self.islands.neighbour(dir) else {
@@ -1854,7 +1642,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
         self.join_island(&active, target)
     }
 
-    /// Pulls the active window out of its cluster.
     pub fn split_active_from_island(&mut self) -> bool {
         let Some(active) = self.active_window_id.clone() else {
             return false;
@@ -1862,12 +1649,10 @@ impl<W: LayoutElement> FloatingSpace<W> {
         self.split_island(&active)
     }
 
-    /// Where a new window should go, given what the camera is looking at.
     pub fn spawn_target(&self, ctx: &SpawnContext) -> SpawnTarget {
         island::spawn_target(&self.islands, ctx)
     }
 
-    /// A canvas spot for a new island near `preferred` that is not exactly on another.
     pub fn free_island_spot(
         &self,
         preferred: Point<f64, Canvas>,
@@ -1876,7 +1661,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
         island::free_spot_near(&self.islands, preferred, size, 48.)
     }
 
-    /// Bounding box of every island, in canvas coordinates.
     pub fn islands_bbox(&self) -> Option<Rectangle<f64, Canvas>> {
         self.islands.bbox()
     }
@@ -1938,9 +1722,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
             );
         }
 
-        // Islands partition tiles: every tile is in exactly one island, and no island holds a
-        // window that is not here. This is the entire safety argument for islands being a layer
-        // over `FloatingSpace` rather than the owner of its tiles, so it is checked both ways.
         let mut seen = 0usize;
         for island in self.islands.islands() {
             assert!(!island.is_empty(), "an empty island must be removed, not kept");

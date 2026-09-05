@@ -37,14 +37,9 @@ use crate::state::State;
 use crate::utils::{version, with_toplevel_role};
 use crate::window::Mapped;
 
-// If an event stream client fails to read events fast enough that we accumulate more than this
-// number in our buffer, we drop that event stream client.
 const EVENT_STREAM_BUFFER_SIZE: usize = 64;
 
 pub struct IpcServer {
-    /// Path to the IPC socket.
-    ///
-    /// This is `None` when creating `IpcServer` without a socket.
     pub socket_path: Option<PathBuf>,
     event_streams: Rc<RefCell<Vec<EventStreamSender>>>,
     event_stream_state: Rc<RefCell<EventStreamState>>,
@@ -189,13 +184,11 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
     let mut read = BufReader::new(read);
 
     loop {
-        // Don't keep buf around to avoid clients wasting RAM by filling it with bogus data.
         let mut buf = Vec::new();
         let res = read.read_until(b'\n', &mut buf).await;
         match res {
             Ok(0) => return Ok(()),
             Ok(_) => (),
-            // Normal client disconnection.
             Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return Ok(()),
             Err(err) => {
                 return Err(err).context("error reading request");
@@ -228,7 +221,6 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
             let (events_tx, events_rx) = async_channel::bounded(EVENT_STREAM_BUFFER_SIZE);
             let (disconnect_tx, disconnect_rx) = async_channel::bounded(1);
 
-            // Spawn a task for the client.
             let client = EventStreamClient {
                 events: events_rx,
                 disconnect: disconnect_rx,
@@ -243,7 +235,6 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
                 warn!("error scheduling IPC event stream future: {err:?}");
             }
 
-            // Send the initial state.
             {
                 let state = ctx.event_stream_state.borrow();
                 for event in state.replicate() {
@@ -253,7 +244,6 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
                 }
             }
 
-            // Add it to the list.
             {
                 let mut streams = ctx.event_streams.borrow_mut();
                 let sender = EventStreamSender {
@@ -350,15 +340,12 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                     location: pointer.current_location(),
                 };
                 let grab = PickWindowGrab::new(start_data);
-                // The `WindowPickGrab` ungrab handler will cancel the previous ongoing pick, if
-                // any.
                 pointer.set_grab(state, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);
                 state.zen.pick_window = Some(tx);
                 state
                     .zen
                     .cursor_manager
                     .set_cursor_image(CursorImageStatus::Named(CursorIcon::Crosshair));
-                // Redraw to update the cursor.
                 state.zen.queue_redraw_all();
             });
             let result = rx.recv().await;
@@ -385,16 +372,11 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
 
             let action = zen_config::Action::from(action);
             ctx.event_loop.insert_idle(move |state| {
-                // Make sure some logic like workspace clean-up has a chance to run before doing
-                // actions.
                 state.zen.advance_animations();
                 state.do_action(action, false);
                 let _ = tx.send_blocking(());
             });
 
-            // Wait until the action has been processed before returning. This is important for a
-            // few actions, for instance for DoScreenTransition this wait ensures that the screen
-            // contents were sampled into the texture.
             let _ = rx.recv().await;
             Response::Handled
         }
@@ -467,8 +449,6 @@ fn validate_action(action: &Action) -> Result<(), String> {
     | Action::LoadConfigFile { path } = action
     {
         if let Some(path) = path {
-            // Relative paths are resolved against the zen compositor's working directory, which
-            // is almost certainly not what you want.
             if !Path::new(path).is_absolute() {
                 return Err(format!("path must be absolute: {path}"));
             }
@@ -503,7 +483,6 @@ async fn handle_event_stream_client(client: EventStreamClient) -> anyhow::Result
 
         match res {
             Ok(()) => (),
-            // Normal client disconnection.
             Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return Ok(()),
             res @ Err(_) => res.context("error writing event")?,
         }
@@ -600,7 +579,6 @@ impl State {
         let layout = &self.zen.layout;
         let focused_ws_id = layout.active_workspace().map(|ws| ws.id().get());
 
-        // Check for workspace changes.
         let mut seen = HashSet::new();
         let mut need_workspaces_changed = false;
         for (mon, ws_idx, ws) in layout.workspaces() {
@@ -608,12 +586,10 @@ impl State {
             seen.insert(id);
 
             let Some(ipc_ws) = state.workspaces.get(&id) else {
-                // A new workspace was added.
                 need_workspaces_changed = true;
                 break;
             };
 
-            // Check for any changes that we can't signal as individual events.
             let output_name = mon.map(|mon| mon.output_name());
             if ipc_ws.idx != u8::try_from(ws_idx + 1).unwrap_or(u8::MAX)
                 || ipc_ws.name.as_ref() != ws.name()
@@ -631,27 +607,23 @@ impl State {
                 });
             }
 
-            // Check if this workspace urgent state changed.
             let urgent = ws.is_urgent();
             if urgent != ipc_ws.is_urgent {
                 events.push(Event::WorkspaceUrgencyChanged { id, urgent });
             }
 
-            // Check if this workspace became focused.
             let is_focused = Some(id) == focused_ws_id;
             if is_focused && !ipc_ws.is_focused {
                 events.push(Event::WorkspaceActivated { id, focused: true });
                 continue;
             }
 
-            // Check if this workspace became active.
             let is_active = mon.is_some_and(|mon| mon.active_workspace_idx() == ws_idx);
             if is_active && !ipc_ws.is_active {
                 events.push(Event::WorkspaceActivated { id, focused: false });
             }
         }
 
-        // Check if any workspaces were removed.
         if !need_workspaces_changed && state.workspaces.keys().any(|id| !seen.contains(id)) {
             need_workspaces_changed = true;
         }
@@ -700,7 +672,6 @@ impl State {
 
         let mut batch_change_layouts: Vec<(u64, WindowLayout)> = Vec::new();
 
-        // Check for window changes.
         let mut seen = HashSet::new();
         let mut focused_id = None;
         layout.with_windows(|mapped, _, ws_id, window_layout| {
@@ -753,18 +724,12 @@ impl State {
             }
         });
 
-        // It might make sense to push layout changes after closed windows (since windows about to
-        // be closed will occupy the same column/tile positions as the window that moved into this
-        // vacated space), but also we are already pushing some layout changes in
-        // WindowOpenedOrChanged above, meaning that the receiving end has to handle this case
-        // anyway.
         if !batch_change_layouts.is_empty() {
             events.push(Event::WindowLayoutsChanged {
                 changes: batch_change_layouts,
             });
         }
 
-        // Check for closed windows.
         let mut ipc_focused_id = None;
         for (id, ipc_win) in &state.windows {
             if !seen.contains(id) {
@@ -776,8 +741,6 @@ impl State {
             }
         }
 
-        // Extra check for focus becoming None, since the checks above only work for focus becoming
-        // a different window.
         if focused_id.is_none() && ipc_focused_id.is_some() {
             events.push(Event::WindowFocusChanged { id: None });
         }
@@ -819,16 +782,12 @@ impl State {
         let mut events = Vec::new();
         let mut seen = HashSet::new();
 
-        // Check PipeWire screencasts.
         #[cfg(feature = "xdp-gnome-screencast")]
         {
-            // Check pending dynamic casts.
             for pending in &self.zen.casting.pending_dynamic_casts {
                 let stream_id = pending.stream_id.get();
                 seen.insert(stream_id);
 
-                // Pending dynamic casts don't change any properties, so we only need to check if
-                // it's missing from the state.
                 if !state.casts.contains_key(&stream_id) {
                     let cast = zen_ipc::Cast {
                         session_id: pending.session_id.get(),
@@ -844,14 +803,12 @@ impl State {
                 }
             }
 
-            // Check active casts.
             for cast in &self.zen.casting.casts {
                 let stream_id = cast.stream_id.get();
                 seen.insert(stream_id);
 
                 let pw_node_id = cast.node_id();
                 if state.casts.get(&stream_id).is_none_or(|existing| {
-                    // Only these properties can change.
                     existing.is_active != cast.is_active()
                         || !cast.target.matches(&existing.target)
                         || existing.pw_node_id != pw_node_id
@@ -871,10 +828,6 @@ impl State {
             }
         }
 
-        // Check screencopy casts.
-        //
-        // First, clear expired casts. Ideally we'd have a deadline timer, but our 1 second frame
-        // callback timer calls refresh regularly, so that's fine as is.
         self.zen.screencopy_state.clear_expired_casts();
 
         for queue in self.zen.screencopy_state.queues() {
@@ -883,7 +836,6 @@ impl State {
                 seen.insert(stream_id);
 
                 if state.casts.get(&stream_id).is_none_or(|existing| {
-                    // Only this property can change.
                     match &existing.target {
                         zen_ipc::CastTarget::Output { name } => *name != cast_info.output_name,
                         _ => true,
@@ -906,7 +858,6 @@ impl State {
             }
         }
 
-        // Check for stopped casts.
         for stream_id in state.casts.keys() {
             if !seen.contains(stream_id) {
                 events.push(Event::CastStopped {

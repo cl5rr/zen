@@ -39,10 +39,6 @@ pub struct Key {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum Trigger {
     Keysym(Keysym),
-    /// The modifier key tapped on its own, with nothing else pressed in between.
-    ///
-    /// Hyprland and GNOME both use this for the launcher, and it is the one binding a new user
-    /// reaches for without being told. Bound as `ModTap { .. }` with no modifiers.
     ModTap,
     MouseLeft,
     MouseRight,
@@ -105,7 +101,6 @@ pub struct SwitchAction {
     pub spawn: Vec<String>,
 }
 
-// Remember to add new actions to the CLI enum too.
 #[derive(knuffel::Decode, Debug, Clone, PartialEq)]
 pub enum Action {
     Quit(#[knuffel(property(name = "skip-confirmation"), default)] bool),
@@ -130,19 +125,16 @@ pub enum Action {
     ScreenshotTogglePointer,
     Screenshot(
         #[knuffel(property(name = "show-pointer"), default = true)] bool,
-        // Path; not settable from knuffel
         Option<String>,
     ),
     ScreenshotScreen(
         #[knuffel(property(name = "write-to-disk"), default = true)] bool,
         #[knuffel(property(name = "show-pointer"), default = true)] bool,
-        // Path; not settable from knuffel
         Option<String>,
     ),
     ScreenshotWindow(
         #[knuffel(property(name = "write-to-disk"), default = true)] bool,
         #[knuffel(property(name = "show-pointer"), default = false)] bool,
-        // Path; not settable from knuffel
         Option<String>,
     ),
     #[knuffel(skip)]
@@ -826,9 +818,6 @@ where
                 Ok(bind) => {
                     match seen_keys.entry(bind.key) {
                         Entry::Occupied(entry) => {
-                            // Even though it's technically incorrect, we use
-                            // `DecodeError::Missing` here because it labels the bind with
-                            // "node starts here", which is the least bad option
                             ctx.emit_error(DecodeError::missing(
                                 entry.get(),
                                 "keybind first defined here",
@@ -920,9 +909,6 @@ where
 
         let mut children = node.children();
 
-        // If the action is invalid but the key is fine, we still want to return something.
-        // That way, the parent can handle the existence of duplicate keybinds,
-        // even if their contents are not valid.
         let dummy = Self {
             key,
             action: Action::Spawn(vec![]),
@@ -953,8 +939,6 @@ where
                         }
                     }
 
-                    // The toggle-inhibit action must always be uninhibitable.
-                    // Otherwise, it would be impossible to trigger it.
                     if matches!(action, Action::ToggleKeyboardShortcutsInhibit) {
                         allow_inhibiting = false;
                     }
@@ -1054,27 +1038,6 @@ impl FromStr for Key {
             Trigger::TabletStylusButton3
         } else {
             let mut keysym = keysym_from_name(key, KEYSYM_CASE_INSENSITIVE);
-            // The keyboard event handling code can receive either
-            // XF86ScreenSaver or XF86Screensaver, because there is no
-            // case mapping defined between these keysyms. If we just
-            // use the case-insensitive version of keysym_from_name it
-            // is not possible to bind the uppercase version, because the
-            // case-insensitive match prefers the lowercase version when
-            // there is a choice.
-            //
-            // Therefore, when we match this key with the initial
-            // case-insensitive match we try a further case-sensitive match
-            // (so that either key can be bound). If that fails, we change
-            // to the uppercase version because:
-            //
-            // - A comment in xkb_keysym_from_name (in libxkbcommon) tells us that the uppercase
-            //   version is the "best" of the two. [0]
-            // - The xkbcommon crate only has a constant for ScreenSaver. [1]
-            //
-            // [0]: https://github.com/xkbcommon/libxkbcommon/blob/45a118d5325b051343b4b174f60c1434196fa7d4/src/keysym.c#L276
-            // [1]: https://docs.rs/xkbcommon/latest/xkbcommon/xkb/keysyms/index.html#:~:text=KEY%5FXF86ScreenSaver
-            //
-            // See upstream issue #1969
             if keysym == Keysym::XF86_Screensaver {
                 keysym = keysym_from_name(key, KEYSYM_NO_FLAGS);
                 if keysym.raw() == KEY_NoSymbol {

@@ -51,154 +51,72 @@ use crate::utils::{
 pub struct Mapped {
     pub window: Window,
 
-    /// Unique ID of this `Mapped`.
     id: MappedId,
 
-    /// Credentials of the process that created the Wayland connection.
     credentials: Option<Credentials>,
 
-    /// Pre-commit hook that we have on all mapped toplevel surfaces.
     pre_commit_hook: HookId,
 
-    /// Up-to-date rules.
     rules: ResolvedWindowRules,
 
-    /// Whether the window rules need to be recomputed.
-    ///
-    /// This is not used in all cases; for example, app ID and title changes recompute the rules
-    /// immediately, rather than setting this flag.
     need_to_recompute_rules: bool,
 
-    /// Whether this window needs a configure this loop cycle.
-    ///
-    /// Certain Wayland requests require a configure in response, like un/fullscreen.
     needs_configure: bool,
 
-    /// Whether this window needs a frame callback.
-    ///
-    /// We set this after sending a configure to give invisible windows a chance to respond to
-    /// resizes immediately, without waiting for a 1 second throttled callback.
     needs_frame_callback: bool,
 
-    /// Data of the offscreen element rendered in place of this window.
-    ///
-    /// If `None`, then the window is not offscreened.
     offscreen_data: RefCell<Option<OffscreenData>>,
 
-    /// Whether this has an urgent indicator.
     is_urgent: bool,
 
-    /// Whether this window has the keyboard focus.
     is_focused: bool,
 
-    /// Whether this window is the active window in its column.
     is_active_in_column: bool,
 
-    /// Whether this window is floating.
     is_floating: bool,
 
-    /// Whether this window is a target of a window cast.
     is_window_cast_target: bool,
 
-    /// Whether this window should ignore opacity set through window rules.
     ignore_opacity_window_rule: bool,
 
-    /// Buffer to draw instead of the window when it should be blocked out.
     block_out_buffer: RefCell<SolidColorBuffer>,
 
-    /// The blur config, passed for background effect rendering.
     blur_config: zen_config::Blur,
 
-    /// Whether the next configure should be animated, if the configured state changed.
     animate_next_configure: bool,
 
-    /// Serials of commits that should be animated.
     animate_serials: Vec<Serial>,
 
-    /// Snapshot right before an animated commit, without popups.
     animation_snapshot: Option<LayoutElementRenderSnapshot>,
 
-    /// State for the logic to request a size once (for floating windows).
     request_size_once: Option<RequestSizeOnce>,
 
-    /// Transaction that the next configure should take part in, if any.
     transaction_for_next_configure: Option<Transaction>,
 
-    /// Pending transactions that have not been added as blockers for this window yet.
     pending_transactions: Vec<(Serial, Transaction)>,
 
-    /// State of an ongoing interactive resize.
     interactive_resize: Option<InteractiveResize>,
 
-    /// Last time interactive resize was started.
-    ///
-    /// Used for double-resize-click tracking.
     last_interactive_resize_start: Cell<Option<(Duration, ResizeEdge)>>,
 
-    /// Whether this window is in windowed (fake) fullscreen.
-    ///
-    /// In this mode, the underlying window is told that it's fullscreen, while keeping it as
-    /// a regular, non-fullscreen tile.
     is_windowed_fullscreen: bool,
 
-    /// Whether this window is pending to go to windowed (fake) fullscreen.
-    ///
-    /// Several places in the layout code assume that is_fullscreen() can flip only on a commit.
-    /// Which is something that we do want to flip when changing is_windowed_fullscreen. Flipping
-    /// it right away would mean remembering to call layout.update_window() after any operation
-    /// that may change is_windowed_fullscreen, which is quite tricky and error-prone, especially
-    /// for deeply nested operations.
-    ///
-    /// It's also not clear what's the best way to go about it. Ideally we'd wait for configure ack
-    /// and commit before "committing" to is_windowed_fullscreen, however, since it's not real
-    /// Wayland state, we may end up with no Wayland state change to configure at all.
-    ///
-    /// For example: when the window is in real fullscreen, but its non-fullscreen size matches
-    /// its fullscreen size. Then turning on is_windowed_fullscreen will both keep the
-    /// fullscreen state, and keep the size (since it matches), resulting in no configure.
-    ///
-    /// So we work around this by emulating a configure-ack/commit cycle through
-    /// is_pending_windowed_fullscreen and uncommitted_windowed_fullscreen. We ensure we send
-    /// actual configures in all cases through needs_configure. This can result in unnecessary
-    /// configures (like in the example above), but in most cases there will be a configure
-    /// anyway to change the Fullscreen state and/or the size. What this gives us is being able
-    /// to synchronize our windowed fullscreen state to the real window updates to avoid any
-    /// flickering.
     is_pending_windowed_fullscreen: bool,
 
-    /// Pending windowed fullscreen updates.
-    ///
-    /// These have been "sent" to the window in form of configures, but the window hadn't committed
-    /// in response yet.
     uncommitted_windowed_fullscreen: Vec<(Serial, bool)>,
 
-    /// Whether this window is maximized.
-    ///
-    /// We have to track this ourselves in addition to the Maximized toplevel state in order to
-    /// support windowed fullscreen, since in windowed fullscreen the toplevel state is always
-    /// Fullscreen. So we need this variable to be able to report accurate sizing mode and pending
-    /// sizing mode.
     is_maximized: bool,
 
-    /// Whether this window is pending to be maximized.
-    ///
-    /// We have to track this ourselves due to windowed fullscreen.
     is_pending_maximized: bool,
 
-    /// Pending maximized updates.
-    ///
-    /// These have been "sent" to the window in form of configures, but the window hadn't committed
-    /// in response yet.
     uncommitted_maximized: Vec<(Serial, bool)>,
 
-    /// Most recent monotonic time when the window had the focus.
     focus_timestamp: Option<Duration>,
 }
 
 zen_render_elements! {
     WindowCastRenderElements<R> => {
         Layout = LayoutElementRenderElement<R>,
-        // Blocked-out window with rounded corners.
         Border = BorderRenderElement,
     }
 }
@@ -217,33 +135,15 @@ impl MappedId {
         self.0
     }
 
-    /// Converts the ID to a string that can be used as an identifier in
-    /// ext_foreign_toplevel_handle_v1::identifier
-    ///
-    /// > An identifier is a string that contains up to 32 printable ASCII bytes.
-    /// > An identifier must not be an empty string.
-    ///
-    /// Since the ID is exposed to IPC, it's useful for this conversion to be stable and reversible.
-    /// That way, clients can associate a foreign toplevel handle with an IPC window ID.
-    ///
-    /// We use the decimal representation of the ID, which is up to 20 characters long for u64::MAX.
-    /// This is within the 32-character limit, and is nice because it matches up with how `zen msg`
-    /// prints the IDs to the console.
-    ///
-    /// This namespace can be extended in the future, with any non-numeric prefix to disambiguate.
     pub fn to_protocol_identifier(self) -> String {
         format!("{}", self.0)
     }
 }
 
-/// Interactive resize state.
 #[derive(Debug)]
 enum InteractiveResize {
-    /// The resize is ongoing.
     Ongoing(InteractiveResizeData),
-    /// The resize has stopped and we're waiting to send the last configure.
     WaitingForLastConfigure(InteractiveResizeData),
-    /// We had sent the last resize configure and are waiting for the corresponding commit.
     WaitingForLastCommit {
         data: InteractiveResizeData,
         serial: Serial,
@@ -260,14 +160,10 @@ impl InteractiveResize {
     }
 }
 
-/// Request-size-once logic state.
 #[derive(Debug, Clone, Copy)]
 enum RequestSizeOnce {
-    /// Waiting for configure to be sent with the requested size.
     WaitingForConfigure,
-    /// Waiting for the window to commit in response to the configure.
     WaitingForCommit(Serial),
-    /// When configuring, use the current window size.
     UseWindowSize,
 }
 
@@ -320,7 +216,6 @@ impl Mapped {
         self.window.toplevel().expect("no X11 support")
     }
 
-    /// Recomputes the resolved window rules and returns whether they changed.
     pub fn recompute_window_rules(&mut self, rules: &[WindowRule], is_at_startup: bool) -> bool {
         self.need_to_recompute_rules = false;
 
@@ -329,8 +224,6 @@ impl Mapped {
             return false;
         }
 
-        // If the opacity window rule no longer makes the window semitransparent, reset the ignore
-        // flag to reduce surprises down the line.
         if !new_rules.opacity.is_some_and(|o| o < 1.) {
             self.ignore_opacity_window_rule = false;
         }
@@ -406,7 +299,6 @@ impl Mapped {
         self.need_to_recompute_rules = true;
     }
 
-    /// Renders a snapshot of the window without popups.
     fn render_snapshot(&self, renderer: &mut GlesRenderer) -> LayoutElementRenderSnapshot {
         let _span = tracy_client::span!("Mapped::render_snapshot");
 
@@ -460,28 +352,9 @@ impl Mapped {
     pub fn take_pending_transaction(&mut self, commit_serial: Serial) -> Option<Transaction> {
         let mut rv = None;
 
-        // Pending transactions are appended in order by serial, so we can loop from the start
-        // until we hit a serial that is too new.
         while let Some((serial, _)) = self.pending_transactions.first() {
-            // In this loop, we will complete the transaction corresponding to the commit, as well
-            // as all transactions corresponding to previous serials. This can happen when we
-            // request resizes too quickly, and the surface only responds to the last one.
-            //
-            // Note that in this case, completing the previous transactions can result in an
-            // inconsistent visual state, if another window is waiting for this window to assume a
-            // specific size (in a previous transaction), which is now different (in this commit).
-            //
-            // However, there isn't really a good way to deal with that. We cannot cancel any
-            // transactions because we need to keep sending frame callbacks, and cancelling a
-            // transaction will make the corresponding frame callbacks get lost, and the window
-            // will hang.
-            //
-            // This is why resize throttling (implemented separately) is important: it prevents
-            // visually inconsistent states by way of never having more than one transaction in
-            // flight.
             if commit_serial.is_no_older_than(serial) {
                 let (_, transaction) = self.pending_transactions.remove(0);
-                // Previous transaction is dropped here, signaling completion.
                 rv = Some(transaction);
             } else {
                 break;
@@ -515,11 +388,6 @@ impl Mapped {
 
         let use_border = |elem| {
             if let LayoutElementRenderElement::SolidColor(elem) = &elem {
-                // In this branch we're rendering a blocked-out window with a solid color. We need
-                // to render it with a rounded corner shader even if clip_to_geometry is false,
-                // because in this case we're assuming that the unclipped window CSD already has
-                // corners rounded to the user-provided radius, so our blocked-out rendering should
-                // match that radius.
                 if radius != CornerRadius::default() && has_border_shader {
                     let geo = elem.geo();
                     return BorderRenderElement::new(
@@ -579,12 +447,10 @@ impl Mapped {
         self.needs_frame_callback = false;
 
         let should_send = move |surface: &WlSurface, states: &SurfaceData| {
-            // Let primary_scan_out_output() run its logic and update internal state.
             if let Some(output) = primary_scan_out_output(surface, states) {
                 return Some(output);
             }
 
-            // Send unconditionally to all surfaces if the window needs a surface callback.
             needs_frame_callback.then(|| output.clone())
         };
         self.window.send_frame(output, time, throttle, should_send);
@@ -690,7 +556,6 @@ impl LayoutElement for Mapped {
         for (popup, offset) in PopupManager::popups_for_surface(surface) {
             let popup_rules = match popup {
                 PopupKind::Xdg(_) => self.rules.popups,
-                // IME popups aren't affected by rules for regular popups.
                 PopupKind::InputMethod(_) => zen_config::ResolvedPopupsRules::default(),
             };
             let alpha = alpha * popup_rules.opacity.unwrap_or(1.).clamp(0., 1.);
@@ -713,7 +578,6 @@ impl LayoutElement for Mapped {
             let surface_off = popup_geo.loc.upscale(-1).to_f64();
             let surface_anim_scale = Scale::from(1.);
             let mut effect = popup_rules.background_effect;
-            // Default xray to false for pop-ups since they're always on top of something.
             if effect.xray.is_none() {
                 effect.xray = Some(false);
             }
@@ -774,20 +638,16 @@ impl LayoutElement for Mapped {
         animate: bool,
         transaction: Option<Transaction>,
     ) {
-        // Going into real fullscreen resets windowed fullscreen.
         if mode == SizingMode::Fullscreen {
             self.is_pending_windowed_fullscreen = false;
 
             if self.is_windowed_fullscreen {
-                // Make sure we receive a commit to update self.is_windowed_fullscreen to false
-                // later on.
                 self.needs_configure = true;
             }
         }
 
         self.is_pending_maximized = mode == SizingMode::Maximized;
         if self.is_maximized != self.is_pending_maximized {
-            // Make sure we receive a commit to update self.is_maximized later on.
             self.needs_configure = true;
         }
 
@@ -815,32 +675,19 @@ impl LayoutElement for Mapped {
 
         self.request_size_once = None;
 
-        // Store the transaction regardless of whether the size changed. This is because with 3+
-        // windows in a column, the size may change among windows 1 and 2 and then right away among
-        // windows 2 and 3, and we want all windows 1, 2 and 3 to use the last transaction, rather
-        // than window 1 getting stuck with the previous transaction that is immediately released
-        // by 2.
         if let Some(transaction) = transaction {
             self.transaction_for_next_configure = Some(transaction);
         }
     }
 
     fn request_size_once(&mut self, size: Size<i32, Logical>, animate: bool) {
-        // Assume that when calling this function, the window is going floating, so it can no
-        // longer participate in any transactions with other windows.
         self.transaction_for_next_configure = None;
 
         self.is_pending_maximized = false;
         if self.is_maximized != self.is_pending_maximized {
-            // Make sure we receive a commit to update self.is_maximized later on.
             self.needs_configure = true;
         }
 
-        // If our last requested size already matches the size we want to request-once, clear the
-        // size request right away. However, we must also check if we're unfullscreening, because
-        // in that case the window itself will restore its previous size upon receiving a (0, 0)
-        // configure, whereas what we potentially want is to unfullscreen the window into its
-        // fullscreen size.
         let already_sent = with_toplevel_last_uncommitted_configure(self.toplevel(), |configure| {
             let ToplevelConfigure { state, serial } = configure?;
 
@@ -863,14 +710,9 @@ impl LayoutElement for Mapped {
                     .map(|c| c.serial)
             });
             if let Some(current_serial) = current_serial {
-                // God this triple negative...
                 if !current_serial.is_no_older_than(&serial) {
-                    // We have already sent a request for the new size, but the surface has not
-                    // committed in response yet, so we will wait for that commit.
                     self.request_size_once = Some(RequestSizeOnce::WaitingForCommit(serial));
                 } else {
-                    // We have already sent a request for the new size, and the surface has
-                    // committed in response, so we will start using the current size right away.
                     self.request_size_once = Some(RequestSizeOnce::UseWindowSize);
                 }
             } else {
@@ -933,7 +775,6 @@ impl LayoutElement for Mapped {
 
         match mode {
             Some(zxdg_toplevel_decoration_v1::Mode::ServerSide) => true,
-            // Check KDE decorations when XDG are not in use.
             None => with_states(toplevel.wl_surface(), |states| {
                 states
                     .data_map
@@ -966,8 +807,6 @@ impl LayoutElement for Mapped {
                 *offscreen_data = Some(data);
             }
             Some(existing) => {
-                // Replace the id, amend existing element states. This is necessary to handle
-                // multiple layers of offscreen (e.g. resize animation + alpha animation).
                 existing.id = data.id;
                 existing.states.states.extend(data.states.states);
             }
@@ -1020,47 +859,32 @@ impl LayoutElement for Mapped {
             if let Some(server_pending) = &attributes.server_pending {
                 let current_server = attributes.current_server_state();
                 if *server_pending != current_server {
-                    // Something changed. Check if the only difference is the size, and if the
-                    // current server size matches the current committed size.
                     let mut current_server_same_size = current_server.clone();
                     current_server_same_size.size = server_pending.size;
                     if current_server_same_size == *server_pending {
-                        // Only the size changed. Check if the window committed our previous size
-                        // request.
                         let Some(current_committed) = current_committed else {
                             error!("mapped must have had initial commit");
                             return ConfigureIntent::ShouldSend;
                         };
 
                         if current_committed.size == current_server.size {
-                            // The window had committed for our previous size change, so we can
-                            // change the size again.
                             trace!(
                                 "current size matches server size: {:?}",
                                 current_committed.size
                             );
                             ConfigureIntent::CanSend
                         } else {
-                            // The window had not committed for our previous size change yet. Since
-                            // nothing else changed, do not send the new size request yet. This
-                            // throttling is done because some clients do not batch size requests,
-                            // leading to bad behavior with very fast input devices (i.e. a 1000 Hz
-                            // mouse). This throttling also helps interactive resize transactions
-                            // preserve visual consistency.
                             trace!("throttling resize");
                             ConfigureIntent::Throttled
                         }
                     } else {
-                        // Something else changed other than the size; send it.
                         trace!("something changed other than the size");
                         ConfigureIntent::ShouldSend
                     }
                 } else {
-                    // Nothing changed since the last configure.
                     ConfigureIntent::NotNeeded
                 }
             } else {
-                // Nothing changed since the last configure.
                 ConfigureIntent::NotNeeded
             }
         })
@@ -1071,10 +895,8 @@ impl LayoutElement for Mapped {
         let _span =
             trace_span!("send_pending_configure", surface = ?toplevel.wl_surface().id()).entered();
 
-        // If the window needs a configure, send it regardless.
         let has_pending_changes = self.needs_configure
             || with_toplevel_role(self.toplevel(), |role| {
-                // Check for pending changes manually to account for RequestSizeOnce::UseWindowSize.
                 if role.server_pending.is_none() {
                     return false;
                 }
@@ -1082,8 +904,6 @@ impl LayoutElement for Mapped {
                 let current_server_size = role.current_server_state().size;
                 let server_pending = role.server_pending.as_mut().unwrap();
 
-                // With UseWindowSize, we do not consider size-only changes, because we will
-                // request the current window size and do not expect it to actually change.
                 if let Some(RequestSizeOnce::UseWindowSize) = self.request_size_once {
                     server_pending.size = current_server_size;
                 }
@@ -1093,7 +913,6 @@ impl LayoutElement for Mapped {
             });
 
         if has_pending_changes {
-            // If needed, replace the pending size with the current window size.
             if let Some(RequestSizeOnce::UseWindowSize) = self.request_size_once {
                 let size = self.window.geometry().size;
                 toplevel.with_pending_state(|state| {
@@ -1106,10 +925,6 @@ impl LayoutElement for Mapped {
 
             self.needs_configure = false;
 
-            // Send the window a frame callback unconditionally to let it respond to size changes
-            // and such immediately, even when it's hidden. This especially matters for cases like
-            // tabbed columns which compute their width based on all windows in the column, even
-            // hidden ones.
             self.needs_frame_callback = true;
 
             if self.animate_next_configure {
@@ -1131,8 +946,6 @@ impl LayoutElement for Mapped {
                 self.request_size_once = Some(RequestSizeOnce::WaitingForCommit(serial));
             }
 
-            // If is_pending_windowed_fullscreen changed compared to the last value that we "sent"
-            // to the window, store the configure serial.
             let last_sent_windowed_fullscreen = self
                 .uncommitted_windowed_fullscreen
                 .last()
@@ -1143,8 +956,6 @@ impl LayoutElement for Mapped {
                     .push((serial, self.is_pending_windowed_fullscreen));
             }
 
-            // If is_pending_maximized changed compared to the last value that we "sent" to the
-            // window, store the configure serial.
             let last_sent_maximized = self
                 .uncommitted_maximized
                 .last()
@@ -1156,8 +967,6 @@ impl LayoutElement for Mapped {
             }
         } else {
             self.interactive_resize = match self.interactive_resize.take() {
-                // We probably started and stopped resizing in the same loop cycle without anything
-                // changing.
                 Some(InteractiveResize::WaitingForLastConfigure { .. }) => None,
                 x => x,
             };
@@ -1177,9 +986,6 @@ impl LayoutElement for Mapped {
         }
 
         self.toplevel().with_committed_state(|state| {
-            // This must always be Some() for mapped windows. However, this function is called on
-            // the code path when removing a just-unmapped window in the commit handler, at which
-            // point state is already None.
             let Some(state) = state else {
                 return SizingMode::Normal;
             };
@@ -1223,22 +1029,8 @@ impl LayoutElement for Mapped {
     }
 
     fn expected_size(&self) -> Option<Size<i32, Logical>> {
-        // We can only use current size if it's not maximized or fullscreen.
         let current_size = (self.sizing_mode().is_normal()).then(|| self.window.geometry().size);
 
-        // Check if we should be using the current window size.
-        //
-        // This branch can be useful (give different result than the logic below) in this example
-        // case:
-        //
-        // 1. We request_size_once a size change.
-        // 2. We send a second configure requesting a state change.
-        // 3. The window acks and commits-to the first configure but not the second, with a
-        //    different size.
-        //
-        // In this case self.request_size_once will already flip to UseWindowSize and this branch
-        // will return the window's own new size, but the logic below would see an uncommitted size
-        // change and return our size.
         if let Some(RequestSizeOnce::UseWindowSize) = self.request_size_once {
             return current_size;
         }
@@ -1251,7 +1043,6 @@ impl LayoutElement for Mapped {
                 .lock()
                 .unwrap();
 
-            // If we have a server-pending size change that we haven't sent yet, use that size.
             let server_pending = role.server_pending.as_ref()?;
 
             let current_server = role.current_server_state();
@@ -1271,7 +1062,6 @@ impl LayoutElement for Mapped {
         })
         .or_else(|| {
             with_toplevel_last_uncommitted_configure(self.toplevel(), |configure| {
-                // If we have a sent-but-not-committed-to size, use that.
                 let ToplevelConfigure { state, .. } = configure?;
 
                 Some((
@@ -1283,10 +1073,6 @@ impl LayoutElement for Mapped {
         });
 
         if let Some((mut size, fullscreen, maximized)) = pending {
-            // If the pending change is maximized or fullscreen, we can't use that size.
-            //
-            // Pending windowed fullscreen is good (means not real fullscreen), unless it's also
-            // pending maximized (means maximized windowed fullscreen, so maximized size, bad).
             if maximized
                 || (fullscreen
                     && (!self.is_pending_windowed_fullscreen || self.is_pending_maximized))
@@ -1294,8 +1080,6 @@ impl LayoutElement for Mapped {
                 return None;
             }
 
-            // If some component of the pending size is zero, substitute it with the current window
-            // size. But only if the current size is not fullscreen.
             if size.w == 0 {
                 size.w = current_size?.w;
             }
@@ -1305,7 +1089,6 @@ impl LayoutElement for Mapped {
 
             Some(size)
         } else {
-            // No pending size, return the current size if it's non-fullscreen.
             current_size
         }
     }
@@ -1325,10 +1108,6 @@ impl LayoutElement for Mapped {
 
         self.is_pending_windowed_fullscreen = value;
 
-        // Set the fullscreen state to match.
-        //
-        // When going from windowed to real fullscreen, we'll use request_size() which will set the
-        // fullscreen state back.
         self.toplevel().with_pending_state(|state| {
             if value {
                 state.states.set(xdg_toplevel::State::Fullscreen);
@@ -1342,7 +1121,6 @@ impl LayoutElement for Mapped {
             }
         });
 
-        // Make sure we receive a commit later to update self.is_windowed_fullscreen.
         self.needs_configure = true;
     }
 
@@ -1407,7 +1185,6 @@ impl LayoutElement for Mapped {
             }
         }
 
-        // "Commit" our "acked" pending windowed fullscreen state.
         self.uncommitted_windowed_fullscreen
             .retain_mut(|(serial, value)| {
                 if commit_serial.is_no_older_than(serial) {
@@ -1418,7 +1195,6 @@ impl LayoutElement for Mapped {
                 }
             });
 
-        // "Commit" our "acked" pending maximized state.
         self.uncommitted_maximized.retain_mut(|(serial, value)| {
             if commit_serial.is_no_older_than(serial) {
                 self.is_maximized = *value;

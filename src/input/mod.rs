@@ -137,25 +137,20 @@ impl<D: SeatHandler + TabletSeatHandler> AnyStartData<D> {
 impl State {
     pub fn process_input_event<I: InputBackend + 'static>(&mut self, event: InputEvent<I>)
     where
-        I::Device: 'static, // Needed for downcasting.
+        I::Device: 'static,
     {
         let _span = tracy_client::span!("process_input_event");
 
-        // Make sure some logic like workspace clean-up has a chance to run before doing actions.
         self.zen.advance_animations();
 
         if self.zen.monitors_active {
-            // Notify the idle-notifier of activity.
             if should_notify_activity(&event) {
                 self.zen.notify_activity();
             }
         } else {
-            // Power on monitors if they were off.
             if should_activate_monitors(&event) {
                 self.zen.activate_monitors(&mut self.backend);
 
-                // Notify the idle-notifier of activity only if we're also powering on the
-                // monitors.
                 self.zen.notify_activity();
             }
         }
@@ -201,13 +196,10 @@ impl State {
             Special(_) => (),
         }
 
-        // Don't hide overlays if consumed by a11y, so that you can use the screen reader
-        // navigation keys.
         if consumed_by_a11y {
             return;
         }
 
-        // Do this last so that screenshot still gets it.
         if hide_hotkey_overlay && self.zen.hotkey_overlay.hide() {
             self.zen.queue_redraw_all();
         }
@@ -282,7 +274,6 @@ impl State {
             let desc = TabletDescriptor::from(&device);
             tablet_seat.remove_tablet(&desc);
 
-            // If there are no tablets in seat we can remove all tools
             if tablet_seat.count_tablets() == 0 {
                 tablet_seat.clear_tools();
             }
@@ -292,7 +283,6 @@ impl State {
         }
     }
 
-    /// Computes the rectangle that covers all outputs in global space.
     fn global_bounding_rectangle(&self) -> Option<Rectangle<i32, Logical>> {
         self.zen.global_space.outputs().fold(
             None,
@@ -305,10 +295,6 @@ impl State {
         )
     }
 
-    /// Computes the cursor position for the tablet event.
-    ///
-    /// This function handles the tablet output mapping, as well as coordinate clamping and aspect
-    /// ratio correction.
     fn compute_tablet_position<I: InputBackend>(
         &self,
         event: &(impl Event<I> + TabletToolEvent<I>),
@@ -321,11 +307,7 @@ impl State {
         let device_output = device_output.as_ref();
         let mapped_output = device_output.or_else(|| self.zen.output_for_tablet());
 
-        // If the tablet is configured to map to the focused window, use that window's geometry on
-        // the mapped output (or on the focused output if no specific output is mapped).
         let map_to_focused_window = self.zen.config.borrow().input.tablet.map_to_focused_window;
-        // But only if the keyboard focus is on the layout, so that it doesn't trigger on the lock
-        // screen and such.
         let window_target = if map_to_focused_window && self.zen.keyboard_focus.is_layout() {
             let output = mapped_output.or_else(|| self.zen.layout.active_output());
             output.and_then(|output| {
@@ -357,12 +339,9 @@ impl State {
         } else {
             let geo = self.global_bounding_rectangle()?.to_f64();
 
-            // FIXME: this 1 px size should ideally somehow be computed for the rightmost output
-            // corresponding to the position on the right when clamping.
             let output = self.zen.global_space.outputs().next().unwrap();
             let scale = output.current_scale().fractional_scale();
 
-            // Do not keep ratio for the unified mode as this is what OpenTabletDriver expects.
             (geo, false, 1. / scale, Transform::Normal)
         };
 
@@ -378,7 +357,6 @@ impl State {
             let device = event.device();
             if let Some(device) = (&device as &dyn Any).downcast_ref::<input::Device>() {
                 if let Some(data) = self.zen.tablets.get(device) {
-                    // This code does the same thing as mutter with "keep aspect ratio" enabled.
                     let size = transform.invert().transform_size(target_geo.size);
                     let output_aspect_ratio = size.w / size.h;
                     let ratio = data.aspect_ratio / output_aspect_ratio;
@@ -412,11 +390,6 @@ impl State {
             .is_some_and(KeyboardShortcutsInhibitor::is_active)
     }
 
-    /// Tracks whether the modifier is being tapped on its own, and reports when to fire.
-    ///
-    /// Armed only when the modifier goes down with no other modifier held, so `Mod+Shift` does
-    /// not arm. Cleared by any other key -- and by pointer buttons and scrolls elsewhere -- so
-    /// `Mod+T` cannot fire a tap when Mod is finally released.
     fn update_mod_tap(
         &mut self,
         mod_key: ModKey,
@@ -438,7 +411,6 @@ impl State {
         let is_modifier = MODIFIER_SYMS.contains(&sym);
 
         if pressed {
-            // Exact equality, not `contains`: Mod+Shift must not arm.
             self.zen.mod_tap_armed = is_modifier && mods == mod_key.to_modifiers();
             return false;
         }
@@ -448,7 +420,6 @@ impl State {
         fire
     }
 
-    /// Runs the `ModTap` bind, if one is configured.
     fn fire_mod_tap(&mut self) {
         let bind = self
             .zen
@@ -476,13 +447,6 @@ impl State {
         let time = Event::time_msec(&event);
         let pressed = event.state() == KeyState::Pressed;
 
-        // Stop bind key repeat on any release. This won't work 100% correctly in cases like:
-        // 1. Press Mod
-        // 2. Press Left (repeat starts)
-        // 3. Press PgDown (new repeat starts)
-        // 4. Release Left (PgDown repeat stops)
-        // But it's good enough for now.
-        // FIXME: handle this properly.
         if !pressed {
             if let Some(token) = self.zen.bind_repeat_timer.take() {
                 self.zen.event_loop.remove(token);
@@ -495,11 +459,6 @@ impl State {
 
         let is_inhibiting_shortcuts = self.is_inhibiting_shortcuts();
 
-        // Accessibility modifier grabs should override XKB state changes (e.g. Caps Lock), so we
-        // need to process them before keyboard.input() below.
-        //
-        // Other accessibility-grabbed keys should still update our XKB state, but not cause any
-        // other changes.
         #[cfg(feature = "dbus")]
         let block = {
             let block = self.a11y_process_key(
@@ -510,8 +469,6 @@ impl State {
             if block != KbMonBlock::Pass {
                 *consumed_by_a11y = true;
             }
-            // The accessibility modifier first press must not change XKB state, so we return
-            // early here.
             if block == KbMonBlock::ModifierFirstPress {
                 return;
             }
@@ -520,8 +477,6 @@ impl State {
         #[cfg(not(feature = "dbus"))]
         let _ = consumed_by_a11y;
 
-        // Runs after the keyboard callback below, which cannot dispatch actions itself: Smithay
-        // holds a borrow of the seat there.
         let bind_result = self.zen.seat.get_keyboard().unwrap().input(
             self,
             event.key_code(),
@@ -534,31 +489,12 @@ impl State {
                 let raw = keysym.raw_latin_sym_or_raw_current_sym();
                 let modifiers = modifiers_from_state(*mods);
 
-                // Modifier-tap tracking. Done here rather than in should_intercept_key because
-                // this is the only place that sees *every* key event, modifier presses included.
                 if this.update_mod_tap(mod_key, modified, pressed, modifiers) {
                     this.zen.pending_mod_tap = true;
                 }
 
-                // After updating XKB state from accessibility-grabbed keys, return right away and
-                // don't handle them.
                 #[cfg(feature = "dbus")]
                 if block != KbMonBlock::Pass {
-                    // HACK: there's a slight problem with this code. Here we filter out keys
-                    // consumed by accessibility from getting sent to the Wayland client. However,
-                    // the Wayland client can still receive these keys from the wl_keyboard
-                    // enter/modifiers events. In particular, this can easily happen when opening
-                    // the Orca actions menu with Orca + Shift + A: in most cases, when this menu
-                    // opens, Shift is still held down, so the menu receives it in
-                    // wl_keyboard.enter/modifiers. Then the menu won't react to Enter presses
-                    // until the user taps Shift again to "release" it (since the initial Shift
-                    // release will be intercepted here).
-                    //
-                    // I don't think there's any good way of dealing with this apart from keeping a
-                    // separate xkb state for accessibility, so that we can track the pressed
-                    // modifiers without accidentally leaking them to wl_keyboard.enter. So for now
-                    // let's forward modifier releases to the clients here to deal with the most
-                    // common case.
                     if !pressed
                         && matches!(
                             modified,
@@ -584,13 +520,10 @@ impl State {
                         this.zen.stop_signal.stop();
                     }
 
-                    // Don't send this press to any clients.
                     this.zen.suppressed_keys.insert(key_code);
                     return FilterResult::Intercept(None);
                 }
 
-                // Check if all modifiers were released while the MRU UI was open. If so, close the
-                // UI (which will also transfer the focus to the current MRU UI selection).
                 if this.zen.window_mru_ui.is_open() && !pressed && modifiers.is_empty() {
                     this.do_action(Action::MruConfirm, false);
 
@@ -602,7 +535,6 @@ impl State {
                 }
 
                 if pressed && raw == Some(Keysym::Escape) {
-                    // Cancel certain grabs on Escape.
                     let pointer = this.zen.seat.get_pointer().unwrap();
                     if pointer
                         .with_grab(|_, grab| Self::grab_can_be_cancelled_with_esc(grab))
@@ -639,7 +571,6 @@ impl State {
                 };
 
                 if matches!(res, FilterResult::Forward) {
-                    // If we didn't find any bind, try other hardcoded keys.
                     if this.zen.keyboard_focus.is_overview() && pressed {
                         if let Some(bind) = raw.and_then(|raw| hardcoded_overview_bind(raw, *mods))
                         {
@@ -648,8 +579,6 @@ impl State {
                         }
                     }
 
-                    // Interaction with the active window, immediately update the active window's
-                    // focus timestamp without waiting for a possible pending MRU lock-in delay.
                     this.zen.mru_apply_keyboard_commit();
                 }
 
@@ -657,7 +586,6 @@ impl State {
             },
         );
 
-        // Fire a completed modifier tap now that the seat borrow is released.
         if std::mem::take(&mut self.zen.pending_mod_tap) {
             self.fire_mod_tap();
         }
@@ -680,7 +608,6 @@ impl State {
             return;
         }
 
-        // Stop the previous key repeat if any.
         if let Some(token) = self.zen.bind_repeat_timer.take() {
             self.zen.event_loop.remove(token);
         }
@@ -710,8 +637,6 @@ impl State {
     }
 
     fn hide_cursor_if_needed(&mut self) {
-        // If the pointer is already invisible, don't reset it back to Hidden causing one frame
-        // of hover.
         if !self.zen.pointer_visibility.is_visible() {
             return;
         }
@@ -720,9 +645,6 @@ impl State {
             return;
         }
 
-        // zen keeps this set only while actively using a tablet, which means the cursor position
-        // is likely to change almost immediately, causing pointer_visibility to just flicker back
-        // and forth.
         if self.zen.tablet_cursor_location.is_some() {
             return;
         }
@@ -731,7 +653,6 @@ impl State {
         self.zen.queue_redraw_all();
     }
 
-    /// View pixels moved per camera pan action.
     const PAN_STEP: f64 = 120.;
 
     pub fn handle_bind(&mut self, bind: Bind) {
@@ -740,13 +661,11 @@ impl State {
             return;
         };
 
-        // Check this first so that it doesn't trigger the cooldown.
         if self.zen.is_locked() && !(bind.allow_when_locked || allowed_when_locked(&bind.action)) {
             return;
         }
 
         match self.zen.bind_cooldown_timers.entry(bind.key) {
-            // The bind is on cooldown.
             Entry::Occupied(_) => (),
             Entry::Vacant(entry) => {
                 let timer = Timer::from_duration(cooldown);
@@ -767,16 +686,11 @@ impl State {
         }
     }
 
-    /// Pans the active output's camera and schedules a redraw.
-    ///
-    /// The delta is in view pixels and names where the *content* moves, so panning "left" moves
-    /// content right, the same way dragging a map works.
     fn pan_camera(&mut self, delta: Point<f64, Logical>) {
         self.zen.layout.camera_pan_by(delta);
         self.zen.queue_redraw_all();
     }
 
-    /// Jumps focus cluster to cluster, rather than window to window.
     fn focus_island(&mut self, dir: Direction) {
         if self.zen.layout.focus_island(dir) {
             self.maybe_warp_cursor_to_focus();
@@ -784,18 +698,12 @@ impl State {
         }
     }
 
-    /// Merges the active window into the neighbouring island.
     fn move_window_to_island(&mut self, dir: Direction) {
         if self.zen.layout.move_window_to_island(dir) {
             self.zen.queue_redraw_all();
         }
     }
 
-    /// Point to hold still while zooming, in coordinates local to the active output.
-    ///
-    /// Normally the pointer, so whatever is under the cursor stays under it. Falls back to the
-    /// centre of the output when the pointer is elsewhere, which is what keyboard-driven zoom
-    /// wants anyway.
     fn camera_anchor(&self) -> Point<f64, Logical> {
         if let Some(pointer) = self.zen.seat.get_pointer() {
             if let Some((_, within_output)) = self.zen.output_under(pointer.current_location()) {
@@ -834,12 +742,10 @@ impl State {
             }
             Action::ChangeVt(vt) => {
                 self.backend.change_vt(vt);
-                // Changing VT may not deliver the key releases, so clear the state.
                 self.zen.suppressed_keys.clear();
             }
             Action::Suspend => {
                 self.backend.suspend();
-                // Suspend may not deliver the key releases, so clear the state.
                 self.zen.suppressed_keys.clear();
             }
             Action::PowerOffMonitors => {
@@ -979,7 +885,6 @@ impl State {
                 let focus = self.zen.layout.focus().map(|m| m.window.clone());
                 if let Some(window) = focus {
                     self.zen.layout.toggle_fullscreen(&window);
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 }
             }
@@ -988,7 +893,6 @@ impl State {
                 let window = window.map(|(_, m)| m.window.clone());
                 if let Some(window) = window {
                     self.zen.layout.toggle_fullscreen(&window);
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 }
             }
@@ -996,7 +900,6 @@ impl State {
                 let focus = self.zen.layout.focus().map(|m| m.window.clone());
                 if let Some(window) = focus {
                     self.zen.layout.toggle_windowed_fullscreen(&window);
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 }
             }
@@ -1005,7 +908,6 @@ impl State {
                 let window = window.map(|(_, m)| m.window.clone());
                 if let Some(window) = window {
                     self.zen.layout.toggle_windowed_fullscreen(&window);
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 }
             }
@@ -1020,7 +922,6 @@ impl State {
                 self.zen.layout.focus_window_in_column(index);
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWindowPrevious => {
@@ -1034,7 +935,6 @@ impl State {
                     .max_by_key(|win| win.get_focus_timestamp())
                     .map(|win| win.window.clone())
                 {
-                    // Commit current focus so repeated focus-window-previous works as expected.
                     self.zen.mru_apply_keyboard_commit();
 
                     self.focus_window(&window);
@@ -1063,7 +963,6 @@ impl State {
                     self.maybe_warp_cursor_to_focus();
                 }
 
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveColumnRight => {
@@ -1074,19 +973,16 @@ impl State {
                     self.maybe_warp_cursor_to_focus();
                 }
 
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveColumnToFirst => {
                 self.zen.layout.move_column_to_first();
                 self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveColumnToLast => {
                 self.zen.layout.move_column_to_last();
                 self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveColumnLeftOrToMonitorLeft => {
@@ -1105,7 +1001,6 @@ impl State {
                     self.maybe_warp_cursor_to_focus();
                 }
 
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveColumnRightOrToMonitorRight => {
@@ -1124,7 +1019,6 @@ impl State {
                     self.maybe_warp_cursor_to_focus();
                 }
 
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveWindowDown => {
@@ -1135,7 +1029,6 @@ impl State {
                     self.maybe_warp_cursor_to_focus();
                 }
 
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveWindowUp => {
@@ -1146,7 +1039,6 @@ impl State {
                     self.maybe_warp_cursor_to_focus();
                 }
 
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveWindowDownOrToWorkspaceDown => {
@@ -1156,7 +1048,6 @@ impl State {
                     self.zen.layout.move_down_or_to_workspace_down();
                     self.maybe_warp_cursor_to_focus();
                 }
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveWindowUpOrToWorkspaceUp => {
@@ -1166,13 +1057,11 @@ impl State {
                     self.zen.layout.move_up_or_to_workspace_up();
                     self.maybe_warp_cursor_to_focus();
                 }
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::ConsumeOrExpelWindowLeft => {
                 self.zen.layout.consume_or_expel_window_left(None);
                 self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::ConsumeOrExpelWindowLeftById(id) => {
@@ -1181,14 +1070,12 @@ impl State {
                 if let Some(window) = window {
                     self.zen.layout.consume_or_expel_window_left(Some(&window));
                     self.maybe_warp_cursor_to_focus();
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 }
             }
             Action::ConsumeOrExpelWindowRight => {
                 self.zen.layout.consume_or_expel_window_right(None);
                 self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::ConsumeOrExpelWindowRightById(id) => {
@@ -1199,7 +1086,6 @@ impl State {
                         .layout
                         .consume_or_expel_window_right(Some(&window));
                     self.maybe_warp_cursor_to_focus();
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 }
             }
@@ -1207,7 +1093,6 @@ impl State {
                 self.zen.layout.focus_left();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusColumnLeftUnderMouse => {
@@ -1227,7 +1112,6 @@ impl State {
                 self.zen.layout.focus_right();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusColumnRightUnderMouse => {
@@ -1247,35 +1131,30 @@ impl State {
                 self.zen.layout.focus_column_first();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusColumnLast => {
                 self.zen.layout.focus_column_last();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusColumnRightOrFirst => {
                 self.zen.layout.focus_column_right_or_first();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusColumnLeftOrLast => {
                 self.zen.layout.focus_column_left_or_last();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusColumn(index) => {
                 self.zen.layout.focus_column(index);
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWindowOrMonitorUp => {
@@ -1293,7 +1172,6 @@ impl State {
                 }
                 self.zen.layer_shell_on_demand_focus = None;
 
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWindowOrMonitorDown => {
@@ -1311,7 +1189,6 @@ impl State {
                 }
                 self.zen.layer_shell_on_demand_focus = None;
 
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusColumnOrMonitorLeft => {
@@ -1329,7 +1206,6 @@ impl State {
                 }
                 self.zen.layer_shell_on_demand_focus = None;
 
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusColumnOrMonitorRight => {
@@ -1347,111 +1223,94 @@ impl State {
                 }
                 self.zen.layer_shell_on_demand_focus = None;
 
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWindowDown => {
                 self.zen.layout.focus_down();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWindowUp => {
                 self.zen.layout.focus_up();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWindowDownOrColumnLeft => {
                 self.zen.layout.focus_down_or_left();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWindowDownOrColumnRight => {
                 self.zen.layout.focus_down_or_right();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWindowUpOrColumnLeft => {
                 self.zen.layout.focus_up_or_left();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWindowUpOrColumnRight => {
                 self.zen.layout.focus_up_or_right();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWindowOrWorkspaceDown => {
                 self.zen.layout.focus_window_or_workspace_down();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWindowOrWorkspaceUp => {
                 self.zen.layout.focus_window_or_workspace_up();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWindowTop => {
                 self.zen.layout.focus_window_top();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWindowBottom => {
                 self.zen.layout.focus_window_bottom();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWindowDownOrTop => {
                 self.zen.layout.focus_window_down_or_top();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWindowUpOrBottom => {
                 self.zen.layout.focus_window_up_or_bottom();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveWindowToWorkspaceDown(focus) => {
                 self.zen.layout.move_to_workspace_down(focus);
                 self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveWindowToWorkspaceUp(focus) => {
                 self.zen.layout.move_to_workspace_up(focus);
                 self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveWindowToWorkspace(reference, focus) => {
                 if let Some((mut output, index)) =
                     self.zen.find_output_and_workspace_index(reference)
                 {
-                    // The source output is always the active output, so if the target output is
-                    // also the active output, we don't need to use move_to_output().
                     if let Some(active) = self.zen.layout.active_output() {
                         if output.as_ref() == Some(active) {
                             output = None;
@@ -1481,7 +1340,6 @@ impl State {
                         self.maybe_warp_cursor_to_focus();
                     }
 
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 }
             }
@@ -1516,7 +1374,6 @@ impl State {
                                 activate,
                             );
 
-                            // If the active output changed (window was moved and focused).
                             #[allow(clippy::collapsible_if)]
                             if !target_was_active
                                 && self.zen.layout.active_output() == Some(&output)
@@ -1530,14 +1387,12 @@ impl State {
                                 .layout
                                 .move_to_workspace(Some(&window), index, activate);
 
-                            // If we focused the target window.
                             let new_focus = self.zen.layout.focus();
                             if new_focus.is_some_and(|win| win.window == window) {
                                 self.maybe_warp_cursor_to_focus();
                             }
                         }
 
-                        // FIXME: granular
                         self.zen.queue_redraw_all();
                     }
                 }
@@ -1545,13 +1400,11 @@ impl State {
             Action::MoveColumnToWorkspaceDown(focus) => {
                 self.zen.layout.move_column_to_workspace_down(focus);
                 self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveColumnToWorkspaceUp(focus) => {
                 self.zen.layout.move_column_to_workspace_up(focus);
                 self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveColumnToWorkspace(reference, focus) => {
@@ -1578,21 +1431,18 @@ impl State {
                         }
                     }
 
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 }
             }
             Action::MoveColumnToIndex(idx) => {
                 self.zen.layout.move_column_to_index(idx);
                 self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWorkspaceDown => {
                 self.zen.layout.switch_workspace_down();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWorkspaceDownUnderMouse => {
@@ -1609,7 +1459,6 @@ impl State {
                 self.zen.layout.switch_workspace_up();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusWorkspaceUpUnderMouse => {
@@ -1649,7 +1498,6 @@ impl State {
                     }
                     self.zen.layer_shell_on_demand_focus = None;
 
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 }
             }
@@ -1657,30 +1505,25 @@ impl State {
                 self.zen.layout.switch_workspace_previous();
                 self.maybe_warp_cursor_to_focus();
                 self.zen.layer_shell_on_demand_focus = None;
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveWorkspaceDown => {
                 self.zen.layout.move_workspace_down();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveWorkspaceUp => {
                 self.zen.layout.move_workspace_up();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveWorkspaceToIndex(new_idx) => {
                 let new_idx = new_idx.saturating_sub(1);
                 self.zen.layout.move_workspace_to_idx(None, new_idx);
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveWorkspaceToIndexByRef { new_idx, reference } => {
                 if let Some(res) = self.zen.find_output_and_workspace_index(reference) {
                     let new_idx = new_idx.saturating_sub(1);
                     self.zen.layout.move_workspace_to_idx(Some(res), new_idx);
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 }
             }
@@ -1698,15 +1541,11 @@ impl State {
             }
             Action::ConsumeWindowIntoColumn => {
                 self.zen.layout.consume_into_column();
-                // This does not cause immediate focus or window size change, so warping mouse to
-                // focus won't do anything here.
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::ExpelWindowFromColumn => {
                 self.zen.layout.expel_from_column();
                 self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::SwapWindowRight => {
@@ -1714,7 +1553,6 @@ impl State {
                     .layout
                     .swap_window_in_direction(ScrollDirection::Right);
                 self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::SwapWindowLeft => {
@@ -1722,19 +1560,16 @@ impl State {
                     .layout
                     .swap_window_in_direction(ScrollDirection::Left);
                 self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::ToggleColumnTabbedDisplay => {
                 self.zen.layout.toggle_column_tabbed_display();
                 self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::SetColumnDisplay(display) => {
                 self.zen.layout.set_column_display(display);
                 self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::SwitchPresetColumnWidth => {
@@ -1785,12 +1620,10 @@ impl State {
             }
             Action::CenterColumn => {
                 self.zen.layout.center_column();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::CenterWindow => {
                 self.zen.layout.center_window(None);
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::CenterWindowById(id) => {
@@ -1798,13 +1631,11 @@ impl State {
                 let window = window.map(|(_, m)| m.window.clone());
                 if let Some(window) = window {
                     self.zen.layout.center_window(Some(&window));
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 }
             }
             Action::CenterVisibleColumns => {
                 self.zen.layout.center_visible_columns();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MaximizeColumn => {
@@ -1814,7 +1645,6 @@ impl State {
                 let focus = self.zen.layout.focus().map(|m| m.window.clone());
                 if let Some(window) = focus {
                     self.zen.layout.toggle_maximized(&window);
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 }
             }
@@ -1823,7 +1653,6 @@ impl State {
                 let window = window.map(|(_, m)| m.window.clone());
                 if let Some(window) = window {
                     self.zen.layout.toggle_maximized(&window);
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 }
             }
@@ -2021,7 +1850,6 @@ impl State {
                             ActivateWindow::Smart,
                         );
 
-                        // If the active output changed (window was moved and focused).
                         #[allow(clippy::collapsible_if)]
                         if !target_was_active && self.zen.layout.active_output() == Some(&output) {
                             if !self.maybe_warp_cursor_to_focus_centered() {
@@ -2133,7 +1961,6 @@ impl State {
                 if self.zen.screenshot_ui.is_open() {
                     self.zen.screenshot_ui.set_width(change);
 
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 } else {
                     self.zen.layout.set_column_width(change);
@@ -2143,7 +1970,6 @@ impl State {
                 if self.zen.screenshot_ui.is_open() {
                     self.zen.screenshot_ui.set_width(change);
 
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 } else {
                     self.zen.layout.set_window_width(None, change);
@@ -2160,7 +1986,6 @@ impl State {
                 if self.zen.screenshot_ui.is_open() {
                     self.zen.screenshot_ui.set_height(change);
 
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 } else {
                     self.zen.layout.set_window_height(None, change);
@@ -2265,7 +2090,6 @@ impl State {
                             output,
                             &new_output,
                         ) {
-                            // Cursor warp already calls `queue_redraw_all`
                             if !self.maybe_warp_cursor_to_focus_centered() {
                                 self.move_cursor_to_output(&new_output);
                             }
@@ -2275,7 +2099,6 @@ impl State {
             }
             Action::ToggleWindowFloating => {
                 self.zen.layout.toggle_window_floating(None);
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::ToggleWindowFloatingById(id) => {
@@ -2283,13 +2106,11 @@ impl State {
                 let window = window.map(|(_, m)| m.window.clone());
                 if let Some(window) = window {
                     self.zen.layout.toggle_window_floating(Some(&window));
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 }
             }
             Action::MoveWindowToFloating => {
                 self.zen.layout.set_window_floating(None, true);
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveWindowToFloatingById(id) => {
@@ -2297,13 +2118,11 @@ impl State {
                 let window = window.map(|(_, m)| m.window.clone());
                 if let Some(window) = window {
                     self.zen.layout.set_window_floating(Some(&window), true);
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 }
             }
             Action::MoveWindowToTiling => {
                 self.zen.layout.set_window_floating(None, false);
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveWindowToTilingById(id) => {
@@ -2311,26 +2130,22 @@ impl State {
                 let window = window.map(|(_, m)| m.window.clone());
                 if let Some(window) = window {
                     self.zen.layout.set_window_floating(Some(&window), false);
-                    // FIXME: granular
                     self.zen.queue_redraw_all();
                 }
             }
             Action::FocusFloating => {
                 self.zen.layout.focus_floating();
                 self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::FocusTiling => {
                 self.zen.layout.focus_tiling();
                 self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::SwitchFocusBetweenFloatingAndTiling => {
                 self.zen.layout.switch_focus_floating_tiling();
                 self.maybe_warp_cursor_to_focus();
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::MoveFloatingWindowById { id, x, y } => {
@@ -2348,7 +2163,6 @@ impl State {
                 self.zen
                     .layout
                     .move_floating_window(window.as_ref(), x, y, true);
-                // FIXME: granular
                 self.zen.queue_redraw_all();
             }
             Action::ToggleWindowRuleOpacity => {
@@ -2360,7 +2174,6 @@ impl State {
                 if let Some(window) = active_window {
                     if window.rules().opacity.is_some_and(|o| o != 1.) {
                         window.toggle_ignore_opacity_window_rule();
-                        // FIXME: granular
                         self.zen.queue_redraw_all();
                     }
                 }
@@ -2374,7 +2187,6 @@ impl State {
                 if let Some(window) = window {
                     if window.rules().opacity.is_some_and(|o| o != 1.) {
                         window.toggle_ignore_opacity_window_rule();
-                        // FIXME: granular
                         self.zen.queue_redraw_all();
                     }
                 }
@@ -2539,9 +2351,6 @@ impl State {
                                 output.clone(),
                             );
 
-                            // Only select the *next* window if some window (which should be the
-                            // first one) is already focused. If nothing is focused, keep the first
-                            // window (which is logically the "previously selected" one).
                             let keep_first = direction == MruDirection::Forward
                                 && self.zen.layout.focus().is_none();
                             if !keep_first {
@@ -2594,10 +2403,8 @@ impl State {
 
     fn on_pointer_motion<I: InputBackend>(&mut self, event: I::PointerMotionEvent) {
         let was_inside_hot_corner = self.zen.pointer_inside_hot_corner;
-        // Any of the early returns here mean that the pointer is not inside the hot corner.
         self.zen.pointer_inside_hot_corner = false;
 
-        // We need an output to be able to move the pointer.
         if self.zen.global_space.outputs().next().is_none() {
             return;
         }
@@ -2608,21 +2415,13 @@ impl State {
 
         let pos = pointer.current_location();
 
-        // We have an output, so we can compute the new location and focus.
         let mut new_pos = pos + event.delta();
 
-        // We received an event for the regular pointer, so show it now.
         self.zen.pointer_visibility = PointerVisibility::Visible;
         self.zen.tablet_cursor_location = None;
 
-        // Check if we have an active pointer constraint.
-        //
-        // FIXME: ideally this should use the pointer focus with up-to-date global location.
         let mut pointer_confined = None;
         if let Some(under) = &self.zen.pointer_contents.surface {
-            // No need to check if the pointer focus surface matches, because here we're checking
-            // for an already-active constraint, and the constraint is deactivated when the focused
-            // surface changes.
             let pos_within_surface = pos - under.1;
 
             let mut pointer_locked = false;
@@ -2632,7 +2431,6 @@ impl State {
                     return;
                 }
 
-                // Constraint does not apply if not within region.
                 if let Some(region) = constraint.region() {
                     if !region.contains(pos_within_surface.to_i32_round()) {
                         return;
@@ -2649,7 +2447,6 @@ impl State {
                 }
             });
 
-            // If the pointer is locked, only send relative motion.
             if pointer_locked {
                 pointer.relative_motion(
                     self,
@@ -2663,13 +2460,10 @@ impl State {
 
                 pointer.frame(self);
 
-                // I guess a redraw to hide the tablet cursor could be nice? Doesn't matter too
-                // much here I think.
                 return;
             }
         }
 
-        // Warp pointer across the screen during the spatial movement grabs.
         let spatial_grab = pointer.with_grab(|_, grab| {
             let grab = grab.as_any();
             if let Some(grab) = grab.downcast_ref::<SpatialMovementGrab>() {
@@ -2705,10 +2499,7 @@ impl State {
             .next()
             .is_none()
         {
-            // We ended up outside the outputs and need to clip the movement.
             if let Some(output) = self.zen.global_space.output_under(pos).next() {
-                // The pointer was previously on some output. Clip the movement against its
-                // boundaries.
                 let geom = self.zen.global_space.output_geometry(output).unwrap();
                 new_pos.x = new_pos
                     .x
@@ -2717,8 +2508,6 @@ impl State {
                     .y
                     .clamp(geom.loc.y as f64, (geom.loc.y + geom.size.h - 1) as f64);
             } else {
-                // The pointer was not on any output in the first place. Find one for it.
-                // Let's do the simple thing and just put it on the first output.
                 let output = self.zen.global_space.outputs().next().unwrap();
                 let geom = self.zen.global_space.output_geometry(output).unwrap();
                 new_pos = center(geom).to_f64();
@@ -2744,16 +2533,13 @@ impl State {
 
         let under = self.zen.contents_under(new_pos);
 
-        // Handle confined pointer.
         if let Some((focus_surface, region)) = pointer_confined {
             let mut prevent = false;
 
-            // Prevent the pointer from leaving the focused surface.
             if Some(&focus_surface.0) != under.surface.as_ref().map(|(s, _)| s) {
                 prevent = true;
             }
 
-            // Prevent the pointer from leaving the confine region, if any.
             if let Some(region) = region {
                 let new_pos_within_surface = new_pos - focus_surface.1;
                 if !region.contains(new_pos_within_surface.to_i32_round()) {
@@ -2804,8 +2590,6 @@ impl State {
 
         pointer.frame(self);
 
-        // contents_under() will return no surface when the hot corner should trigger, so
-        // pointer.motion() will set the current focus to None.
         if under.hot_corner && pointer.current_focus().is_none() {
             if !was_inside_hot_corner
                 && pointer
@@ -2817,10 +2601,8 @@ impl State {
             self.zen.pointer_inside_hot_corner = true;
         }
 
-        // Activate a new confinement if necessary.
         self.zen.maybe_activate_pointer_constraint();
 
-        // Inform the layout of an ongoing DnD operation.
         let is_dnd_grab = pointer
             .with_grab(|_, grab| Self::is_dnd_grab(grab.as_any()))
             .unwrap_or(false);
@@ -2831,12 +2613,9 @@ impl State {
             }
         }
 
-        // Notify a11y.
         #[cfg(feature = "dbus")]
         self.a11y_notify_pointer_motion();
 
-        // Redraw to update the cursor position.
-        // FIXME: redraw only outputs overlapping the cursor.
         self.zen.queue_redraw_all();
     }
 
@@ -2845,7 +2624,6 @@ impl State {
         event: I::PointerMotionAbsoluteEvent,
     ) {
         let was_inside_hot_corner = self.zen.pointer_inside_hot_corner;
-        // Any of the early returns here mean that the pointer is not inside the hot corner.
         self.zen.pointer_inside_hot_corner = false;
 
         let Some(pos) = self.compute_absolute_location(&event, None).or_else(|| {
@@ -2895,8 +2673,6 @@ impl State {
 
         pointer.frame(self);
 
-        // contents_under() will return no surface when the hot corner should trigger, so
-        // pointer.motion() will set the current focus to None.
         if under.hot_corner && pointer.current_focus().is_none() {
             if !was_inside_hot_corner
                 && pointer
@@ -2910,13 +2686,10 @@ impl State {
 
         self.zen.maybe_activate_pointer_constraint();
 
-        // We moved the pointer, show it.
         self.zen.pointer_visibility = PointerVisibility::Visible;
 
-        // We moved the regular pointer, so show it now.
         self.zen.tablet_cursor_location = None;
 
-        // Inform the layout of an ongoing DnD operation.
         let is_dnd_grab = pointer
             .with_grab(|_, grab| Self::is_dnd_grab(grab.as_any()))
             .unwrap_or(false);
@@ -2927,17 +2700,13 @@ impl State {
             }
         }
 
-        // Notify a11y.
         #[cfg(feature = "dbus")]
         self.a11y_notify_pointer_motion();
 
-        // Redraw to update the cursor position.
-        // FIXME: redraw only outputs overlapping the cursor.
         self.zen.queue_redraw_all();
     }
 
     fn on_pointer_button<I: InputBackend>(&mut self, event: I::PointerButtonEvent) {
-        // Any pointer input means the modifier is being used, not tapped.
         self.zen.mod_tap_armed = false;
 
         let pointer = self.zen.seat.get_pointer().unwrap();
@@ -2952,7 +2721,6 @@ impl State {
 
         let mod_key = self.backend.mod_key(&self.zen.config.borrow());
 
-        // Ignore release events for mouse clicks that triggered a bind.
         if self.zen.suppressed_buttons.remove(&button_code) {
             return;
         }
@@ -3008,7 +2776,6 @@ impl State {
                 };
             }
 
-            // We received an event for the regular pointer, so show it now.
             self.zen.pointer_visibility = PointerVisibility::Visible;
             self.zen.tablet_cursor_location = None;
 
@@ -3036,17 +2803,11 @@ impl State {
                         .cursor_manager
                         .set_cursor_image(CursorImageStatus::Named(CursorIcon::AllScroll));
 
-                    // FIXME: granular.
                     self.zen.queue_redraw_all();
                     return;
                 }
             }
 
-            // Mod+middle-drag pans the canvas.
-            //
-            // On the canvas this is the primary way to move around, and it takes the button
-            // that already meant "drag the world" in the scrolling layout, so the muscle memory
-            // carries over. The strip keeps its own behaviour below when the canvas is off.
             if button == Some(MouseButton::Middle)
                 && !pointer.is_grabbed()
                 && mod_down
@@ -3068,11 +2829,8 @@ impl State {
                     .cursor_manager
                     .set_cursor_image(CursorImageStatus::Named(CursorIcon::AllScroll));
 
-                // FIXME: granular.
                 self.zen.queue_redraw_all();
 
-                // Deliberately not activating the window under the cursor: grabbing the canvas
-                // is a navigation gesture, not a focus one.
                 return;
             }
 
@@ -3080,8 +2838,6 @@ impl State {
                 let output_ws = if is_overview_open {
                     self.zen.workspace_under_cursor(true)
                 } else {
-                    // We don't want to accidentally "catch" the wrong workspace during
-                    // animations.
                     self.zen.output_under_cursor().and_then(|output| {
                         let mon = self.zen.layout.monitor_for_output(&output)?;
                         Some((output, mon.active_workspace_ref()))
@@ -3105,11 +2861,8 @@ impl State {
                         .cursor_manager
                         .set_cursor_image(CursorImageStatus::Named(CursorIcon::AllScroll));
 
-                    // FIXME: granular.
                     self.zen.queue_redraw_all();
 
-                    // Don't activate the window under the cursor to avoid unnecessary
-                    // scrolling when e.g. Mod+MMB clicking on a partially off-screen window.
                     return;
                 }
             }
@@ -3117,7 +2870,6 @@ impl State {
             if let Some(mapped) = self.zen.window_under_cursor() {
                 let window = mapped.window.clone();
 
-                // Check if we need to start an interactive move.
                 if button == Some(MouseButton::Left) && !pointer.is_grabbed() {
                     if is_overview_open || mod_down {
                         let location = pointer.current_location();
@@ -3138,11 +2890,6 @@ impl State {
                         {
                             pointer.set_grab(self, grab, serial, Focus::Clear);
 
-                            // Set the cursor to Grabbing right away for Mod+LMB since it doesn't
-                            // do any other gesture.
-                            //
-                            // In the overview, we click to activate window and close the overview,
-                            // in this case setting the cursor right away would be distracting.
                             if !is_overview_open {
                                 self.zen
                                     .cursor_manager
@@ -3151,7 +2898,6 @@ impl State {
                         }
                     }
                 }
-                // Check if we need to start an interactive resize.
                 else if button == Some(MouseButton::Right) && !pointer.is_grabbed() && mod_down {
                     let location = pointer.current_location();
                     let (output, pos_within_output) = self.zen.output_under(location).unwrap();
@@ -3162,15 +2908,11 @@ impl State {
                         .unwrap_or(ResizeEdge::empty());
 
                     if !edges.is_empty() {
-                        // See if we got a double resize-click gesture.
-                        // FIXME: deduplicate with resize_request in xdg-shell somehow.
                         let time = get_monotonic_time();
                         let last_cell = mapped.last_interactive_resize_start();
                         let mut last = last_cell.get();
                         last_cell.set(Some((time, edges)));
 
-                        // Floating windows don't have either of the double-resize-click
-                        // gestures, so just allow it to resize.
                         if mapped.is_floating() {
                             last = None;
                             last_cell.set(None);
@@ -3178,13 +2920,10 @@ impl State {
 
                         if let Some((last_time, last_edges)) = last {
                             if time.saturating_sub(last_time) <= DOUBLE_CLICK_TIME {
-                                // Allow quick resize after a triple click.
                                 last_cell.set(None);
 
                                 let intersection = edges.intersection(last_edges);
                                 if intersection.intersects(ResizeEdge::LEFT_RIGHT) {
-                                    // FIXME: don't activate once we can pass specific windows
-                                    // to actions.
                                     self.zen.layout.activate_window(&window);
                                     self.zen.layout.toggle_full_width();
                                 }
@@ -3192,7 +2931,6 @@ impl State {
                                     self.zen.layout.activate_window(&window);
                                     self.zen.layout.reset_window_height(Some(&window));
                                 }
-                                // FIXME: granular.
                                 self.zen.queue_redraw_all();
                                 return;
                             }
@@ -3224,7 +2962,6 @@ impl State {
                     self.zen.layout.activate_window(&window);
                 }
 
-                // FIXME: granular.
                 self.zen.queue_redraw_all();
             } else if let Some((output, ws)) = is_overview_open
                 .then(|| self.zen.workspace_under_cursor(false))
@@ -3235,12 +2972,10 @@ impl State {
                 self.zen.layout.focus_output(&output);
                 self.zen.layout.toggle_overview_to_workspace(ws_idx);
 
-                // FIXME: granular.
                 self.zen.queue_redraw_all();
             } else if let Some(output) = self.zen.output_under_cursor() {
                 self.zen.layout.focus_output(&output);
 
-                // FIXME: granular.
                 self.zen.queue_redraw_all();
             }
         };
@@ -3256,7 +2991,6 @@ impl State {
             if button_state == ButtonState::Pressed {
                 let pos = pointer.current_location();
 
-                // If we'll be moving the existing selection, use the selection output.
                 let output = if mod_down {
                     self.zen.screenshot_ui.selection_output()
                 } else {
@@ -3299,7 +3033,6 @@ impl State {
     }
 
     fn on_pointer_axis<I: InputBackend>(&mut self, event: I::PointerAxisEvent) {
-        // Any pointer input means the modifier is being used, not tapped.
         self.zen.mod_tap_armed = false;
 
         let pointer = &self.zen.seat.get_pointer().unwrap();
@@ -3308,9 +3041,6 @@ impl State {
 
         let mod_key = self.backend.mod_key(&self.zen.config.borrow());
 
-        // We received an event for the regular pointer, so show it now. This is also needed for
-        // update_pointer_contents() below to return the real contents, necessary for the pointer
-        // axis event to reach the window.
         self.zen.pointer_visibility = PointerVisibility::Visible;
         self.zen.tablet_cursor_location = None;
 
@@ -3321,12 +3051,7 @@ impl State {
 
         let is_overview_open = self.zen.layout.is_overview_open();
 
-        // We should only handle scrolling in the overview if the pointer is not over a (top or
-        // overlay) layer surface.
         let should_handle_in_overview = if is_overview_open {
-            // FIXME: ideally this should happen after updating the pointer contents, which happens
-            // below. However, our pointer actions are supposed to act on the old surface, before
-            // updating the pointer contents.
             pointer
                 .current_focus()
                 .map(|surface| self.zen.find_root_shell_surface(&surface))
@@ -3343,10 +3068,7 @@ impl State {
 
         let is_mru_open = self.zen.window_mru_ui.is_open();
 
-        // Handle wheel scroll bindings.
         if source == AxisSource::Wheel {
-            // If we have a scroll bind with current modifiers, then accumulate and don't pass to
-            // Wayland. If there's no bind, reset the accumulator.
             let mods = self.zen.seat.get_keyboard().unwrap().modifier_state();
             let modifiers = modifiers_from_state(mods);
             let should_handle = should_handle_in_overview
@@ -3523,7 +3245,6 @@ impl State {
         let horizontal_amount = event.amount(Axis::Horizontal);
         let vertical_amount = event.amount(Axis::Vertical);
 
-        // Handle touchpad and continuous scroll bindings.
         if source == AxisSource::Finger || source == AxisSource::Continuous {
             let mods = self.zen.seat.get_keyboard().unwrap().modifier_state();
             let modifiers = modifiers_from_state(mods);
@@ -3555,7 +3276,6 @@ impl State {
                             .is_some();
                     }
                 } else {
-                    // Maybe begin, then update.
                     if is_vertical {
                         if action.begin() {
                             if let Some(output) = self.zen.output_under_cursor() {
@@ -3721,7 +3441,6 @@ impl State {
             }
         };
 
-        // Get window-specific scroll factor
         let window_scroll_factor = pointer
             .current_focus()
             .map(|focused| self.zen.find_root_shell_surface(&focused))
@@ -3729,7 +3448,6 @@ impl State {
             .and_then(|window| window.rules().scroll_factor)
             .unwrap_or(1.);
 
-        // Determine final scroll factors based on configuration
         let (horizontal_factor, vertical_factor) = device_scroll_factor
             .map(|x| x.h_v_factors())
             .unwrap_or((1.0, 1.0));
@@ -3739,12 +3457,10 @@ impl State {
         );
 
         let horizontal_amount = horizontal_amount.unwrap_or_else(|| {
-            // Winit backend, discrete scrolling.
             horizontal_amount_v120.unwrap_or(0.0) / 120. * 15.
         }) * horizontal_factor;
 
         let vertical_amount = vertical_amount.unwrap_or_else(|| {
-            // Winit backend, discrete scrolling.
             vertical_amount_v120.unwrap_or(0.0) / 120. * 15.
         }) * vertical_factor;
 
@@ -3784,7 +3500,7 @@ impl State {
 
     fn on_tablet_tool_axis<I: InputBackend>(&mut self, event: I::TabletToolAxisEvent)
     where
-        I::Device: 'static, // Needed for downcasting.
+        I::Device: 'static,
     {
         let Some(pos) = self.compute_tablet_position(&event) else {
             return;
@@ -3842,8 +3558,6 @@ impl State {
             self.zen.tablet_cursor_location = Some(pos);
         }
 
-        // Redraw to update the cursor position.
-        // FIXME: redraw only outputs overlapping the cursor.
         self.zen.queue_redraw_all();
     }
 
@@ -3869,7 +3583,6 @@ impl State {
                     let mod_down = modifiers.contains(mod_key.to_modifiers());
 
                     if self.zen.screenshot_ui.is_open() {
-                        // If we'll be moving the existing selection, use the selection output.
                         let output = if mod_down {
                             self.zen.screenshot_ui.selection_output()
                         } else {
@@ -3943,7 +3656,6 @@ impl State {
                         } else if let Some((window, _)) = under.window {
                             self.zen.layout.activate_window(&window);
 
-                            // Check if we need to start a tablet tool move grab.
                             if mod_down {
                                 let start_data = TabletToolGrabStartData {
                                     focus: None,
@@ -3963,12 +3675,10 @@ impl State {
                                 }
                             }
 
-                            // FIXME: granular.
                             self.zen.queue_redraw_all();
                         } else if let Some(output) = under.output {
                             self.zen.layout.focus_output(&output);
 
-                            // FIXME: granular.
                             self.zen.queue_redraw_all();
                         }
                         self.zen.focus_layer_surface_if_on_demand(under.layer);
@@ -3995,7 +3705,7 @@ impl State {
 
     fn on_tablet_tool_proximity<I: InputBackend>(&mut self, event: I::TabletToolProximityEvent)
     where
-        I::Device: 'static, // Needed for downcasting.
+        I::Device: 'static,
     {
         let Some(pos) = self.compute_tablet_position(&event) else {
             return;
@@ -4038,9 +3748,6 @@ impl State {
                         },
                     );
 
-                    // Is proximity in usually immediatelly followed by other events like button? If
-                    // so, then it might be worth delaying this frame() until the loop callback to
-                    // batch all of them in.
                     tool.frame(self, time);
 
                     self.zen.pointer_visibility = PointerVisibility::Visible;
@@ -4050,10 +3757,6 @@ impl State {
                     tool.proximity_out(self, &tablet::tool::ProximityOutEvent { serial, time });
                     tool.frame(self, time);
 
-                    // Move the mouse pointer here to avoid discontinuity.
-                    //
-                    // Plus, Wayland SDL2 currently warps the pointer into some weird
-                    // location on proximity out, so this should help it a little.
                     if let Some(pos) = self.zen.tablet_cursor_location {
                         self.move_cursor(pos);
                     }
@@ -4063,7 +3766,6 @@ impl State {
                 }
             }
 
-            // FIXME: granular.
             self.zen.queue_redraw_all();
         }
     }
@@ -4132,20 +3834,17 @@ impl State {
 
     fn on_gesture_swipe_begin<I: InputBackend>(&mut self, event: I::GestureSwipeBeginEvent) {
         if self.zen.window_mru_ui.is_open() {
-            // Don't start swipe gestures while in the MRU.
             return;
         }
 
         if event.fingers() == 3 {
             self.zen.gesture_swipe_3f_cumulative = Some((0., 0.));
 
-            // We handled this event.
             return;
         } else if event.fingers() == 4 {
             self.zen.layout.overview_gesture_begin();
             self.zen.queue_redraw_all();
 
-            // We handled this event.
             return;
         }
 
@@ -4198,7 +3897,6 @@ impl State {
             *cx += delta_x;
             *cy += delta_y;
 
-            // Check if the gesture moved far enough to decide. Threshold copied from GNOME Shell.
             let (cx, cy) = (*cx, *cy);
             if cx * cx + cy * cy >= 16. * 16. {
                 self.zen.gesture_swipe_3f_cumulative = None;
@@ -4208,8 +3906,6 @@ impl State {
                         let output_ws = if is_overview_open {
                             self.zen.workspace_under_cursor(true)
                         } else {
-                            // We don't want to accidentally "catch" the wrong workspace during
-                            // animations.
                             self.zen.output_under_cursor().and_then(|output| {
                                 let mon = self.zen.layout.monitor_for_output(&output)?;
                                 Some((output, mon.active_workspace_ref()))
@@ -4268,7 +3964,6 @@ impl State {
         }
 
         if handled {
-            // We handled this event.
             return;
         }
 
@@ -4310,7 +4005,6 @@ impl State {
         }
 
         if handled {
-            // We handled this event.
             return;
         }
 
@@ -4438,9 +4132,6 @@ impl State {
         )
     }
 
-    /// Computes the cursor position for the touch event.
-    ///
-    /// This function handles the touch output mapping, as well as coordinate transform
     fn compute_touch_location<I: InputBackend>(
         &self,
         evt: &impl AbsolutePositionEvent<I>,
@@ -4467,7 +4158,6 @@ impl State {
         let mod_down = mods.contains(mod_key.to_modifiers());
 
         if self.zen.screenshot_ui.is_open() {
-            // If we'll be moving the existing selection, use the selection output.
             let output = if mod_down {
                 self.zen.screenshot_ui.selection_output()
             } else {
@@ -4541,7 +4231,6 @@ impl State {
             } else if let Some((window, _)) = under.window {
                 self.zen.layout.activate_window(&window);
 
-                // Check if we need to start a touch move grab.
                 if mod_down {
                     let start_data = TouchGrabStartData {
                         focus: None,
@@ -4555,12 +4244,10 @@ impl State {
                     }
                 }
 
-                // FIXME: granular.
                 self.zen.queue_redraw_all();
             } else if let Some(output) = under.output {
                 self.zen.layout.focus_output(&output);
 
-                // FIXME: granular.
                 self.zen.queue_redraw_all();
             }
             self.zen.focus_layer_surface_if_on_demand(under.layer);
@@ -4577,7 +4264,6 @@ impl State {
             },
         );
 
-        // We're using touch, hide the pointer.
         self.zen.pointer_visibility = PointerVisibility::Disabled;
     }
     fn on_touch_up<I: InputBackend>(&mut self, evt: I::TouchUpEvent) {
@@ -4634,7 +4320,6 @@ impl State {
             },
         );
 
-        // Inform the layout of an ongoing DnD operation.
         let is_dnd_grab = handle
             .with_grab(|_, grab| Self::is_dnd_grab(grab.as_any()))
             .unwrap_or(false);
@@ -4680,9 +4365,7 @@ impl State {
     }
 
     pub fn is_dnd_grab(grab: &dyn Any) -> bool {
-        // Normal DnD
         grab.is::<DnDGrab<Self, WlDataSource, WlSurface>>()
-            // Null-source DnD: weston-dnd --self-only
             || grab.is::<DnDGrab<Self, WlSurface, WlSurface>>()
     }
 
@@ -4693,9 +4376,6 @@ impl State {
     }
 }
 
-/// Check whether the key should be intercepted and mark intercepted
-/// pressed keys as `suppressed`, thus preventing `releases` corresponding
-/// to them from being delivered.
 #[allow(clippy::too_many_arguments)]
 fn should_intercept_key<'a>(
     suppressed_keys: &mut HashSet<Keycode>,
@@ -4710,9 +4390,6 @@ fn should_intercept_key<'a>(
     disable_power_key_handling: bool,
     is_inhibiting_shortcuts: bool,
 ) -> FilterResult<Option<Bind>> {
-    // Actions are only triggered on presses, release of the key
-    // shouldn't try to intercept anything unless we have marked
-    // the key to suppress.
     if !pressed && !suppressed_keys.contains(&key_code) {
         return FilterResult::Forward;
     }
@@ -4726,8 +4403,6 @@ fn should_intercept_key<'a>(
         disable_power_key_handling,
     );
 
-    // Allow only a subset of compositor actions while the screenshot UI is open, since the user
-    // cannot see the screen.
     if screenshot_ui.is_open() {
         let mut use_screenshot_ui_action = true;
 
@@ -4742,16 +4417,12 @@ fn should_intercept_key<'a>(
                 final_bind = screenshot_ui.action(raw, mods).map(|action| Bind {
                     key: Key {
                         trigger: Trigger::Keysym(raw),
-                        // Not entirely correct but it doesn't matter in how we currently use it.
                         modifiers: Modifiers::empty(),
                     },
                     action,
                     repeat: true,
                     cooldown: None,
                     allow_when_locked: false,
-                    // The screenshot UI owns the focus anyway, so this doesn't really matter.
-                    // But logically, nothing can inhibit its actions. Only opening it can be
-                    // inhibited.
                     allow_inhibiting: false,
                     hotkey_overlay_title: None,
                 });
@@ -4769,11 +4440,6 @@ fn should_intercept_key<'a>(
             }
         }
         (_, false) => {
-            // By this point, we know that the key was suppressed on press. Even if we're inhibiting
-            // shortcuts, we should still suppress the release.
-            // But we don't need to check for shortcuts inhibition here, because
-            // if it was inhibited on press (forwarded to the client), it wouldn't be suppressed,
-            // so the release would already have been forwarded at the start of this function.
             suppressed_keys.remove(&key_code);
             FilterResult::Intercept(None)
         }
@@ -4791,8 +4457,7 @@ fn find_bind<'a>(
 ) -> Option<Bind> {
     use keysyms::*;
 
-    // Handle hardcoded binds.
-    #[allow(non_upper_case_globals)] // wat
+    #[allow(non_upper_case_globals)]
     let hardcoded_action = match modified.raw() {
         modified @ KEY_XF86Switch_VT_1..=KEY_XF86Switch_VT_12 => {
             let vt = (modified - KEY_XF86Switch_VT_1 + 1) as i32;
@@ -4805,7 +4470,6 @@ fn find_bind<'a>(
     if let Some(action) = hardcoded_action {
         return Some(Bind {
             key: Key {
-                // Not entirely correct but it doesn't matter in how we currently use it.
                 trigger: Trigger::Keysym(modified),
                 modifiers: Modifiers::empty(),
             },
@@ -4813,11 +4477,6 @@ fn find_bind<'a>(
             repeat: true,
             cooldown: None,
             allow_when_locked: false,
-            // In a worst-case scenario, the user has no way to unlock the compositor and a
-            // misbehaving client has a keyboard shortcuts inhibitor, "jailing" the user.
-            // The user must always be able to change VTs to recover from such a situation.
-            // It also makes no sense to inhibit the default power key handling.
-            // Hardcoded binds must never be inhibited.
             allow_inhibiting: false,
             hotkey_overlay_title: None,
         });
@@ -4833,7 +4492,6 @@ fn find_configured_bind<'a>(
     trigger: Trigger,
     mods: ModifiersState,
 ) -> Option<Bind> {
-    // Handle configured binds.
     let mut modifiers = modifiers_from_state(mods);
 
     let mod_down = modifiers_from_state(mods).contains(mod_key.to_modifiers());
@@ -4917,7 +4575,6 @@ fn should_activate_monitors<I: InputBackend>(event: &InputEvent<I>) -> bool {
         | InputEvent::TabletToolProximity { .. }
         | InputEvent::TabletToolTip { .. }
         | InputEvent::TabletToolButton { .. } => true,
-        // Ignore events like device additions and removals, key releases, gesture ends.
         _ => false,
     }
 }
@@ -4994,10 +4651,8 @@ fn allowed_during_screenshot(action: &Action) -> bool {
             | Action::Suspend
             | Action::PowerOffMonitors
             | Action::PowerOnMonitors
-            // Intended for binds such as volume up/down, lock the screen, etc.
             | Action::Spawn(_)
             | Action::SpawnSh(_)
-            // The screenshot UI can handle these.
             | Action::MoveColumnLeft
             | Action::MoveColumnLeftOrToMonitorLeft
             | Action::MoveColumnRight
@@ -5062,7 +4717,6 @@ fn hardcoded_overview_bind(raw: Keysym, mods: ModifiersState) -> Option<Bind> {
 }
 
 pub fn apply_libinput_settings(config: &zen_config::Input, device: &mut input::Device) {
-    // According to Mutter code, this setting is specific to touchpads.
     let is_touchpad = device.config_tap_finger_count() > 0;
     if is_touchpad {
         let c = &config.touchpad;
@@ -5140,7 +4794,6 @@ pub fn apply_libinput_settings(config: &zen_config::Input, device: &mut input::D
         }
     }
 
-    // This is how Mutter tells apart mice.
     let mut is_trackball = false;
     let mut is_trackpoint = false;
     if let Some(udev_device) = unsafe { device.udev_device() } {
@@ -5425,20 +5078,11 @@ pub fn mods_with_tablet_stylus_binds(mod_key: ModKey, binds: &Binds) -> HashSet<
 fn grab_allows_hot_corner(grab: &(dyn PointerGrab<State> + 'static)) -> bool {
     let grab = grab.as_any();
 
-    // We lean on the blocklist approach here since it's not a terribly big deal if hot corner
-    // works where it shouldn't, but it could prevent some workflows if the hot corner doesn't work
-    // when it should.
-    //
-    // Some notable grabs not mentioned here:
-    // - DnDGrab allows hot corner to DnD across workspaces.
-    // - ClickGrab keeps pointer focus on the window, so the hot corner doesn't trigger.
-    // - Touch grabs: touch doesn't trigger the hot corner.
     if grab.is::<ResizeGrab>() || grab.is::<SpatialMovementGrab>() {
         return false;
     }
 
     if let Some(grab) = grab.downcast_ref::<MoveGrab>() {
-        // Window move allows hot corner to DnD across workspaces.
         if !grab.is_move() {
             return false;
         }
@@ -5447,15 +5091,11 @@ fn grab_allows_hot_corner(grab: &(dyn PointerGrab<State> + 'static)) -> bool {
     true
 }
 
-/// Returns an iterator over bindings.
-///
-/// Includes dynamically populated bindings like the MRU UI.
 fn make_binds_iter<'a>(
     config: &'a Config,
     mru: &'a mut WindowMruUi,
     mods: Modifiers,
 ) -> impl Iterator<Item = &'a Bind> + Clone {
-    // Figure out the binds to use depending on whether the MRU is enabled and/or open.
     let general_binds = (!mru.is_open()).then_some(config.binds.0.iter());
     let general_binds = general_binds.into_iter().flatten();
 
@@ -5466,7 +5106,6 @@ fn make_binds_iter<'a>(
     let mru_open_binds = mru.is_open().then(|| mru.opened_bindings(mods));
     let mru_open_binds = mru_open_binds.into_iter().flatten();
 
-    // General binds take precedence over the MRU binds.
     general_binds.chain(mru_binds).chain(mru_open_binds)
 }
 
@@ -5500,9 +5139,6 @@ mod tests {
         let disable_power_key_handling = false;
         let is_inhibiting_shortcuts = Cell::new(false);
 
-        // The key_code we pick is arbitrary, the only thing
-        // that matters is that they are different between cases.
-
         let close_key_code = Keycode::from(close_keysym.raw() + 8u32);
         let close_key_event = |suppr: &mut HashSet<Keycode>, mods: ModifiersState, pressed| {
             should_intercept_key(
@@ -5520,7 +5156,6 @@ mod tests {
             )
         };
 
-        // Key event with the code which can't trigger any action.
         let none_key_event = |suppr: &mut HashSet<Keycode>, mods: ModifiersState, pressed| {
             should_intercept_key(
                 suppr,
@@ -5543,8 +5178,6 @@ mod tests {
             ..Default::default()
         };
 
-        // Action press/release.
-
         let filter = close_key_event(&mut suppressed_keys, mods, true);
         assert!(matches!(
             filter,
@@ -5559,8 +5192,6 @@ mod tests {
         assert!(matches!(filter, FilterResult::Intercept(None)));
         assert!(suppressed_keys.is_empty());
 
-        // Remove mod to make it for a binding.
-
         mods.shift = true;
         let filter = close_key_event(&mut suppressed_keys, mods, true);
         assert!(matches!(filter, FilterResult::Forward));
@@ -5569,15 +5200,11 @@ mod tests {
         let filter = close_key_event(&mut suppressed_keys, mods, false);
         assert!(matches!(filter, FilterResult::Forward));
 
-        // Just none press/release.
-
         let filter = none_key_event(&mut suppressed_keys, mods, true);
         assert!(matches!(filter, FilterResult::Forward));
 
         let filter = none_key_event(&mut suppressed_keys, mods, false);
         assert!(matches!(filter, FilterResult::Forward));
-
-        // Press action, press arbitrary, release action, release arbitrary.
 
         let filter = close_key_event(&mut suppressed_keys, mods, true);
         assert!(matches!(
@@ -5596,8 +5223,6 @@ mod tests {
 
         let filter = none_key_event(&mut suppressed_keys, mods, false);
         assert!(matches!(filter, FilterResult::Forward));
-
-        // Trigger and remove all mods.
 
         let filter = close_key_event(&mut suppressed_keys, mods, true);
         assert!(matches!(
@@ -5612,12 +5237,8 @@ mod tests {
         let filter = close_key_event(&mut suppressed_keys, mods, false);
         assert!(matches!(filter, FilterResult::Intercept(None)));
 
-        // Ensure that no keys are being suppressed.
         assert!(suppressed_keys.is_empty());
 
-        // Now test shortcut inhibiting.
-
-        // With inhibited shortcuts, we don't intercept our shortcut.
         is_inhibiting_shortcuts.set(true);
 
         mods = ModifiersState {
@@ -5634,7 +5255,6 @@ mod tests {
         assert!(matches!(filter, FilterResult::Forward));
         assert!(suppressed_keys.is_empty());
 
-        // Toggle it off after pressing the shortcut.
         let filter = close_key_event(&mut suppressed_keys, mods, true);
         assert!(matches!(filter, FilterResult::Forward));
         assert!(suppressed_keys.is_empty());
@@ -5645,7 +5265,6 @@ mod tests {
         assert!(matches!(filter, FilterResult::Forward));
         assert!(suppressed_keys.is_empty());
 
-        // Toggle it on after pressing the shortcut.
         let filter = close_key_event(&mut suppressed_keys, mods, true);
         assert!(matches!(
             filter,

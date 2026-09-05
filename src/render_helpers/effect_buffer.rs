@@ -16,53 +16,34 @@ use crate::render_helpers::blur::{Blur, BlurOptions};
 
 #[derive(Debug)]
 pub struct EffectBuffer {
-    /// Id to be used for this effect buffer's elements.
     id: Id,
 
-    /// Size of the effect buffer.
     size: Size<i32, Buffer>,
-    /// Scale of the effect buffer.
     scale: Scale<f64>,
-    /// Options for blurring.
     blur_options: BlurOptions,
 
-    /// Elements to be rendered on demand.
     elements: Elements,
-    /// Offscreen buffer where elements get rendered.
     offscreen: Option<Offscreen>,
-    /// Blurring program, if available.
     blur: Option<Blur>,
 
-    /// Commit counter that takes into account both original and blurred texture changes.
     commit_counter: CommitCounter,
 }
 
 #[derive(Debug)]
 enum Elements {
-    /// Contents remain unchanged.
     Unchanged(
-        // Storage to avoid reallocating it every time.
         Vec<OutputRenderElements<GlesRenderer>>,
     ),
-    /// New contents, need to check damage and render.
     New(Vec<OutputRenderElements<GlesRenderer>>),
 }
 
 #[derive(Debug)]
 struct Offscreen {
-    /// The texture with the offscreen contents.
     texture: GlesTexture,
-    /// Id of the renderer context that the texture comes from.
     renderer_context_id: ContextId<GlesTexture>,
-    /// Scale of the texture.
     scale: Scale<f64>,
-    /// Damage tracker for drawing to the texture.
     damage: OutputDamageTracker,
-    /// Render element states from the last render into the offscreen.
     states: RenderElementStates,
-    /// Rendered blurred version of the texture.
-    ///
-    /// When texture needs to be reblurred, this field must be reset to `None`.
     blurred: Option<GlesTexture>,
 }
 
@@ -127,7 +108,6 @@ impl EffectBuffer {
     }
 
     pub fn elements(&mut self) -> &mut Vec<OutputRenderElements<GlesRenderer>> {
-        // Assume we're going to insert new elements, switch to New.
         match mem::take(&mut self.elements) {
             Elements::Unchanged(elements) | Elements::New(elements) => {
                 self.elements = Elements::New(elements);
@@ -158,7 +138,6 @@ impl EffectBuffer {
     fn prepare_offscreen(&mut self, renderer: &mut GlesRenderer) -> anyhow::Result<()> {
         let _span = tracy_client::span!("EffectBuffer::prepare_offscreen");
 
-        // Check if we need to create or recreate the texture.
         let size_string;
         let mut reason = "";
         if let Some(Offscreen {
@@ -213,8 +192,6 @@ impl EffectBuffer {
             })
         };
 
-        // Recreate the damage tracker if the scale changes. We already recreate it for buffer size
-        // changes, and transform is always Normal.
         if offscreen.scale != self.scale {
             offscreen.scale = self.scale;
 
@@ -226,11 +203,9 @@ impl EffectBuffer {
             offscreen.blurred = None;
         }
 
-        // Render the elements if any.
         let mut elements = match mem::take(&mut self.elements) {
             Elements::New(elements) => elements,
             x @ Elements::Unchanged(_) => {
-                // No redrawing necessary.
                 self.elements = x;
                 return Ok(());
             }
@@ -251,11 +226,9 @@ impl EffectBuffer {
         if res.damage.is_some() {
             self.commit_counter.increment();
 
-            // Original texture changed; reset the blurred texture.
             offscreen.blurred = None;
         }
 
-        // Clear and put the storage back.
         elements.clear();
         self.elements = Elements::Unchanged(elements);
 
@@ -265,7 +238,6 @@ impl EffectBuffer {
     fn prepare_blur(&mut self, renderer: &mut GlesRenderer) -> anyhow::Result<()> {
         let offscreen = self.offscreen.as_mut().context("missing offscreen")?;
         if offscreen.blurred.is_some() {
-            // Already rendered.
             return Ok(());
         }
 
@@ -280,7 +252,6 @@ impl EffectBuffer {
             blur
         } else {
             let Some(blur) = Blur::new(renderer) else {
-                // Missing blur shader.
                 return Ok(());
             };
             self.blur.insert(blur)

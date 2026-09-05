@@ -1,8 +1,3 @@
-//! Headless backend for tests.
-//!
-//! This can eventually grow into a more complete backend if needed, but for now it's missing some
-//! crucial parts like dmabufs.
-
 use std::mem;
 use std::sync::{Arc, Mutex};
 
@@ -147,8 +142,6 @@ impl Headless {
         }
 
         output_state.frame_callback_sequence = output_state.frame_callback_sequence.wrapping_add(1);
-
-        // FIXME: request redraw on unfinished animations remain
 
         RenderResult::Submitted
     }

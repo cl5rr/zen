@@ -16,7 +16,6 @@ const X11_TMP_UNIX_DIR: &str = "/tmp/.X11-unix";
 
 struct X11Connection {
     display_name: String,
-    // Optional because there are no abstract sockets on FreeBSD.
     abstract_fd: Option<OwnedFd>,
     unix_fd: OwnedFd,
     _unix_guard: Unlink,
@@ -30,8 +29,6 @@ impl Drop for Unlink {
     }
 }
 
-// Adapted from Mutter code:
-// https://gitlab.gnome.org/GNOME/mutter/-/blob/48.3.1/src/wayland/meta-xwayland.c?ref_type=tags#L513
 fn ensure_x11_unix_dir() -> anyhow::Result<()> {
     match mkdir(X11_TMP_UNIX_DIR, 0o1777.into()) {
         Ok(()) => Ok(()),
@@ -68,7 +65,6 @@ fn pick_x11_display(start: u32) -> anyhow::Result<(u32, OwnedFd, Unlink)> {
         let lock_path = format!("/tmp/.X{n}-lock");
         let flags = OFlags::WRONLY | OFlags::CLOEXEC | OFlags::CREATE | OFlags::EXCL;
         let Ok(lock_fd) = rustix::fs::open(&lock_path, flags, 0o444.into()) else {
-            // FIXME: check if the target process is dead and reuse the lock.
             continue;
         };
         return Ok((n, lock_fd, Unlink(lock_path)));
@@ -94,7 +90,6 @@ fn bind_to_abstract_socket(display: u32) -> anyhow::Result<UnixListener> {
 fn bind_to_unix_socket(display: u32) -> anyhow::Result<(UnixListener, Unlink)> {
     let name = format!("/tmp/.X11-unix/X{display}");
     let addr = SocketAddr::from_pathname(&name).unwrap();
-    // Unlink old leftover socket if any.
     let _ = unlink(&name);
     let guard = Unlink(name);
     bind_to_socket(&addr).map(|listener| (listener, guard))
@@ -122,7 +117,6 @@ fn setup_connection() -> anyhow::Result<X11Connection> {
     let (display, lock_guard, a, u, unix_guard) = loop {
         let (display, lock_fd, lock_guard) = pick_x11_display(n)?;
 
-        // Write our PID into the lock file.
         let pid_string = format!("{:>10}\n", getpid().as_raw_nonzero());
         if let Err(err) = rustix::io::write(&lock_fd, pid_string.as_bytes()) {
             return Err(err).context("error writing PID to X11 lock file");

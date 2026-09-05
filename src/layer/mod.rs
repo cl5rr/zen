@@ -7,31 +7,22 @@ use smithay::wayland::shell::wlr_layer::Layer;
 pub mod mapped;
 pub use mapped::MappedLayer;
 
-/// Rules fully resolved for a layer-shell surface.
 #[derive(Debug, Default, PartialEq)]
 pub struct ResolvedLayerRules {
-    /// Extra opacity to draw this layer surface with.
     pub opacity: Option<f32>,
 
-    /// Whether to block out this layer surface from certain render targets.
     pub block_out_from: Option<BlockOutFrom>,
 
-    /// Shadow overrides.
     pub shadow: ShadowRule,
 
-    /// Corner radius to assume this layer surface has.
     pub geometry_corner_radius: Option<CornerRadius>,
 
-    /// Whether to place this layer surface within the overview backdrop.
     pub place_within_backdrop: bool,
 
-    /// Whether to bob this window up and down.
     pub baba_is_float: bool,
 
-    /// Background effect configuration.
     pub background_effect: BackgroundEffect,
 
-    /// Rules for this layer surface's popups.
     pub popups: ResolvedPopupsRules,
 }
 

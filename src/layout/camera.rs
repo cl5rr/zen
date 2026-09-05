@@ -1,32 +1,3 @@
-//! Per-output camera: the viewport transform through which one monitor sees its content.
-//!
-//! The code this was forked from had no camera. Zoom was a bare `f64` derived from overview
-//! progress, applied ad-hoc at roughly 130 call sites, and it was global -- every output zoomed
-//! together, always. ZEN needs
-//! the opposite: a camera is a property of an *output*, so two monitors can look at different
-//! regions of the same space, and a virtual output can frame something different again.
-//!
-//! # Coordinate spaces
-//!
-//! - **content space**: where windows actually live, unscaled. Today this is workspace-local;
-//!   in Phase 2.5 it becomes the unbounded canvas. It is tagged `Logical` for now because that
-//!   is what the layout still speaks.
-//! - **view space**: pixels within the output, what the user points at.
-//!
-//! ```text
-//! view    = content * zoom + pan
-//! content = (view - pan) / zoom
-//! ```
-//!
-//! `pan` is where content-space `(0, 0)` lands on screen -- origin-anchored, not
-//! centre-anchored. That choice is deliberate. The layout already positions content as
-//! `content * zoom + geo.loc`, so the camera slots in as one extra term on `geo.loc` rather
-//! than requiring every call site to learn about centres. A centre-anchored camera would also
-//! fight `workspaces_render_geo`, which re-centres the workspace itself as zoom changes.
-//!
-//! Nothing is lost: the *feel* of zooming comes from [`Camera::zoom_about`] holding a chosen
-//! point still, not from where the origin happens to sit.
-
 use std::time::Duration;
 
 use smithay::utils::{Logical, Point, Rectangle, Size};
@@ -34,61 +5,35 @@ use smithay::utils::{Logical, Point, Rectangle, Size};
 use crate::animation::{Animation, Clock};
 use crate::rubber_band::RubberBand;
 
-/// Overshoot allowed past the configured zoom limits before the camera springs back.
-///
-/// Applied in log space, so it means "a constant fraction past the limit" rather than a
-/// constant number of zoom units -- zoom is multiplicative, not additive.
 const ZOOM_RUBBER_BAND: RubberBand = RubberBand {
     stiffness: 0.5,
     limit: 0.3,
 };
 
-/// A held direction the camera is being pushed in.
-///
-/// Keyboard panning is a *velocity*, not a series of jumps. A key held down should start the
-/// canvas moving gently and wind it up, the way pushing something heavy works, and let it coast
-/// briefly when released. Discrete steps cannot express any of that: they arrive at whatever
-/// rate the keyboard repeats, so the motion is the key repeat rate wearing a costume.
 #[derive(Debug, Clone, Copy)]
 struct PanDrive {
-    /// Unit direction in view space.
     dir: Point<f64, Logical>,
-    /// Current speed, view pixels per second.
     speed: f64,
-    /// While the clock is before this, the key is still considered held. Each repeat pushes it
-    /// out; when it lapses, the drive coasts to a stop instead of stopping dead.
     held_until: Duration,
 }
 
-/// Speed a pan starts at. Low enough that a tap nudges rather than lurches.
 const PAN_START_SPEED: f64 = 260.;
-/// Ceiling, so crossing a large canvas stays controllable.
 const PAN_MAX_SPEED: f64 = 3400.;
-/// How hard the drive winds up, view pixels per second per second.
 const PAN_ACCEL: f64 = 2600.;
-/// How hard it winds down once the key is released.
 const PAN_DECEL: f64 = 5200.;
-/// A repeat later than this means the key was released. Comfortably longer than any key repeat
-/// interval, so a held key never stutters into a coast and back.
 const PAN_HELD_GRACE_MS: u64 = 180;
 
 #[derive(Debug)]
 pub struct Camera {
-    /// Where content-space `(0, 0)` lands in view space.
     pan: Point<f64, Logical>,
-    /// Content pixels per view pixel. Above 1.0 is magnification.
     zoom: f64,
 
-    /// Size of the viewport in view space.
     view_size: Size<f64, Logical>,
 
-    /// In-flight animations. Pan is split per axis so each can retarget independently.
     pan_anim: Option<(Animation, Animation)>,
     zoom_anim: Option<Animation>,
 
-    /// Continuous keyboard pan: a direction being driven, and how fast it is going.
     drive: Option<PanDrive>,
-    /// Clock reading at the last `advance_animations`, so drive can integrate over real time.
     last_advance: Option<Duration>,
 
     min_zoom: f64,
@@ -114,13 +59,12 @@ impl Camera {
         }
     }
 
-    // ---------------------------------------------------------------- transforms ----
+    // transforms
 
     pub fn zoom(&self) -> f64 {
         self.zoom
     }
 
-    /// Where content-space `(0, 0)` lands in view space. Zero when the camera is at rest.
     pub fn pan_offset_view(&self) -> Point<f64, Logical> {
         self.pan
     }
@@ -137,7 +81,6 @@ impl Camera {
         (p - self.pan).downscale(self.zoom)
     }
 
-    /// The content-space rectangle currently visible, for culling.
     pub fn visible_rect(&self) -> Rectangle<f64, Logical> {
         let size = Size::from((self.view_size.w / self.zoom, self.view_size.h / self.zoom));
         Rectangle::new(self.view_to_content(Point::from((0., 0.))), size)
@@ -147,17 +90,12 @@ impl Camera {
         self.view_size = view_size;
     }
 
-    /// Whether the camera is an identity transform, i.e. contributing nothing.
     pub fn is_at_rest(&self) -> bool {
         (self.zoom - 1.).abs() < 1e-9 && self.pan.x.abs() < 1e-9 && self.pan.y.abs() < 1e-9
     }
 
-    // -------------------------------------------------------------------- zoom -----
+    // zoom
 
-    /// Clamps `zoom` to the configured range, with rubber-band resistance past the ends.
-    ///
-    /// Done in log space: overshooting by a factor should feel the same whether you are at 0.5x
-    /// or 4x, which a linear clamp would not give.
     fn band_zoom(&self, zoom: f64) -> f64 {
         let z = zoom.max(1e-6).ln();
         ZOOM_RUBBER_BAND
@@ -165,7 +103,6 @@ impl Camera {
             .exp()
     }
 
-    /// Hard clamp with no overshoot, for animation targets.
     fn clamp_zoom(&self, zoom: f64) -> f64 {
         zoom.clamp(self.min_zoom, self.max_zoom)
     }
@@ -175,15 +112,10 @@ impl Camera {
         self.zoom = self.clamp_zoom(zoom);
     }
 
-    /// Zoom by `factor` while holding the content under `view_anchor` still.
-    ///
-    /// This is the primitive that makes wheel-zoom feel right: whatever is under the cursor
-    /// stays under the cursor. Without it, zooming drifts the world away from the pointer.
     pub fn zoom_about(&mut self, view_anchor: Point<f64, Logical>, factor: f64) {
         let anchor_content = self.view_to_content(view_anchor);
         let new_zoom = self.band_zoom(self.zoom * factor);
 
-        // Solve `anchor_content * new_zoom + pan = view_anchor` for pan.
         self.pan = view_anchor - anchor_content.upscale(new_zoom);
         self.zoom = new_zoom;
 
@@ -191,7 +123,6 @@ impl Camera {
         self.pan_anim = None;
     }
 
-    /// Springs zoom towards `target`, carrying the current velocity if one is in flight.
     pub fn animate_zoom_to(&mut self, target: f64, config: zen_config::Animation) {
         let target = self.clamp_zoom(target);
         let from = self.zoom;
@@ -209,7 +140,6 @@ impl Camera {
         ));
     }
 
-    /// Releases the camera after a gesture: if it overshot the limits, spring it back.
     pub fn settle_zoom(&mut self, config: zen_config::Animation) {
         let clamped = self.clamp_zoom(self.zoom);
         if (clamped - self.zoom).abs() > 1e-9 {
@@ -217,32 +147,18 @@ impl Camera {
         }
     }
 
-    // -------------------------------------------------------------------- pan ------
+    // pan
 
     pub fn set_pan_immediate(&mut self, pan: Point<f64, Logical>) {
         self.pan_anim = None;
         self.pan = pan;
     }
 
-    /// Pans by a delta given in *view* pixels.
-    ///
-    /// Motion arrives in screen space, so dragging tracks the pointer exactly at any zoom
-    /// without the caller scaling anything.
     pub fn pan_by_view_delta(&mut self, delta: Point<f64, Logical>) {
         self.pan += delta;
         self.pan_anim = None;
     }
 
-    /// Pushes the camera in a direction, continuously, for as long as the key is held.
-    ///
-    /// Call this on every key repeat. The direction only needs a sign per axis; magnitude is
-    /// ignored, because speed is the drive's business, not the caller's.
-    ///
-    /// What this replaces, twice over. First it was `pan += delta` with the animation cleared,
-    /// a hard teleport per keypress. Then it was a spring retargeted per keypress, which was
-    /// smoother but still moved in discrete shoves at whatever rate the keyboard repeated. A
-    /// held key should simply move the canvas: slowly at first, winding up while you hold it,
-    /// coasting to a stop when you let go. That is a velocity, so this models one.
     pub fn pan_drive(&mut self, dir: Point<f64, Logical>) {
         let len = (dir.x * dir.x + dir.y * dir.y).sqrt();
         if len <= f64::EPSILON {
@@ -251,18 +167,13 @@ impl Camera {
         let dir = Point::from((dir.x / len, dir.y / len));
         let held_until = self.clock.now_unadjusted() + Duration::from_millis(PAN_HELD_GRACE_MS);
 
-        // Keep the speed we already built up when the push continues in the same direction;
-        // reversing starts again from rest, so a change of mind does not fling the canvas.
         let speed = match self.drive {
             Some(d) if d.dir.x * dir.x + d.dir.y * dir.y > 0. => d.speed,
             _ => PAN_START_SPEED,
         };
 
-        // Establish a time baseline if there is none, or the first frame of the first pan
-        // measures dt against nothing and silently covers no ground.
         self.last_advance.get_or_insert(self.clock.now_unadjusted());
 
-        // A keyboard push takes the camera by hand, so any spring in flight stops here.
         self.pan_anim = None;
         self.drive = Some(PanDrive {
             dir,
@@ -271,7 +182,6 @@ impl Camera {
         });
     }
 
-    /// Integrates the keyboard drive. Returns true while it still has work to do.
     fn advance_drive(&mut self, dt: f64) -> bool {
         let Some(mut d) = self.drive else {
             return false;
@@ -304,15 +214,11 @@ impl Camera {
         ));
     }
 
-    /// Springs back to an identity transform.
     pub fn reset(&mut self, config: zen_config::Animation) {
         self.animate_zoom_to(1., config);
         self.animate_pan_to(Point::from((0., 0.)), config);
     }
 
-    /// Frames `rect` (content space) in the viewport with `padding` view pixels of margin.
-    ///
-    /// This is the primitive Phase 3's camera-maximize calls. It never touches the window.
     pub fn frame(
         &mut self,
         rect: Rectangle<f64, Logical>,
@@ -324,10 +230,8 @@ impl Camera {
         }
         let avail_w = (self.view_size.w - padding * 2.).max(1.);
         let avail_h = (self.view_size.h - padding * 2.).max(1.);
-        // Fit, so the whole rect is visible and its aspect ratio preserved.
         let zoom = self.clamp_zoom((avail_w / rect.size.w).min(avail_h / rect.size.h));
 
-        // Put the rect's centre at the viewport's centre.
         let rect_center = rect.loc + Point::from((rect.size.w / 2., rect.size.h / 2.));
         let view_center = Point::from((self.view_size.w / 2., self.view_size.h / 2.));
         let pan = view_center - rect_center.upscale(zoom);
@@ -336,17 +240,13 @@ impl Camera {
         self.animate_pan_to(pan, config);
     }
 
-    // -------------------------------------------------------------- animation ------
+    // animation
 
     pub fn is_animating(&self) -> bool {
-        // The drive counts: while a key is held the camera is moving every frame, and a caller
-        // that thinks the camera is at rest would stop redrawing and freeze the pan.
         self.zoom_anim.is_some() || self.pan_anim.is_some() || self.drive.is_some()
     }
 
-    /// Samples in-flight animations and retires finished ones.
     pub fn advance_animations(&mut self) {
-        // Real elapsed time, clamped: a stalled frame must not teleport the canvas.
         let now = self.clock.now_unadjusted();
         let dt = self
             .last_advance
@@ -410,14 +310,12 @@ mod tests {
         (a.x - b.x).abs() < tol && (a.y - b.y).abs() < tol
     }
 
-    /// Moves the clock on by `ms` and lets the camera integrate, the way a frame would.
     fn advance(c: &mut Camera, ms: u64) {
         let now = c.clock.now_unadjusted() + Duration::from_millis(ms);
         c.clock.set_unadjusted(now);
         c.advance_animations();
     }
 
-    /// A fresh camera must contribute nothing, or it would shift every existing layout.
     #[test]
     fn starts_at_rest_as_an_identity_transform() {
         let c = camera();
@@ -446,7 +344,6 @@ mod tests {
         }
     }
 
-    /// The property that makes wheel-zoom feel right.
     #[test]
     fn zoom_about_holds_the_anchor_still() {
         let mut c = camera();
@@ -508,7 +405,6 @@ mod tests {
             let probe = Point::<f64, Logical>::from((300., 200.));
             let delta = Point::<f64, Logical>::from((60., -40.));
 
-            // Grab the content under `probe`, drag by `delta`; it must end up under probe+delta.
             let grabbed = c.view_to_content(probe);
             c.pan_by_view_delta(delta);
             let now_under = c.view_to_content(probe + delta);
@@ -527,7 +423,6 @@ mod tests {
             Rectangle::<f64, Logical>::new(Point::from((1000., 2000.)), Size::from((400., 300.)));
         c.frame(rect, 20., zen_config::Animation::new_off());
 
-        // Animations are pending; apply their targets directly for the geometry check.
         let z = c.zoom_anim.as_ref().unwrap().to();
         let (px, py) = {
             let (x, y) = c.pan_anim.as_ref().unwrap();
@@ -548,15 +443,11 @@ mod tests {
         );
     }
 
-    /// Panning used to teleport: `pan += delta` per keypress. Then it was a spring retargeted
-    /// per keypress, which still moved in discrete shoves at the keyboard repeat rate. It is now
-    /// a velocity: held means moving, and holding longer means moving faster.
     #[test]
     fn a_held_pan_starts_slow_and_winds_up() {
         let mut c = camera();
         let left = Point::<f64, Logical>::from((-1., 0.));
 
-        // Each "frame" is 16ms of held key, the way key repeat plus redraw actually arrive.
         let mut covered = Vec::new();
         let mut prev = c.pan_offset_view().x;
         for _ in 0..6 {
@@ -579,7 +470,6 @@ mod tests {
         }
     }
 
-    /// Letting go coasts to a stop rather than stopping dead, and then stays stopped.
     #[test]
     fn releasing_coasts_to_a_stop() {
         let mut c = camera();
@@ -588,7 +478,6 @@ mod tests {
             advance(&mut c, 16);
         }
 
-        // Stop pushing. The grace window lapses, then it decelerates.
         let mut moved_after_release = 0.;
         let mut prev = c.pan_offset_view().x;
         for _ in 0..60 {
@@ -613,7 +502,6 @@ mod tests {
         );
     }
 
-    /// Turning around starts again from rest, so a change of mind does not fling the canvas.
     #[test]
     fn reversing_starts_again_from_rest() {
         let mut c = camera();
@@ -627,7 +515,6 @@ mod tests {
         advance(&mut c, 16);
         let first_back = c.pan_offset_view().x - before;
 
-        // One frame at the starting speed, not at the speed built up going the other way.
         let expected = PAN_START_SPEED * 0.016;
         assert!(
             first_back < expected * 2.,

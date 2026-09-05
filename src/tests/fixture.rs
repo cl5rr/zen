@@ -28,17 +28,6 @@ impl Fixture {
         Self::with_config(Config::default())
     }
 
-    /// Builds a fixture, **forcing the scrolling layout on**.
-    ///
-    /// Read that again, because it overrides what the caller passed. This whole suite is
-    /// inherited from zen and is about the scrolling layout: fixed columns, view offsets, and
-    /// configure sequences that only mean anything in a strip. ZEN's default is the canvas, so
-    /// without this every one of those tests would quietly become a floating test and stop
-    /// covering what it was written to cover.
-    ///
-    /// Canvas behaviour is tested in `layout::tests::islands`. When a fixture-level canvas test
-    /// is wanted, add a sibling constructor that leaves the flag alone -- do not remove this
-    /// line.
     pub fn with_config(mut config: Config) -> Self {
         config.camera.open_on_canvas = false;
         let event_loop = EventLoop::try_new().unwrap();
@@ -144,15 +133,6 @@ impl Fixture {
         }
     }
 
-    /// Roundtrip twice in a row.
-    ///
-    /// For some reason, when running tests on many threads at once, a single roundtrip is
-    /// sometimes not sufficient to get the configure events to the client.
-    ///
-    /// I suspect that this is because these configure events are sent from the zen loop callback,
-    /// so they arrive after the sync done event and don't get processed in that client dispatch
-    /// cycle. I'm not sure why this would be dependent on multithreading. But if this is indeed
-    /// the issue, then a double roundtrip fixes it.
     pub fn double_roundtrip(&mut self, id: ClientId) {
         self.roundtrip(id);
         self.roundtrip(id);

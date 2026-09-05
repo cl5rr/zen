@@ -13,7 +13,6 @@ pub fn push_opaque_regions<R: ZenRenderer>(
     scale: Scale<f64>,
     push: &mut dyn FnMut(OutputRenderElements<R>),
 ) {
-    // HACK
     if format!("{elem:?}").contains("ExtraDamage") {
         return;
     }

@@ -14,11 +14,7 @@ use crate::render_helpers::shaders::Shaders;
 #[derive(Debug)]
 pub struct Blur {
     program: BlurProgram,
-    /// Context ID of the renderer that created the program and the textures.
     renderer_context_id: ContextId<GlesTexture>,
-    /// Output texture followed by intermediate textures, large to small.
-    ///
-    /// Created lazily and stored here to avoid recreating blur textures frequently.
     textures: Vec<GlesTexture>,
 }
 
@@ -131,13 +127,10 @@ impl Blur {
                 self.textures.clear();
             } else if !output.is_unique_reference() {
                 debug!("recreating textures: not unique",);
-                // We only need to recreate the output texture here, but this case shouldn't really
-                // happen anyway, and this is simpler.
                 self.textures.clear();
             }
         }
 
-        // Create any missing textures.
         let mut w = size.w;
         let mut h = size.h;
         for i in 0..=passes {
@@ -146,18 +139,14 @@ impl Blur {
             h = max(1, h / 2);
 
             if self.textures.len() > i {
-                // This texture already exists.
                 continue;
             }
-
-            // debug!("creating texture for step {i} sized {w} × {h}");
 
             let texture: GlesTexture =
                 create_texture(Fourcc::Abgr8888, size).context("error creating texture")?;
             self.textures.push(texture);
         }
 
-        // Drop any no longer needed textures.
         self.textures.drain(passes + 1..);
 
         Ok(())
@@ -236,7 +225,6 @@ impl Blur {
                 let h = dst_size.h;
                 gl.Viewport(0, 0, w, h);
 
-                // During downsampling, half_pixel is half of the destination pixel.
                 gl.Uniform2f(program.uniform_half_pixel, 0.5 / w as f32, 0.5 / h as f32);
 
                 let src = src.tex_id();
@@ -270,7 +258,6 @@ impl Blur {
 
             gl.DisableVertexAttribArray(program.attrib_vert as u32);
 
-            // Up
             let program = &self.program.0.up;
             gl.UseProgram(program.program);
             gl.Uniform1i(program.uniform_tex, 0);
@@ -296,7 +283,6 @@ impl Blur {
                 let h = dst_size.h;
                 gl.Viewport(0, 0, w, h);
 
-                // During upsampling, half_pixel is half of the source pixel.
                 let src_size = src.size();
                 let src_w = src_size.w as f32;
                 let src_h = src_size.h as f32;

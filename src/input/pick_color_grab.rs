@@ -44,14 +44,11 @@ impl PickColorGrab {
                 data.zen.update_render_elements(Some(&output));
 
                 let scale = Scale::from(output.current_scale().fractional_scale());
-                // FIXME: perhaps replace floor with round once we figure out the pointer behavior
-                // at the bottom/right edges of the monitors.
                 let pos = pos_within_output.to_physical_precise_floor(scale);
                 let size = Size::<i32, Physical>::from((1, 1));
 
                 let ctx = RenderCtx {
                     renderer,
-                    // This is an interactive operation so we can render without blocking out.
                     target: RenderTarget::Output,
                     xray: None,
                 };
@@ -126,7 +123,6 @@ impl PointerGrab<State> for PickColorGrab {
             return;
         }
 
-        // We're handling this press, don't send the release to the window.
         data.zen.suppressed_buttons.insert(event.button);
 
         if let Some(tx) = data.zen.pick_color.take() {

@@ -46,79 +46,40 @@ use crate::window::ResolvedWindowRules;
 
 #[derive(Debug)]
 pub struct Workspace<W: LayoutElement> {
-    /// The scrollable-tiling layout.
     scrolling: ScrollingSpace<W>,
 
-    /// The floating layout.
     floating: FloatingSpace<W>,
 
-    /// Whether the floating layout is active instead of the scrolling layout.
     floating_is_active: FloatingActive,
 
-    /// The original output of this workspace.
-    ///
-    /// Most of the time this will be the workspace's current output, however, after an output
-    /// disconnection, it may remain pointing to the disconnected output.
     pub(super) original_output: OutputId,
 
-    /// Current output of this workspace.
     output: Option<Output>,
 
-    /// Latest known output scale for this workspace.
-    ///
-    /// This should be set from the current workspace output, or, if all outputs have been
-    /// disconnected, preserved until a new output is connected.
     scale: smithay::output::Scale,
 
-    /// Extra density asked of clients because the camera is magnifying them.
-    ///
-    /// Deliberately *not* folded into `scale`: that drives layout geometry, and multiplying it
-    /// would resize every tile. This only affects the scale hint sent to clients, so a
-    /// magnified window re-renders at higher resolution while its logical size is untouched.
     camera_scale: f64,
 
-    /// Latest known output transform for this workspace.
-    ///
-    /// This should be set from the current workspace output, or, if all outputs have been
-    /// disconnected, preserved until a new output is connected.
     transform: Transform,
 
-    /// Latest known view size for this workspace.
-    ///
-    /// This should be computed from the current workspace output size, or, if all outputs have
-    /// been disconnected, preserved until a new output is connected.
     view_size: Size<f64, Logical>,
 
-    /// Latest known working area for this workspace.
-    ///
-    /// Not rounded to physical pixels.
-    ///
-    /// This is similar to view size, but takes into account things like layer shell exclusive
-    /// zones.
     working_area: Rectangle<f64, Logical>,
 
-    /// This workspace's shadow in the overview.
     shadow: Shadow,
 
-    /// This workspace's background.
     background_buffer: SolidColorBuffer,
 
-    /// Clock for driving animations.
     pub(super) clock: Clock,
 
-    /// Configurable properties of the layout as received from the parent monitor.
     pub(super) base_options: Rc<Options>,
 
-    /// Configurable properties of the layout with logical sizes adjusted for the current `scale`.
     pub(super) options: Rc<Options>,
 
-    /// Optional name of this workspace.
     pub(super) name: Option<String>,
 
-    /// Layout config overrides for this workspace.
     layout_config: Option<zen_config::LayoutPart>,
 
-    /// Unique ID of this workspace.
     id: WorkspaceId,
 }
 
@@ -165,41 +126,25 @@ pub(super) struct InteractiveResize<W: LayoutElement> {
     pub data: InteractiveResizeData,
 }
 
-/// Resolved width or height in logical pixels.
 #[derive(Debug, Clone, Copy)]
 pub enum ResolvedSize {
-    /// Size of the tile including borders.
     Tile(f64),
-    /// Size of the window excluding borders.
     Window(f64),
 }
 
-/// Whether the floating space is active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FloatingActive {
-    /// The scrolling space is active.
     No,
-    /// The scrolling space is active, but the floating space should render on top, even if the
-    /// active scrolling window is fullscreen.
-    ///
-    /// This is necessary for focus-follows-mouse that activates but doesn't raise the window to
-    /// avoid being annoying.
     NoButRaised,
-    /// The floating space is active.
     Yes,
 }
 
-/// Where to put a newly added window.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum WorkspaceAddWindowTarget<'a, W: LayoutElement> {
-    /// No particular preference.
     #[default]
     Auto,
-    /// As a new column at this index.
     NewColumnAt(usize),
-    /// Next to this existing window.
     NextTo(&'a W::Id),
-    /// Into this island, tiling beside what is already in it.
     Island(IslandId),
 }
 
@@ -520,7 +465,6 @@ impl<W: LayoutElement> Workspace<W> {
         self.output = output;
 
         if let Some(output) = &self.output {
-            // Normalize original output: possibly replace connector with make/model/serial.
             if self.original_output.matches(output) {
                 self.original_output = OutputId::new(output);
             }
@@ -533,7 +477,6 @@ impl<W: LayoutElement> Workspace<W> {
         }
     }
 
-    /// The scale hint handed to clients: the output's, times any camera magnification.
     fn client_scale(&self) -> smithay::output::Scale {
         if (self.camera_scale - 1.).abs() < 1e-9 {
             return self.scale;
@@ -541,10 +484,6 @@ impl<W: LayoutElement> Workspace<W> {
         smithay::output::Scale::Fractional(self.scale.fractional_scale() * self.camera_scale)
     }
 
-    /// Tells clients to render at `factor` times the output scale.
-    ///
-    /// Called when the camera settles, never mid-animation: a scale change makes clients
-    /// re-render, and doing that every frame of a zoom would configure-storm them.
     pub fn set_camera_scale(&mut self, factor: f64) {
         if (self.camera_scale - factor).abs() < 1e-9 {
             return;
@@ -596,10 +535,8 @@ impl<W: LayoutElement> Workspace<W> {
         self.working_area = working_area;
 
         if fractional_scale_changed {
-            // Options need to be recomputed for the new scale.
             self.update_config(self.base_options.clone());
         } else {
-            // Pass our existing options as is.
             self.scrolling.update_config(
                 size,
                 working_area,
@@ -658,11 +595,8 @@ impl<W: LayoutElement> Workspace<W> {
 
         match target {
             WorkspaceAddWindowTarget::Auto => {
-                // Don't steal focus from an active fullscreen window.
                 let activate = activate.map_smart(|| !self.is_active_pending_fullscreen());
 
-                // If the tile is pending maximized or fullscreen, open it in the scrolling layout
-                // where it can do that.
                 if is_floating && tile.window().pending_sizing_mode().is_normal() {
                     self.floating.add_tile(tile, activate);
 
@@ -690,9 +624,6 @@ impl<W: LayoutElement> Workspace<W> {
             WorkspaceAddWindowTarget::Island(island) => {
                 let activate = activate.map_smart(|| !self.is_active_pending_fullscreen());
 
-                // Islands are a floating-space idea. A window that wants to be maximized or
-                // fullscreen cannot be one tile among several, so it goes to the scrolling
-                // layout where it can do that, rather than being forced flat into a column.
                 if tile.window().pending_sizing_mode().is_normal()
                     && self.floating.islands().get(island).is_some()
                 {
@@ -720,15 +651,12 @@ impl<W: LayoutElement> Workspace<W> {
                     if floating_has_window {
                         self.floating.add_tile_above(next_to, tile, activate);
                     } else {
-                        // FIXME: use static pos
                         let (next_to_tile, render_pos, _visible) = self
                             .scrolling
                             .tiles_with_render_positions()
                             .find(|(tile, _, _)| tile.window().id() == next_to)
                             .unwrap();
 
-                        // Position the new tile in the center above the next_to tile. Think a
-                        // dialog opening on top of a window.
                         let tile_size = tile.tile_size();
                         let pos = render_pos
                             + (next_to_tile.tile_size().to_point() - tile_size.to_point())
@@ -807,7 +735,6 @@ impl<W: LayoutElement> Workspace<W> {
                 self.floating_is_active = FloatingActive::No;
             }
         } else {
-            // Scrolling should remain focused if both are empty.
             if self.scrolling.is_empty() && !self.floating.is_empty() {
                 self.floating_is_active = FloatingActive::Yes;
             }
@@ -873,7 +800,6 @@ impl<W: LayoutElement> Workspace<W> {
             Some(Some(height)) => Some(height),
             Some(None) => None,
             None if is_floating => None,
-            // We don't have a global default at the moment.
             None => None,
         }
     }
@@ -892,17 +818,11 @@ impl<W: LayoutElement> Workspace<W> {
             self.scrolling.new_window_size(width, height, rules)
         };
 
-        // If the window has a fixed size, or we're picking some fixed size, apply min and max
-        // size. This is to ensure that a fixed-size window rule works on open, while still
-        // allowing the window freedom to pick its default size otherwise.
         let (min_size, max_size) = rules.apply_min_max_size(min_size, max_size);
         size.w = ensure_min_max_size_maybe_zero(size.w, min_size.w, max_size.w);
-        // For scrolling (where height is > 0) only ensure fixed height, since at runtime scrolling
-        // will only honor fixed height currently.
         if min_size.h == max_size.h {
             size.h = ensure_min_max_size(size.h, min_size.h, max_size.h);
         } else if size.h > 0 {
-            // Also always honor min height, scrolling always does.
             size.h = max(size.h, min_size.h);
         }
 
@@ -956,7 +876,6 @@ impl<W: LayoutElement> Workspace<W> {
             PresetSize::Fixed(fixed) => {
                 let mut fixed = f64::from(fixed);
 
-                // Add border width since ColumnWidth includes borders.
                 let rules = window.rules();
                 let border = self.options.layout.border.merged_with(&rules.border);
                 if !border.off {
@@ -1248,8 +1167,6 @@ impl<W: LayoutElement> Workspace<W> {
 
     pub fn toggle_full_width(&mut self) {
         if self.floating_is_active.get() {
-            // Leave this unimplemented for now. For good UX, this probably needs moving the tile
-            // to be against the left edge of the working area while it is full-width.
             return;
         }
         self.scrolling.toggle_full_width();
@@ -1326,29 +1243,21 @@ impl<W: LayoutElement> Workspace<W> {
                 restore_to_floating = true;
                 self.toggle_window_floating(Some(window));
             } else {
-                // Floating windows are never fullscreen, so this is an unfullscreen request for an
-                // already unfullscreen window.
                 return;
             }
         } else if !is_fullscreen {
-            // The window is in the scrolling layout and we're requesting an unfullscreen. If it is
-            // indeed fullscreen (i.e. this isn't a duplicate unfullscreen request), then we may
-            // need to unfullscreen into floating.
             let col = self
                 .scrolling
                 .columns()
                 .find(|col| col.contains(window))
                 .unwrap();
 
-            // When going from fullscreen to maximized, don't consider restore_to_floating yet.
             if col.is_pending_fullscreen() && !col.is_pending_maximized() {
                 let (tile, _) = col
                     .tiles()
                     .find(|(tile, _)| tile.window().id() == window)
                     .unwrap();
                 if tile.restore_to_floating {
-                    // Unfullscreen and float in one call so it has a chance to notice and request a
-                    // (0, 0) size, rather than the scrolling column size.
                     self.toggle_window_floating(Some(window));
                     return;
                 }
@@ -1364,7 +1273,6 @@ impl<W: LayoutElement> Workspace<W> {
 
         self.scrolling.set_fullscreen(window, is_fullscreen);
 
-        // When going from normal to fullscreen, remember if we should unfullscreen to floating.
         let tile = self
             .scrolling
             .tiles_mut()
@@ -1391,24 +1299,15 @@ impl<W: LayoutElement> Workspace<W> {
                 restore_to_floating = true;
                 self.toggle_window_floating(Some(window));
             } else {
-                // Floating windows are never maximized, so this is an unmaximize request for an
-                // already unmaximized window.
                 return;
             }
         } else if !maximize {
-            // The window is in the scrolling layout and we're requesting to unmaximize. If it is
-            // indeed maximized (i.e. this isn't a duplicate unmaximize request), then we may
-            // need to unmaximize into floating.
             let tile = self
                 .scrolling
                 .tiles()
                 .find(|tile| tile.window().id() == window)
                 .unwrap();
-            // The tile cannot unmaximize into fullscreen (pending_sizing_mode() will be fullscreen
-            // in that case and not maximized), so this check works.
             if tile.window().pending_sizing_mode().is_maximized() && tile.restore_to_floating {
-                // Unmaximize and float in one call so it has a chance to notice and request a
-                // (0, 0) size, rather than the scrolling column size.
                 self.toggle_window_floating(Some(window));
                 return;
             }
@@ -1423,7 +1322,6 @@ impl<W: LayoutElement> Workspace<W> {
 
         self.scrolling.set_maximized(window, maximize);
 
-        // When going from normal to maximized, remember if we should unmaximize to floating.
         let tile = self
             .scrolling
             .tiles_mut()
@@ -1437,11 +1335,6 @@ impl<W: LayoutElement> Workspace<W> {
     pub fn toggle_maximized(&mut self, window: &W::Id) {
         let mut current = false;
 
-        // We have to check the column property in case the window is in the scrolling layout and
-        // both maximized and fullscreen. In this case, only the column knows whether it's
-        // maximized.
-        //
-        // In the floating layout, windows cannot be maximized.
         if let Some(col) = self.scrolling.columns().find(|col| col.contains(window)) {
             current = col.is_pending_maximized();
         }
@@ -1463,7 +1356,6 @@ impl<W: LayoutElement> Workspace<W> {
 
         if self.floating.has_window(&id) {
             let removed = self.floating.remove_tile(&id);
-            // FIXME: compute closest pos?
             self.scrolling.add_tile(
                 None,
                 removed.tile,
@@ -1479,7 +1371,6 @@ impl<W: LayoutElement> Workspace<W> {
             let mut removed = self.scrolling.remove_tile(&id, Transaction::new());
             removed.tile.stop_move_animations();
 
-            // Come up with a default floating position close to the tile position.
             let stored_or_default = self.floating.stored_or_default_tile_pos(&removed.tile);
             if stored_or_default.is_none() {
                 let offset =
@@ -1534,10 +1425,8 @@ impl<W: LayoutElement> Workspace<W> {
 
     pub fn switch_focus_floating_tiling(&mut self) {
         if self.floating.is_empty() {
-            // If floating is empty, keep focus on scrolling.
             return;
         } else if self.scrolling.is_empty() {
-            // If floating isn't empty but scrolling is, keep focus on floating.
             return;
         }
 
@@ -1560,7 +1449,6 @@ impl<W: LayoutElement> Workspace<W> {
         }) {
             self.floating.move_window(id, x, y, animate);
         } else {
-            // If the target tile isn't floating, set its stored floating position.
             let tile = if let Some(id) = id {
                 self.scrolling
                     .tiles_mut()
@@ -1574,8 +1462,6 @@ impl<W: LayoutElement> Workspace<W> {
 
             let pos = self.floating.stored_or_default_tile_pos(tile);
 
-            // If there's no stored floating position, we can only set both components at once, not
-            // adjust.
             let pos = pos.or_else(|| {
                 (matches!(
                     x,
@@ -1634,20 +1520,13 @@ impl<W: LayoutElement> Workspace<W> {
         self.windows().next().is_some()
     }
 
-    // -----------------------------------------------------------------------------------
-    // Islands
-    //
-    // Thin passthroughs to the floating space, which owns island membership. They exist so
-    // `Monitor` and `Layout` never have to know that islands live inside `FloatingSpace` --
-    // when the workspace grid goes and islands become the workspace, only these move.
-    // -----------------------------------------------------------------------------------------
+    // -
+    // -
 
-    /// Tells the floating space where the camera is looking.
     pub fn set_spawn_center(&mut self, center: Option<Point<f64, Canvas>>) {
         self.floating.set_spawn_center(center);
     }
 
-    /// Where a new window should go, given what the camera is looking at.
     pub fn spawn_target(&self, ctx: &SpawnContext) -> SpawnTarget {
         self.floating.spawn_target(ctx)
     }
@@ -1656,28 +1535,23 @@ impl<W: LayoutElement> Workspace<W> {
         self.floating.islands().get(island).is_some()
     }
 
-    /// The island holding a window, if it is floating.
     pub fn island_of(&self, window: &W::Id) -> Option<IslandId> {
         self.floating.island_of(window)
     }
 
-    /// The island holding the active window.
     pub fn active_island(&self) -> Option<IslandId> {
         let window = self.floating.active_window()?.id().clone();
         self.floating.island_of(&window)
     }
 
-    /// The windows in an island, in its internal order.
     pub fn island_windows(&self, island: IslandId) -> &[W::Id] {
         self.floating.island_windows(island)
     }
 
-    /// An island's footprint on the canvas.
     pub fn island_rect(&self, island: IslandId) -> Option<Rectangle<f64, Canvas>> {
         self.floating.islands().get(island).map(|i| i.rect())
     }
 
-    /// How many islands this workspace holds.
     pub fn island_count(&self) -> usize {
         self.floating.islands().len()
     }
@@ -1694,12 +1568,10 @@ impl<W: LayoutElement> Workspace<W> {
         self.floating.set_island_layout(island, layout)
     }
 
-    /// Merges the active window into the neighbouring island in a direction.
     pub fn move_window_to_island(&mut self, dir: Direction) -> bool {
         self.floating.move_active_to_island(dir)
     }
 
-    /// Pulls the active window out of its cluster into an island of its own.
     pub fn split_window_from_island(&mut self) -> bool {
         self.floating.split_active_from_island()
     }
@@ -1828,7 +1700,6 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn is_floating_visible(&self) -> bool {
-        // If the focus is on a fullscreen scrolling window, hide the floating windows.
         matches!(
             self.floating_is_active,
             FloatingActive::Yes | FloatingActive::NoButRaised
@@ -1902,7 +1773,6 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn window_under(&self, pos: Point<f64, Logical>) -> Option<(&W, HitType)> {
-        // This logic is consistent with tiles_with_render_positions().
         if self.is_floating_visible() {
             if let Some(rv) = self
                 .floating
@@ -1919,8 +1789,6 @@ impl<W: LayoutElement> Workspace<W> {
     pub fn resize_edges_under(&self, pos: Point<f64, Logical>) -> Option<ResizeEdge> {
         self.tiles_with_render_positions()
             .find_map(|(tile, tile_pos, visible)| {
-                // This logic should be consistent with window_under() in when it returns Some vs.
-                // None.
                 if !visible {
                     return None;
                 }
@@ -2042,7 +1910,6 @@ impl<W: LayoutElement> Workspace<W> {
         let config = &self.options.gestures.dnd_edge_view_scroll;
         let trigger_width = config.trigger_width;
 
-        // This working area intentionally does not include extra struts from Options.
         let x = pos.x - self.working_area.loc.x;
         let width = self.working_area.size.w;
 
@@ -2058,10 +1925,8 @@ impl<W: LayoutElement> Workspace<W> {
         };
 
         let delta = if trigger_width < 0.01 {
-            // Sanity check for trigger-width 0 or small window sizes.
             0.
         } else {
-            // Normalize to [0, 1].
             delta / trigger_width
         };
         let delta = delta * speed;
@@ -2117,7 +1982,6 @@ impl<W: LayoutElement> Workspace<W> {
         self.floating.logical_to_canvas(logical_pos)
     }
 
-    /// Bounding box of the floating tiles, for FitAllWindows.
     pub fn floating_tiles_bbox(&self) -> Option<Rectangle<f64, Logical>> {
         self.floating.tiles_bbox()
     }
@@ -2198,7 +2062,6 @@ impl<W: LayoutElement> Workspace<W> {
 
             let rounded_pos = tile_pos.to_physical_precise_round(scale).to_logical(scale);
 
-            // Tile positions must be rounded to physical pixels.
             assert_abs_diff_eq!(tile_pos.x, rounded_pos.x, epsilon = 1e-5);
             assert_abs_diff_eq!(tile_pos.y, rounded_pos.y, epsilon = 1e-5);
 
@@ -2225,8 +2088,6 @@ fn compute_workspace_shadow_config(
     config: zen_config::WorkspaceShadow,
     view_size: Size<f64, Logical>,
 ) -> zen_config::Shadow {
-    // Gaps between workspaces are a multiple of the view height, so shadow settings should also be
-    // normalized to the view height to prevent them from overlapping on lower resolutions.
     let norm = view_size.h / 1080.;
 
     let mut config = zen_config::Shadow::from(config);

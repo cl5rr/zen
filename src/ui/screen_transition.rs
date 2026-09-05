@@ -14,11 +14,8 @@ pub const DURATION: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
 pub struct ScreenTransition {
-    /// Texture to crossfade from for each render target.
     from_texture: [TextureBuffer<GlesTexture>; 3],
-    /// Monotonic time when to start the crossfade.
     start_at: Duration,
-    /// Clock to drive animations.
     clock: Clock,
 }
 
@@ -40,7 +37,6 @@ impl ScreenTransition {
     }
 
     pub fn update_render_elements(&mut self, scale: Scale<f64>, transform: Transform) {
-        // These textures should remain full-screen, even if scale or transform changes.
         for buffer in &mut self.from_texture {
             buffer.set_texture_scale(scale);
             buffer.set_texture_transform(transform);
@@ -48,7 +44,6 @@ impl ScreenTransition {
     }
 
     pub fn render(&self, target: RenderTarget) -> PrimaryGpuTextureRenderElement {
-        // Screen transition ignores animation slowdown.
         let now = self.clock.now_unadjusted();
 
         let alpha = if self.start_at + DURATION <= now {

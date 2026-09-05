@@ -6,7 +6,6 @@ use smithay::backend::renderer::{
 
 use crate::backend::tty::{TtyFrame, TtyRenderer};
 
-/// Trait with our main renderer requirements to save on the typing.
 pub trait ZenRenderer:
     ImportAll
     + ImportMem
@@ -16,7 +15,6 @@ pub trait ZenRenderer:
     + Renderer<TextureId = Self::ZenTextureId, Error = Self::ZenError>
     + AsGlesRenderer
 {
-    // Associated types to work around the instability of associated type bounds.
     type ZenTextureId: Texture + Clone + Send + 'static;
     type ZenError: std::error::Error
         + Send
@@ -36,7 +34,6 @@ where
     type ZenError = R::Error;
 }
 
-/// Trait for getting the underlying `GlesRenderer`.
 pub trait AsGlesRenderer {
     fn as_gles_renderer(&mut self) -> &mut GlesRenderer;
 }
@@ -53,7 +50,6 @@ impl AsGlesRenderer for TtyRenderer<'_> {
     }
 }
 
-/// Trait for getting the underlying `GlesFrame`.
 pub trait AsGlesFrame<'frame, 'buffer>
 where
     Self: 'frame,

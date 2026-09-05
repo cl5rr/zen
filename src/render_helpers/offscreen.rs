@@ -22,28 +22,19 @@ use super::encompassing_geo;
 use super::renderer::AsGlesFrame as _;
 use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
 
-/// Buffer for offscreen rendering.
 #[derive(Debug)]
 pub struct OffscreenBuffer {
     id: Id,
 
-    /// The cached texture buffer.
-    ///
-    /// Lazily created when `render` is called. Recreated when necessary.
     inner: RefCell<Option<Inner>>,
 }
 
 #[derive(Debug)]
 struct Inner {
-    /// The texture with offscreened contents.
     texture: GlesTexture,
-    /// Id of the renderer context that the texture comes from.
     renderer_context_id: ContextId<GlesTexture>,
-    /// Scale of the texture.
     scale: Scale<f64>,
-    /// Damage tracker for drawing to the texture.
     damage: OutputDamageTracker,
-    /// Damage of this offscreen element itself facing outside.
     outer_damage: DamageBag<i32, Buffer>,
 }
 
@@ -62,9 +53,7 @@ pub struct OffscreenRenderElement {
 
 #[derive(Debug)]
 pub struct OffscreenData {
-    /// Id of the offscreen element.
     pub id: Id,
-    /// States for the render into the offscreen buffer.
     pub states: RenderElementStates,
 }
 
@@ -82,7 +71,6 @@ impl OffscreenBuffer {
             RelocateRenderElement::from_element(ele, geo.loc.upscale(-1), Relocate::Relative)
         }));
 
-        // Guard against empty elements producing a zero size.
         let mut src_size = geo.size;
         if src_size.w == 0 || src_size.h == 0 {
             src_size = Size::new(1, 1);
@@ -93,7 +81,6 @@ impl OffscreenBuffer {
 
         let mut inner = self.inner.borrow_mut();
 
-        // Check if we need to create or recreate the texture.
         let size_string;
         let mut reason = "";
         if let Some(Inner {
@@ -147,12 +134,9 @@ impl OffscreenBuffer {
             })
         };
 
-        // When leaving the old texture as is, its size might be bigger than src_size.
         let texture_size = inner.texture.size();
         let buffer_size = texture_size.to_logical(1, Transform::Normal).to_physical(1);
 
-        // Recreate the damage tracker if the scale changes. We already recreate it for buffer size
-        // changes, and transform is always Normal.
         if inner.scale != scale {
             inner.scale = scale;
 
@@ -169,10 +153,7 @@ impl OffscreenBuffer {
                 .context("error rendering")?
         };
 
-        // Add the resulting damage to the outer tracker.
         if let Some(damage) = res.damage {
-            // OutputDamageTracker gives us Physical coordinate space, but it's actually the Buffer
-            // space because we were rendering to a texture.
             let size = buffer_size.to_logical(1);
             let damage = damage
                 .iter()
@@ -328,8 +309,6 @@ impl RenderElement<GlesRenderer> for OffscreenRenderElement {
     }
 
     fn underlying_storage(&self, _renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
-        // If scanout for things other than Wayland buffers is implemented, this will need to take
-        // the target GPU into account.
         None
     }
 }
@@ -361,8 +340,6 @@ impl<'render> RenderElement<TtyRenderer<'render>> for OffscreenRenderElement {
         &self,
         _renderer: &mut TtyRenderer<'render>,
     ) -> Option<UnderlyingStorage<'_>> {
-        // If scanout for things other than Wayland buffers is implemented, this will need to take
-        // the target GPU into account.
         None
     }
 }

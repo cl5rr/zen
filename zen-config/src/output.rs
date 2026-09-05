@@ -21,29 +21,17 @@ pub struct Mode {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Modeline {
-    /// The rate at which pixels are drawn in MHz.
     pub clock: f64,
-    /// Horizontal active pixels.
     pub hdisplay: u16,
-    /// Horizontal sync pulse start position in pixels.
     pub hsync_start: u16,
-    /// Horizontal sync pulse end position in pixels.
     pub hsync_end: u16,
-    /// Total horizontal number of pixels before resetting the horizontal drawing position to
-    /// zero.
     pub htotal: u16,
 
-    /// Vertical active pixels.
     pub vdisplay: u16,
-    /// Vertical sync pulse start position in pixels.
     pub vsync_start: u16,
-    /// Vertical sync pulse end position in pixels.
     pub vsync_end: u16,
-    /// Total vertical number of pixels before resetting the vertical drawing position to zero.
     pub vtotal: u16,
-    /// Horizontal sync polarity: "+hsync" or "-hsync".
     pub hsync_polarity: zen_ipc::HSyncPolarity,
-    /// Vertical sync polarity: "+vsync" or "-vsync".
     pub vsync_polarity: zen_ipc::VSyncPolarity,
 }
 
@@ -69,7 +57,6 @@ pub struct Output {
     pub variable_refresh_rate: Option<Vrr>,
     #[knuffel(child)]
     pub focus_at_startup: bool,
-    // Deprecated; use layout.background_color.
     #[knuffel(child)]
     pub background_color: Option<Color>,
     #[knuffel(child)]
@@ -166,7 +153,6 @@ impl OutputName {
         }
     }
 
-    /// Returns an output description matching what Smithay's `Output::new()` does.
     pub fn format_description(&self) -> String {
         format!(
             "{} - {} - {}",
@@ -176,8 +162,6 @@ impl OutputName {
         )
     }
 
-    /// Returns an output name that will match by make/model/serial or, if they are missing, by
-    /// connector.
     pub fn format_make_model_serial_or_connector(&self) -> String {
         if self.make.is_none() && self.model.is_none() && self.serial.is_none() {
             self.connector.to_string()
@@ -194,19 +178,14 @@ impl OutputName {
     }
 
     pub fn matches(&self, target: &str) -> bool {
-        // Match by connector.
         if target.eq_ignore_ascii_case(&self.connector) {
             return true;
         }
 
-        // If no other fields are available, don't try to match by them.
-        //
-        // This is used by zen msg output.
         if self.make.is_none() && self.model.is_none() && self.serial.is_none() {
             return false;
         }
 
-        // Match by "make model serial" with Unknown if something is missing.
         let make = self.make.as_deref().unwrap_or("Unknown");
         let model = self.model.as_deref().unwrap_or("Unknown");
         let serial = self.serial.as_deref().unwrap_or("Unknown");
@@ -242,8 +221,6 @@ impl OutputName {
         true
     }
 
-    // Similar in spirit to Ord, but I don't want to derive Eq to avoid mistakes (you should use
-    // `Self::match`, not Eq).
     pub fn compare(&self, other: &Self) -> std::cmp::Ordering {
         let self_missing_mms = self.make.is_none() && self.model.is_none() && self.serial.is_none();
         let other_missing_mms =
@@ -412,7 +389,6 @@ impl<S: ErrorSpan> Decode<S> for Modeline {
         let mut arguments = node.arguments.iter();
 
         macro_rules! m_required {
-            // This could be one identifier if macro_metavar_expr_concat stabilizes
             ($field:ident, $value_field:ident) => {
                 let $value_field = arguments.next().ok_or_else(|| {
                     DecodeError::missing(node, format!("missing {} argument", stringify!($value)))

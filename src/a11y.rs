@@ -56,7 +56,6 @@ impl A11y {
         let (tx, rx) = calloop::channel::channel();
         let (to_accesskit, from_main) = mpsc::sync_channel::<TreeUpdate>(8);
 
-        // The adapter has a tendency to deadlock, so put it on a thread for now...
         let handler = Handler { tx };
         let res = thread::Builder::new()
             .name("AccessKit Adapter".to_owned())
@@ -139,7 +138,6 @@ impl Zen {
 
         let focus = self.a11y_focus();
 
-        // Check if the MRU selection changed.
         let mut update_mru_selection = false;
         if focus == ID_MRU {
             let current = self.window_mru_ui.current_window_id();
@@ -148,7 +146,6 @@ impl Zen {
                 self.a11y.mru_selection = current;
             }
 
-            // If there's no window title to announce, check if there's a scope change.
             let scope = self.window_mru_ui.scope();
             if !update_mru_selection && self.a11y.mru_scope != Some(scope) {
                 announcement = Some(self.window_mru_ui.a11y_scope_text());
@@ -168,7 +165,6 @@ impl Zen {
         let mut nodes = Vec::new();
 
         if let Some(mut announcement) = announcement {
-            // Work around having to change node value for it to get announced.
             if announcement == self.a11y.last_announcement {
                 announcement.push(' ');
             }
@@ -181,22 +177,11 @@ impl Zen {
         }
 
         if focus == ID_MRU {
-            // Ideally MRU would be a Group with a child Button for a window, but I've no idea how
-            // to make it work reliably. When I did it that way, there were two issues:
-            //
-            // 1. Alt-Tab would always start reading from "Recent windows grouping" instead of the
-            //    window title.
-            // 2. When Alt-Tab became empty (e.g. switching scope to something empty), Orca would
-            //    completely stop reading any child buttons for the remainder of the session.
-            //
-            // I've no idea what to do about these and where they even come from. So, just flip the
-            // MRU node between Group and Button, which seems to work fine.
             if update_mru_selection {
                 if let Some(id) = self.a11y.mru_selection {
                     if let Some((_, mapped)) = self.layout.windows().find(|(_, m)| m.id() == id) {
                         with_toplevel_role(mapped.toplevel(), |role| {
                             let mut title = role.title.as_deref().unwrap_or("Unknown").to_owned();
-                            // Change title on match to ensure we announce same-titled windows.
                             if self.a11y.last_mru_title == title {
                                 title.push(' ');
                             }
@@ -209,7 +194,6 @@ impl Zen {
                     }
                 } else {
                     let mut mru = Node::new(Role::Group);
-                    // Announce the current scope in the empty text to make it clear.
                     let scope = self.window_mru_ui.a11y_scope_text();
                     mru.set_label(format!("Recent windows empty, {scope}"));
                     nodes.push((ID_MRU, mru));
@@ -234,7 +218,6 @@ impl Zen {
 
         let _span = tracy_client::span!("a11y_announce");
 
-        // Work around having to change node value for it to get announced.
         if announcement == self.a11y.last_announcement {
             announcement.push(' ');
         }
@@ -327,9 +310,6 @@ impl Zen {
         };
 
         let focus = self.a11y_focus();
-
-        // NOTE: we don't fill in current MRU selection here to avoid duplicating code; it should
-        // get updated right away anyway.
 
         TreeUpdate {
             nodes: vec![

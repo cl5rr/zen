@@ -122,7 +122,6 @@ mod imp {
         }
 
         fn render(&self, _gl_context: &gdk::GLContext) -> anyhow::Result<()> {
-            // Set up the Smithay renderer.
             let mut renderer = self.renderer.borrow_mut();
             let renderer = renderer.get_or_insert_with(|| {
                 unsafe { create_renderer() }
@@ -142,7 +141,6 @@ mod imp {
             let time = Duration::from_micros(frame_clock.frame_time() as u64);
             self.clock.borrow_mut().set_unadjusted(time);
 
-            // Create the test case if missing.
             let mut case = self.test_case.borrow_mut();
             let case = case.get_or_insert_with(|| {
                 let make = self.make_test_case.get().unwrap();
@@ -157,7 +155,6 @@ mod imp {
 
             let rect: Rectangle<i32, Physical> = Rectangle::from_size(Size::from(size));
 
-            // Fetch GtkGLArea's framebuffer binding.
             let mut framebuffer = 0;
             renderer
                 .with_context(|gl| unsafe {
@@ -169,14 +166,8 @@ mod imp {
                 .context("error running closure in GL context")?;
             ensure!(framebuffer != 0, "error getting the framebuffer");
 
-            // This call will already change the framebuffer binding (offscreen elements will bind
-            // intermediate textures during rendering).
             let elements = case.render(renderer, Size::from(size));
 
-            // HACK: there's currently no way to "just" render into an externally bound framebuffer
-            // (like we have in this case). The render() call requires a valid target. So what
-            // we'll do is use a dummy texture as a target, then swap the framebuffer binding right
-            // before rendering.
             let mut dummy_target = renderer
                 .bind(dummy_texture)
                 .context("error binding dummy texture")?;
@@ -185,8 +176,6 @@ mod imp {
                 .render(&mut dummy_target, rect.size, Transform::Normal)
                 .context("error creating frame")?;
 
-            // Now that render() bound the dummy texture, change the binding underneath it back to
-            // GtkGLArea's framebuffer, to render there instead.
             frame
                 .with_context(|gl| unsafe {
                     gl.BindFramebuffer(
@@ -233,8 +222,6 @@ mod imp {
         let egl_context = egl::GetCurrentContext();
         ensure!(egl_context != egl::NO_CONTEXT, "no current EGL context");
 
-        // There's no config ID on the EGL context and there's no current EGL surface, but we don't
-        // really use it anyway so just get some random one.
         let mut egl_config_id = null();
         let mut num_configs = 0;
         let res = egl::GetConfigs(egl_display, &mut egl_config_id, 1, &mut num_configs);

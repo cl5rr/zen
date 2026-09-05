@@ -19,12 +19,7 @@ use crate::utils::surface_geo;
 #[derive(Debug)]
 pub struct BackgroundEffect {
     nonxray: FramebufferEffect,
-    /// Damage when options change.
     damage: ExtraDamage,
-    /// Corner radius for clipping.
-    ///
-    /// Stored here in addition to `RenderParams` to damage when it changes.
-    // FIXME: would be good to remove this duplication of radius.
     corner_radius: CornerRadius,
     blur_config: zen_config::Blur,
     options: Options,
@@ -47,25 +42,17 @@ impl Options {
     }
 }
 
-/// Render-time parameters.
 #[derive(Debug)]
 pub struct RenderParams {
-    /// Geometry of the background effect.
     pub geometry: Rectangle<f64, Logical>,
-    /// Effect subregion, will be clipped to `geometry`.
-    ///
-    /// `subregion.iter()` should return `geometry`-relative rectangles.
     pub subregion: Option<TransformedRegion>,
-    /// Geometry and radius for clipping in the same coordinate space as `geometry`.
     pub clip: Option<(Rectangle<f64, Logical>, CornerRadius)>,
-    /// Scale to use for rounding to physical pixels.
     pub scale: f64,
 }
 
 impl RenderParams {
     fn fit_clip_radius(&mut self) {
         if let Some((geo, radius)) = &mut self.clip {
-            // HACK: increase radius to avoid slight bleed on rounded corners.
             *radius = radius.expanded_by(1.);
 
             *radius = radius.fit_to(geo.size.w as f32, geo.size.h as f32);
@@ -92,7 +79,6 @@ impl BackgroundEffect {
         }
     }
 
-    /// Damage the background effect, for example when a blur subregion changes.
     pub fn damage(&mut self) {
         self.damage.damage_all();
         self.nonxray.damage();
@@ -114,7 +100,6 @@ impl BackgroundEffect {
         effect: zen_config::BackgroundEffect,
         has_blur_region: bool,
     ) {
-        // If the surface explicitly requests a blur region, default blur to true.
         let blur = if has_blur_region {
             effect.blur != Some(false)
         } else {
@@ -128,8 +113,6 @@ impl BackgroundEffect {
             saturation: effect.saturation,
         };
 
-        // If we have some background effect but xray wasn't explicitly set, default it to true
-        // since it's cheaper.
         if options.is_visible() && effect.xray.is_none() {
             options.xray = true;
         }
@@ -167,8 +150,6 @@ impl BackgroundEffect {
 
         let damage = self.damage.render(params.geometry);
 
-        // Use noise/saturation from options, falling back to blur defaults if blurred, and
-        // to no effect if not blurred.
         let blur = self.options.blur && !self.blur_config.off;
         let blur_options = blur.then_some(BlurOptions::from(self.blur_config));
         let noise = if blur { self.blur_config.noise } else { 0. };
@@ -196,7 +177,6 @@ impl BackgroundEffect {
                 &mut |elem| push(elem.into()),
             );
         } else {
-            // Render non-xray effect.
             let elem = self
                 .nonxray
                 .render(ns, params, blur_options, noise, saturation);
@@ -214,22 +194,16 @@ fn render_params_for_tile(
     surface_geo: Rectangle<f64, Logical>,
     surface_anim_scale: Scale<f64>,
 ) -> Option<RenderParams> {
-    // Effects not requested by the surface itself are drawn to match the geometry.
     let mut clip = true;
 
     let mut effect_geometry = geometry;
     let mut subregion = None;
     if let Some(rects) = blur_region {
         if rects.is_empty() {
-            // Surface has a set, but empty blur region.
             return None;
         } else {
-            // If the surface itself requests the effects, apply different defaults.
             clip = clip_to_geometry;
 
-            // Use geometry-shaped blur for blocked-out windows to avoid unintentionally
-            // leaking any surface shapes. We render those windows as geometry-shaped solid
-            // rectangles anyway.
             if block_out {
                 clip = true;
             } else {
@@ -250,7 +224,6 @@ fn render_params_for_tile(
         }
     }
 
-    // This corner radius is reset to self.corner_radius in render().
     let clip = clip.then_some((geometry, CornerRadius::default()));
 
     Some(RenderParams {
@@ -261,7 +234,6 @@ fn render_params_for_tile(
     })
 }
 
-/// Per-surface background effect stored in its data map.
 struct SurfaceBackgroundEffect(Mutex<BackgroundEffect>);
 
 impl SurfaceBackgroundEffect {
@@ -278,8 +250,6 @@ pub fn damage_surface(states: &SurfaceData) {
     }
 }
 
-// Silence, Clippy
-// A Smithay user is talking
 #[allow(clippy::too_many_arguments)]
 pub fn render_for_tile(
     ctx: RenderCtx<GlesRenderer>,

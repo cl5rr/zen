@@ -44,8 +44,6 @@ impl OpenAnimation {
         self.anim.is_done()
     }
 
-    // We can't depend on view_rect here, because the result of window opening can be snapshot and
-    // then rendered elsewhere.
     pub fn render(
         &self,
         renderer: &mut GlesRenderer,
@@ -64,15 +62,12 @@ impl OpenAnimation {
             .context("error rendering to offscreen buffer")?;
 
         if Shaders::get(renderer).program(ProgramType::Open).is_some() {
-            // OffscreenBuffer renders with Transform::Normal and the scale that we passed, so we
-            // can assume that below.
             let offset = elem.offset();
             let texture = elem.texture();
             let texture_size = elem.logical_size();
 
             let mut area = Rectangle::new(location + offset, texture_size);
 
-            // Expand the area a bit to allow for more varied effects.
             let mut target_size = area.size.upscale(1.5);
             target_size.w = f64::max(area.size.w + 1000., target_size.w);
             target_size.h = f64::max(area.size.h + 1000., target_size.h);
@@ -116,7 +111,6 @@ impl OpenAnimation {
             )
             .with_location(area.loc);
 
-            // We're drawing the shader, not the offscreen itself.
             data.id = elem.id().clone();
 
             return Ok((elem.into(), data));

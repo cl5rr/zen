@@ -152,27 +152,12 @@ impl MergeWith<OverviewPart> for Overview {
     }
 }
 
-/// Camera limits and step size.
-///
-/// The camera is per-output; these are the bounds it operates within.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
-    /// Furthest the camera can zoom out.
     pub min_zoom: f64,
-    /// Furthest the camera can zoom in. Above 1.0 magnifies.
     pub max_zoom: f64,
-    /// Multiplier applied per zoom-in step (and its reciprocal per zoom-out).
     pub zoom_step: f64,
-    /// Whether floating windows may live outside the viewport.
-    ///
-    /// This is ZEN's whole premise, so it defaults on. Turning it off restores zen's
-    /// behaviour of pinning every floating window to its output.
     pub infinite_canvas: bool,
-    /// Whether new windows open onto the canvas rather than into the scrolling strip.
-    ///
-    /// The canvas is where islands live, so this is what makes ZEN ZEN rather than zen with a
-    /// camera bolted on. Turning it off gives you the inherited 1D scrolling layout, which is
-    /// still there and still works -- window rules can send individual windows either way.
     pub open_on_canvas: bool,
 }
 
@@ -209,27 +194,14 @@ impl MergeWith<CameraPart> for Camera {
     }
 }
 
-/// The glass material applied to windows.
-///
-/// `opacity` spans the whole range the material can be: 0.0 is pure refraction, glass you see
-/// straight through; intermediate values frost it toward `tint`; 1.0 is fully opaque and the
-/// backdrop stops showing. Refraction still shapes the rim at any opacity, so an opaque pane
-/// reads as a solid object rather than a flat rectangle.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Glass {
     pub off: bool,
-    /// 0.0 = fully transparent (pure refraction), 1.0 = fully opaque.
     pub opacity: f64,
-    /// Colour the material tints toward as opacity rises.
     pub tint: Color,
-    /// How far, in logical pixels, the rim bends what is behind it.
     pub refraction: f64,
-    /// Distance over which refraction decays inward. Small values keep it a rim.
     pub falloff: f64,
-    /// Superellipse exponent for corners. 2 is a circular arc; 4-5 is continuous curvature.
     pub squircle: f64,
-    /// Saturation lift applied to the backdrop. Vibrancy is blur *plus* saturation; blur alone
-    /// reads as frosted plastic.
     pub saturation: f64,
     pub specular: f64,
 }
@@ -277,11 +249,9 @@ impl MergeWith<GlassPart> for Glass {
     }
 }
 
-/// ZEN's welcome animation: a cover that parts to reveal the desktop.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Welcome {
     pub off: bool,
-    /// Colour of the parting panels.
     pub color: Color,
 }
 
@@ -289,13 +259,6 @@ impl Default for Welcome {
     fn default() -> Self {
         Self {
             off: false,
-            // Near-black, because the mark is *light* ink on transparency.
-            //
-            // This was near-white until the pixels were actually measured: of the visible ink
-            // in zen-thumbnail.png, 61.6% is above luminance 175 and only 34.1% below 80, mean
-            // 163/255. On a white cover most of the mark and the whole wordmark disappeared,
-            // and the parting seam was invisible too, so the animation read as nothing
-            // happening at all.
             color: Color::new_unpremul(0.043, 0.047, 0.055, 1.),
         }
     }
@@ -316,7 +279,6 @@ impl MergeWith<WelcomePart> for Welcome {
     }
 }
 
-/// Widgets drawn onto the canvas itself, rather than pinned to a screen edge.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Widgets {
     pub clock: Clock,
@@ -334,15 +296,11 @@ impl MergeWith<WidgetsPart> for Widgets {
     }
 }
 
-/// A clock positioned on the canvas.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Clock {
     pub off: bool,
-    /// Canvas coordinates, in logical pixels.
     pub position: (f64, f64),
-    /// strftime format string.
     pub format: String,
-    /// Pango font description.
     pub font: String,
     pub color: Color,
 }

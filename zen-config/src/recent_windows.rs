@@ -58,10 +58,8 @@ impl MergeWith<RecentWindowsPart> for RecentWindows {
         merge!((self, part), highlight, previews);
 
         if let Some(part) = &part.binds {
-            // Remove existing binds matching any new bind.
             self.binds
                 .retain(|bind| !part.0.iter().any(|new| new.key == bind.key));
-            // Add all new binds.
             self.binds.extend(part.0.iter().cloned().map(Bind::from));
         }
     }
@@ -136,8 +134,6 @@ impl MergeWith<MruPreviewsPart> for MruPreviews {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MruBind {
-    // MRU bind keys must have a modifier, this is enforced during parsing. The switcher will close
-    // once all modifiers are released.
     pub key: Key,
     pub action: MruAction,
     pub allow_inhibiting: bool,
@@ -160,31 +156,24 @@ impl From<MruBind> for Bind {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum MruDirection {
-    /// Most recently used to least.
     #[default]
     Forward,
-    /// Least recently used to most.
     Backward,
 }
 
 #[derive(knuffel::DecodeScalar, Clone, Copy, Debug, Default, PartialEq)]
 pub enum MruScope {
-    /// All windows.
     #[default]
     All,
-    /// Windows on the active output.
     Output,
-    /// Windows on the active workspace.
     Workspace,
 }
 
 #[derive(knuffel::DecodeScalar, Clone, Copy, Debug, Default, PartialEq)]
 pub enum MruFilter {
-    /// All windows.
     #[default]
     #[knuffel(skip)]
     All,
-    /// Windows with the same app id as the active window.
     AppId,
 }
 
@@ -319,7 +308,6 @@ where
             .parse::<Key>()
             .map_err(|e| DecodeError::conversion(&node.node_name, e.wrap_err("invalid keybind")))?;
 
-        // A modifier is required because MRU remains on screen as long as any modifier is held.
         if key.modifiers.is_empty() {
             ctx.emit_error(DecodeError::unexpected(
                 &node.node_name,
@@ -328,8 +316,6 @@ where
             ));
         }
 
-        // FIXME: To support this, all the mods_with_mouse_binds()/mods_with_wheel_binds()/etc.
-        // will need to learn about recent-windows bindings.
         if !matches!(key.trigger, Trigger::Keysym(_)) {
             ctx.emit_error(DecodeError::unexpected(
                 &node.node_name,
@@ -360,9 +346,6 @@ where
 
         let mut children = node.children();
 
-        // If the action is invalid but the key is fine, we still want to return something.
-        // That way, the parent can handle the existence of duplicate keybinds,
-        // even if their contents are not valid.
         let dummy = Self {
             key,
             action: MruAction::NextWindow(None, MruFilter::All),

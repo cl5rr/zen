@@ -18,7 +18,6 @@ use crate::state::State;
 use crate::utils::get_monotonic_time;
 use crate::window::Mapped;
 
-// When the touch is stationary for this much time, it becomes an interactive move.
 const INTERACTIVE_MOVE_THRESHOLD: Duration = Duration::from_millis(500);
 
 pub struct TouchOverviewGrab {
@@ -32,7 +31,6 @@ pub struct TouchOverviewGrab {
     window: Option<Window>,
     gesture: GestureState,
 
-    // Accumulated and applied in frame().
     new_location: Point<f64, Logical>,
     event_timestamp: Option<Duration>,
 }
@@ -79,7 +77,6 @@ impl TouchOverviewGrab {
 
         let layout = &mut data.zen.layout;
 
-        // Check if we should become interactive move.
         if matches!(self.gesture, GestureState::Recognizing) {
             if let Some(window) = self.window.as_ref().filter(|win| win.alive()) {
                 let passed = timestamp.saturating_sub(self.start_timestamp);
@@ -101,11 +98,9 @@ impl TouchOverviewGrab {
             }
         }
 
-        // Check if we should become a spatial scroll.
         if matches!(self.gesture, GestureState::Recognizing) {
             let c = self.new_location - self.start_data.location();
 
-            // Check if the gesture moved far enough to decide. Threshold copied from libadwaita.
             if c.x * c.x + c.y * c.y >= 16. * 16. {
                 if let Some(ws_id) = self.workspace_id.filter(|_| c.x.abs() > c.y.abs()) {
                     if let Some((ws_idx, ws)) = layout.find_workspace_by_id(ws_id) {
@@ -135,7 +130,6 @@ impl TouchOverviewGrab {
             }
         }
 
-        // Do nothing if still recognizing.
         if matches!(self.gesture, GestureState::Recognizing) {
             return true;
         }
@@ -179,13 +173,9 @@ impl TouchOverviewGrab {
         let layout = &mut state.zen.layout;
         match self.gesture {
             GestureState::Recognizing => {
-                // Tap to activate.
                 layout.focus_output(&self.output);
 
-                // Activate the workspace if necessary.
                 if self.window.is_some() || self.workspace_matched_narrow {
-                    // When activating a window, we want to activate the window's current
-                    // workspace. Otherwise, find the workspace that we tapped on.
                     let ws_matches = |ws: &Workspace<Mapped>| {
                         if let Some(window) = &self.window {
                             ws.has_window(window)
@@ -199,7 +189,6 @@ impl TouchOverviewGrab {
                     let ws_idx = if let Some((Some(mon), ws_idx, _)) =
                         layout.workspaces().find(|(_, _, ws)| ws_matches(ws))
                     {
-                        // The workspace could've moved to a different output in the meantime.
                         (*mon.output() == self.output).then_some(ws_idx)
                     } else {
                         None
@@ -289,7 +278,6 @@ impl TouchGrab<State> for TouchOverviewGrab {
         handle.frame(data);
 
         if !self.on_frame(data) {
-            // The gesture is no longer ongoing.
             handle.unset_grab(self, data);
         }
     }
@@ -400,7 +388,6 @@ impl TabletToolGrab<State> for TouchOverviewGrab {
         handle.frame(data, time);
 
         if !self.on_frame(data) {
-            // The gesture is no longer ongoing.
             handle.unset_grab(
                 self,
                 data,

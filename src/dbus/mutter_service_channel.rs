@@ -25,7 +25,6 @@ impl ServiceChannel {
         let client = NewClient {
             client: sock2,
             restricted: false,
-            // FIXME: maybe you can get the PID from D-Bus somehow?
             credentials_unknown: true,
         };
         if let Err(err) = self.to_zen.send(client) {

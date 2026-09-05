@@ -46,7 +46,6 @@ impl ScreenSaver {
         for _ in 0..3 {
             let mut inhibitor_key = self.counter.fetch_add(1, Ordering::SeqCst);
             if inhibitor_key == 0 {
-                // Some clients don't like 0, add one more.
                 inhibitor_key = self.counter.fetch_add(1, Ordering::SeqCst);
             }
 
@@ -84,7 +83,6 @@ impl ScreenSaver {
             is_inhibited,
             is_broken: Arc::new(AtomicBool::new(false)),
             inhibitors: Arc::new(Mutex::new(HashMap::new())),
-            // Start from 1 because some clients don't like 0.
             counter: Arc::new(AtomicU32::new(1)),
             monitor_task: Arc::new(OnceLock::new()),
         }

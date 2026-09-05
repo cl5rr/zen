@@ -13,9 +13,6 @@ impl CubicBezier {
         Self { x1, y1, x2, y2 }
     }
 
-    // Based on libadwaita (LGPL-2.1-or-later):
-    // https://gitlab.gnome.org/GNOME/libadwaita/-/blob/1.7.6/src/adw-easing.c?ref_type=tags#L469-531
-
     fn x_for_t(&self, t: f64) -> f64 {
         let omt = 1. - t;
         3. * omt * omt * t * self.x1 + 3. * omt * t * t * self.x2 + t * t * t

@@ -20,7 +20,6 @@ use crate::protocols::EmptyData;
 const VERSION: u32 = 1;
 
 pub struct GammaControlManagerState {
-    // Active gamma controls only. Failed ones are removed.
     gamma_controls: HashMap<Output, ZwlrGammaControlV1>,
 }
 
@@ -103,7 +102,6 @@ where
         match request {
             zwlr_gamma_control_manager_v1::Request::GetGammaControl { id, output } => {
                 if let Some(output) = Output::from_resource(&output) {
-                    // We borrow state in the middle.
                     #[allow(clippy::map_entry)]
                     if !state
                         .gamma_control_manager_state()
@@ -157,7 +155,6 @@ where
 
                 trace!("setting gamma for output {}", output.name());
 
-                // Start with a u16 slice so it's aligned correctly.
                 let mut gamma = vec![0u16; self.gamma_size as usize * 3];
                 let buf = bytemuck::cast_slice_mut(&mut gamma);
                 let mut file = File::from(fd);
@@ -172,7 +169,6 @@ where
                         return;
                     }
 
-                    // Verify that there's no more data.
                     {
                         match file.read(&mut [0]) {
                             Ok(0) => (),

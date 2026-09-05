@@ -23,13 +23,7 @@ pub enum ZenToIntrospect {
 #[derive(Debug, SerializeDict, Type, Value)]
 #[zvariant(signature = "dict")]
 pub struct WindowProperties {
-    /// Window title.
     pub title: String,
-    /// Window app ID.
-    ///
-    /// This is actually the name of the .desktop file, and Shell does internal tracking to match
-    /// Wayland app IDs to desktop files. We don't do that yet, which is the reason why
-    /// xdg-desktop-portal-gnome's window list is missing icons.
     #[zvariant(rename = "app-id")]
     pub app_id: String,
 }
@@ -51,8 +45,6 @@ impl Introspect {
         }
     }
 
-    // FIXME: call this upon window changes, once more of the infrastructure is there (will be
-    // needed for the event stream IPC anyway).
     #[zbus(signal)]
     pub async fn windows_changed(ctxt: &SignalEmitter<'_>) -> zbus::Result<()>;
 }

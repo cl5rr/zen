@@ -4,7 +4,6 @@ use smithay::backend::renderer::{Color32F, Frame as _, Renderer};
 use smithay::utils::user_data::UserDataMap;
 use smithay::utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size};
 
-/// Smithay's solid color buffer, but with fractional scale.
 #[derive(Debug, Clone)]
 pub struct SolidColorBuffer {
     id: Id,
@@ -13,7 +12,6 @@ pub struct SolidColorBuffer {
     color: Color32F,
 }
 
-/// Render element for a [`SolidColorBuffer`].
 #[derive(Debug, Clone)]
 pub struct SolidColorRenderElement {
     id: Id,

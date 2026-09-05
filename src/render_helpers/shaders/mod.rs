@@ -15,7 +15,6 @@ pub struct Shaders {
     pub shadow: Option<ShaderProgram>,
     pub clipped_surface: Option<GlesTexProgram>,
     pub postprocess_and_clip: Option<GlesTexProgram>,
-    /// Refractive glass: the backdrop, bent at the rim of a squircle.
     pub glass_and_clip: Option<GlesTexProgram>,
     pub resize: Option<ShaderProgram>,
     pub gradient_fade: Option<GlesTexProgram>,

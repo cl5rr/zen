@@ -97,7 +97,6 @@ impl ExitConfirmDialog {
         }
     }
 
-    /// Returns true if the dialog will be shown (even if it is already shown).
     pub fn show(&mut self) -> bool {
         if !self.can_show() {
             return false;
@@ -111,7 +110,6 @@ impl ExitConfirmDialog {
         true
     }
 
-    /// Returns true if started the hide animation.
     pub fn hide(&mut self) -> bool {
         if !self.is_open() {
             return false;
@@ -159,7 +157,6 @@ impl ExitConfirmDialog {
         };
         let _span = tracy_client::span!("ExitConfirmDialog::render");
 
-        // Can be out of range when starting from past 0. or 1. from a spring bounce.
         let clamped_value = clamped_value.clamp(0., 1.);
 
         let scale = output.current_scale().fractional_scale();
@@ -203,7 +200,6 @@ impl ExitConfirmDialog {
         );
         push(ExitConfirmDialogRenderElement::Texture(elem));
 
-        // Backdrop.
         let data = output.user_data().get_or_insert(|| {
             Mutex::new(OutputData {
                 backdrop: SolidColorBuffer::new(output_size, BACKDROP_COLOR),
@@ -265,7 +261,6 @@ fn render(scale: f64) -> anyhow::Result<MemoryBuffer> {
     cr.line_to(0., height.into());
     cr.line_to(0., 0.);
     cr.set_source_rgb(1., 0.3, 0.3);
-    // Keep the border width even to avoid blurry edges.
     cr.set_line_width((f64::from(BORDER) / 2. * scale).round() * 2.);
     cr.stroke()?;
     drop(cr);

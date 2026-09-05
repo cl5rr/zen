@@ -1,22 +1,3 @@
-//! Phase 1: pointer input delivery under camera zoom.
-//!
-//! zen only ever zoomed as a transient overview mode, and deliberately refused to send pointer
-//! events to a scaled window: `Monitor::window_under` called `HitType::to_activate()`, which
-//! throws away the surface-local position, so a zoomed window could be clicked to focus but
-//! never actually received pointer events. ZEN's camera-maximize needs the opposite.
-//!
-//! The property under test is scale-independent and non-circular:
-//!
-//! > Moving the pointer N pixels across the screen must move the coordinate delivered to the
-//! > client by N/zoom pixels.
-//!
-//! If that holds, the client's idea of where the cursor is agrees with the user's, at any zoom.
-//!
-//! Note on range: these tests only exercise modest magnification. zen's overview render
-//! geometry assumes zoom <= 1, and above roughly 1.25 it pushes the workspace off-screen
-//! entirely (the window's origin goes negative). That is a framing problem for the real
-//! per-output Camera in Phase 2, not an input problem -- the input math below is scale-generic.
-
 use smithay::utils::{Logical, Point};
 
 use super::*;
@@ -25,7 +6,6 @@ use crate::layout::HitType;
 const OUTPUT_W: i32 = 1280;
 const OUTPUT_H: i32 = 720;
 
-/// Camera zoom levels to test. Above 1.0 magnifies.
 const ZOOM_STEPS: [f64; 4] = [0.5, 0.75, 1.0, 1.25];
 
 fn fixture_with_window() -> Fixture {
@@ -58,19 +38,11 @@ fn hit_at(f: &mut Fixture, probe: Point<f64, Logical>) -> Option<(Point<f64, Log
     }
 }
 
-/// The surface-local coordinate the client would receive for a pointer at `probe`.
-///
-/// Smithay delivers `event.location - surface_pos`, so this reproduces exactly what the client
-/// sees, rather than trusting the formula the compositor used to get there.
 fn delivered_at(f: &mut Fixture, probe: Point<f64, Logical>) -> Option<Point<f64, Logical>> {
     let (_, surface_pos) = f.zen().contents_under(probe).surface?;
     Some(probe - surface_pos)
 }
 
-/// On-screen bounding box of the window's input region, found by scanning.
-///
-/// The window's position depends on layout and camera, so the tests locate it rather than
-/// assuming. Returns `None` if nothing on the output is hittable.
 fn window_bbox(f: &mut Fixture) -> Option<(Point<f64, Logical>, Point<f64, Logical>)> {
     let (mut min_x, mut min_y) = (f64::MAX, f64::MAX);
     let (mut max_x, mut max_y) = (f64::MIN, f64::MIN);
@@ -125,7 +97,6 @@ fn window_stays_interactive_at_every_zoom() {
     }
 }
 
-/// The load-bearing test: pointer motion must scale correctly on its way to the client.
 #[test]
 fn pointer_motion_scales_into_surface_coordinates() {
     let mut f = fixture_with_window();
@@ -136,7 +107,6 @@ fn pointer_motion_scales_into_surface_coordinates() {
         let (min, max) = window_bbox(&mut f)
             .unwrap_or_else(|| panic!("no Input hit anywhere at zoom {zoom}"));
 
-        // Two points comfortably inside the window's input region.
         let p1 = Point::<f64, Logical>::from((min.x + 8., min.y + 8.));
         let step = Point::<f64, Logical>::from(((max.x - min.x) / 2., (max.y - min.y) / 3.));
         let p2 = p1 + step;
@@ -146,7 +116,6 @@ fn pointer_motion_scales_into_surface_coordinates() {
         let d2 = delivered_at(&mut f, p2)
             .unwrap_or_else(|| panic!("no surface under {p2:?} at zoom {zoom}"));
 
-        // Moving `step` across the screen must move the delivered coordinate by `step / zoom`.
         let delivered_delta = d2 - d1;
         let expected = step.downscale(zoom);
         let err = (delivered_delta.x - expected.x)
@@ -162,7 +131,6 @@ fn pointer_motion_scales_into_surface_coordinates() {
     }
 }
 
-/// At zoom 1.0 the delivered coordinate must be exactly what it was before Phase 1.
 #[test]
 fn unzoomed_behaviour_is_unchanged() {
     let mut f = fixture_with_window();
@@ -186,7 +154,6 @@ fn unzoomed_behaviour_is_unchanged() {
     );
 }
 
-/// Interactive resize must be reachable while zoomed; zen returned `None` outright.
 #[test]
 fn resize_edges_are_reachable_when_zoomed() {
     let mut f = fixture_with_window();
@@ -196,20 +163,10 @@ fn resize_edges_are_reachable_when_zoomed() {
         let zoom = set_zoom(&mut f, requested);
         let (min, _) = window_bbox(&mut f)
             .unwrap_or_else(|| panic!("no Input hit anywhere at zoom {zoom}"));
-        // Only asserting the lookup is attempted rather than short-circuited to None the
-        // moment any zoom is active.
         let _ = f.zen().layout.resize_edges_under(&output, min);
     }
 }
 
-/// Panning must move content on screen by exactly the requested view-space delta.
-///
-/// This goes through `workspaces_render_geo`, the single place render geometry is computed, so
-/// it also pins the property that hit-testing and rendering agree about where things are.
-///
-/// Measured at zoom 1.0 only: past that the workspace overflows the output, so the scanned
-/// bounding box is clamped by the screen edge rather than describing the window, and a clipped
-/// edge does not move when you pan.
 #[test]
 fn pan_moves_content_by_the_view_delta() {
     let mut f = fixture_with_window();
@@ -218,15 +175,12 @@ fn pan_moves_content_by_the_view_delta() {
     let (before_min, _) = window_bbox(&mut f).expect("no window found");
 
     let delta = Point::<f64, Logical>::from((40., 24.));
-    // The exact-delta primitive. `camera_pan_by` is a held-key velocity now: it ignores the
-    // magnitude entirely and covers ground per frame, so it cannot express "move by this much".
     f.zen().layout.camera_pan_immediate(delta);
     f.zen_complete_animations();
 
     let (after_min, _) = window_bbox(&mut f).expect("window vanished after panning");
 
     let moved = after_min - before_min;
-    // The scan step is 4px, so allow that much slack in locating the edge.
     let err = (moved.x - delta.x).abs().max((moved.y - delta.y).abs());
     assert!(
         err <= 4.0,
@@ -234,10 +188,6 @@ fn pan_moves_content_by_the_view_delta() {
     );
 }
 
-/// Pan must not disturb the coordinates delivered to the client.
-///
-/// The window moves on screen, but the same physical point *on the window* must still map to
-/// the same surface-local coordinate -- otherwise clicks would drift as you pan.
 #[test]
 fn pan_does_not_disturb_surface_coordinates() {
     let mut f = fixture_with_window();
@@ -250,16 +200,12 @@ fn pan_does_not_disturb_surface_coordinates() {
 
         let (min, max) = window_bbox(&mut f)
             .unwrap_or_else(|| panic!("no window at zoom {zoom}"));
-        // Probe the centre, which stays on the window even when the edges are clipped.
         let probe = Point::<f64, Logical>::from(((min.x + max.x) / 2., (min.y + max.y) / 2.));
 
         let before = delivered_at(&mut f, probe)
             .unwrap_or_else(|| panic!("no surface under {probe:?} at zoom {zoom}"));
 
         let delta = Point::<f64, Logical>::from((-24., 12.));
-        // The pointer-drag primitive, deliberately. This test is about the transform, not the
-        // gesture: keyboard steps accelerate when repeated, so a second `camera_pan_by` in this
-        // loop would move further than `delta` and the probe below would miss.
         f.zen().layout.camera_pan_immediate(delta);
 
         let after = delivered_at(&mut f, probe + delta)

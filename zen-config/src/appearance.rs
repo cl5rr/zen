@@ -11,7 +11,6 @@ use crate::FloatOrInt;
 pub const DEFAULT_BACKGROUND_COLOR: Color = Color::from_array_unpremul([0.25, 0.25, 0.25, 1.]);
 pub const DEFAULT_BACKDROP_COLOR: Color = Color::from_array_unpremul([0.15, 0.15, 0.15, 1.]);
 
-/// RGB color in [0, 1] with unpremultiplied alpha.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Color {
     pub r: f32,
@@ -172,7 +171,6 @@ impl From<f32> for CornerRadius {
 
 impl CornerRadius {
     pub fn fit_to(self, width: f32, height: f32) -> Self {
-        // Like in CSS: https://drafts.csswg.org/css-backgrounds/#corner-overlap
         let reduction = f32::min(
             f32::min(
                 width / (self.top_left + self.top_right),
@@ -194,7 +192,6 @@ impl CornerRadius {
     }
 
     pub fn expanded_by(mut self, width: f32) -> Self {
-        // Radius = 0 is preserved, so that square corners remain square.
         if self.top_left > 0. {
             self.top_left += width;
         }
@@ -814,7 +811,6 @@ impl From<ColorRgba> for Color {
     }
 }
 
-// Manual impl to allow both one-argument string and 4-argument RGBA forms.
 impl<S> knuffel::Decode<S> for Color
 where
     S: knuffel::traits::ErrorSpan,
@@ -823,7 +819,6 @@ where
         node: &knuffel::ast::SpannedNode<S>,
         ctx: &mut knuffel::decode::Context<S>,
     ) -> Result<Self, DecodeError<S>> {
-        // Check for unexpected type name.
         if let Some(type_name) = &node.type_name {
             ctx.emit_error(DecodeError::unexpected(
                 type_name,
@@ -832,13 +827,11 @@ where
             ));
         }
 
-        // Get the first argument.
         let mut iter_args = node.arguments.iter();
         let val = iter_args
             .next()
             .ok_or_else(|| DecodeError::missing(node, "additional argument is required"))?;
 
-        // Check for unexpected type name.
         if let Some(typ) = &val.type_name {
             ctx.emit_error(DecodeError::TypeName {
                 span: typ.span().clone(),
@@ -848,17 +841,13 @@ where
             });
         }
 
-        // Check the argument type.
         let rv = match *val.literal {
-            // If it's a string, use FromStr.
             knuffel::ast::Literal::String(ref s) => {
                 Color::from_str(s).map_err(|e| DecodeError::conversion(&val.literal, e))
             }
-            // Otherwise, fall back to the 4-argument RGBA form.
             _ => return ColorRgba::decode_node(node, ctx).map(Color::from),
         }?;
 
-        // Check for unexpected following arguments.
         if let Some(val) = iter_args.next() {
             ctx.emit_error(DecodeError::unexpected(
                 &val.literal,
@@ -867,7 +856,6 @@ where
             ));
         }
 
-        // Check for unexpected properties and children.
         for name in node.properties.keys() {
             ctx.emit_error(DecodeError::unexpected(
                 name,
@@ -895,7 +883,6 @@ where
         node: &knuffel::ast::SpannedNode<S>,
         ctx: &mut knuffel::decode::Context<S>,
     ) -> Result<Self, DecodeError<S>> {
-        // Check for unexpected type name.
         if let Some(type_name) = &node.type_name {
             ctx.emit_error(DecodeError::unexpected(
                 type_name,
@@ -906,7 +893,6 @@ where
 
         let decode_radius = |ctx: &mut knuffel::decode::Context<S>,
                              val: &knuffel::ast::Value<S>| {
-            // Check for unexpected type name.
             if let Some(typ) = &val.type_name {
                 ctx.emit_error(DecodeError::TypeName {
                     span: typ.span().clone(),
@@ -916,7 +902,6 @@ where
                 });
             }
 
-            // Decode both integers and floats.
             let radius = match *val.literal {
                 knuffel::ast::Literal::Int(ref x) => f32::from(match x.try_into() {
                     Ok(x) => x,
@@ -948,7 +933,6 @@ where
             radius
         };
 
-        // Get the first argument.
         let mut iter_args = node.arguments.iter();
         let val = iter_args
             .next()
@@ -976,7 +960,6 @@ where
             })?;
             rv.bottom_left = decode_radius(ctx, val);
 
-            // Check for unexpected following arguments.
             if let Some(val) = iter_args.next() {
                 ctx.emit_error(DecodeError::unexpected(
                     &val.literal,
@@ -986,7 +969,6 @@ where
             }
         }
 
-        // Check for unexpected properties and children.
         for name in node.properties.keys() {
             ctx.emit_error(DecodeError::unexpected(
                 name,
@@ -1067,22 +1049,10 @@ pub struct BackgroundEffectRule {
     pub saturation: Option<FloatOrInt<0, 1000>>,
 }
 
-/// Resolved background effect rule.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct BackgroundEffect {
-    /// Whether to render with xray effect (see through).
-    ///
-    /// - `None`: xray if any background effect is active
-    /// - `Some(false)`: no xray
-    /// - `Some(true)`: xray even if no other background effect is active
     pub xray: Option<bool>,
 
-    /// Whether to blur the background.
-    ///
-    /// - `None`: blur when the window/layer requests it (e.g. through ext-background-effect
-    ///   protocol)
-    /// - `Some(false)`: never blur
-    /// - `Some(true)`: always blur
     pub blur: Option<bool>,
 
     pub noise: Option<f64>,
@@ -1257,7 +1227,6 @@ mod tests {
             border.merge_with(&rule.border);
         }
 
-        // Gradient should be None because it's overwritten.
         assert_debug_snapshot!(
             (
                 border.active_gradient.is_some(),
@@ -1327,7 +1296,6 @@ mod tests {
             tab_indicator_rule.merge_with(&rule.tab_indicator);
         }
 
-        // Gradient should be None because it's overwritten.
         assert_debug_snapshot!(
             (
                 border.active_gradient.is_some(),

@@ -47,51 +47,34 @@ use crate::window::Mapped;
 #[cfg(test)]
 mod tests;
 
-/// Windows up to this size don't get scaled further down.
 const PREVIEW_MIN_SIZE: f64 = 16.;
 
-/// Border width on the selected window preview.
 const BORDER: f64 = 2.;
 
-/// Gap from the window preview to the window title.
 const TITLE_GAP: f64 = 14.;
 
-/// Gap between thumbnails.
 const GAP: f64 = 16.;
 
-/// How much of the next window will always peek from the side of the screen.
 const STRUT: f64 = 192.;
 
-/// Padding in the scope indication panel.
 const PANEL_PADDING: i32 = 12;
 
-/// Border size of the scope indication panel.
 const PANEL_BORDER: i32 = 4;
 
-/// Backdrop color behind the previews.
 const BACKDROP_COLOR: Color32F = Color32F::new(0., 0., 0., 0.8);
 
-/// Font used to render the window titles.
 const FONT: &str = "sans 14px";
 
-/// Scopes in the order they are cycled through.
-///
-/// Count must match one defined in `generate_scope_panels()`.
 static SCOPE_CYCLE: [MruScope; 3] = [MruScope::All, MruScope::Workspace, MruScope::Output];
 
-/// Window MRU traversal context.
 #[derive(Debug)]
 pub struct WindowMru {
-    /// Windows in MRU order.
     thumbnails: Vec<Thumbnail>,
 
-    /// Id of the currently selected window.
     current_id: Option<MappedId>,
 
-    /// Current scope.
     scope: MruScope,
 
-    /// Current filter.
     app_id_filter: Option<String>,
 }
 
@@ -133,49 +116,35 @@ enum UiState {
         anim: Animation,
     },
     Closed {
-        /// Scope used when the UI was last opened.
         previous_scope: MruScope,
     },
 }
 
-/// State of an opened MRU UI.
 struct Inner {
-    /// List of Window Ids to display in the MRU UI.
     wmru: WindowMru,
 
-    /// View position relative to the leftmost visible window.
     view_pos: ViewPos,
 
-    // If true, don't automatically move the current thumbnail in-view. Set on pointer motion.
     freeze_view: bool,
 
-    /// Animation clock.
     clock: Clock,
 
-    /// Current config.
     config: Rc<RefCell<Config>>,
 
-    /// Time when the UI should appear.
     open_at: Duration,
 
-    /// Output the UI was opened on.
     output: Output,
 
-    /// Scope panel textures.
     scope_panel: RefCell<ScopePanel>,
 
-    /// Backdrop buffers for each output.
     backdrop_buffers: RefCell<HashMap<Output, SolidColorBuffer>>,
 
-    /// Offscreen buffer for the closing fade animation on the main output.
     offscreen: OffscreenBuffer,
 }
 
 #[derive(Debug)]
 enum ViewPos {
-    /// The view position is static.
     Static(f64),
-    /// The view position is animating.
     Animation(Animation),
 }
 
@@ -187,7 +156,6 @@ struct MoveAnimation {
 
 type MruTexture = TextureBuffer<GlesTexture>;
 
-/// Cached title texture.
 #[derive(Debug, Default)]
 struct TitleTexture {
     title: String,
@@ -195,7 +163,6 @@ struct TitleTexture {
     texture: Option<Option<MruTexture>>,
 }
 
-/// Cached scope panel textures.
 #[derive(Debug, Default)]
 struct ScopePanel {
     scale: f64,
@@ -206,18 +173,11 @@ struct ScopePanel {
 struct Thumbnail {
     id: MappedId,
 
-    /// Focus timestamp, if any.
     timestamp: Option<Duration>,
-    /// Whether the window is on the current MRU workspace.
     on_current_workspace: bool,
-    /// Whether the window is on the current MRU output.
     on_current_output: bool,
 
-    /// Cached app ID of the window.
-    ///
-    /// Currently not updated live to avoid having to refilter windows.
     app_id: Option<String>,
-    /// Cached size of the window.
     size: Size<i32, Logical>,
 
     clock: Clock,
@@ -271,11 +231,9 @@ impl Thumbnail {
         self.move_animation.take_if(|a| a.anim.is_done());
     }
 
-    /// Animate thumbnail motion from given location.
     fn animate_move_from_with_config(&mut self, from: f64, config: zen_config::Animation) {
         let current_offset = self.render_offset();
 
-        // Preserve the previous config if ongoing.
         let anim = self.move_animation.take().map(|ma| ma.anim);
         let anim = anim
             .map(|anim| anim.restarted(1., 0., 0.))
@@ -318,7 +276,6 @@ impl Thumbnail {
         let thumb_scale = f64::max(min_scale, thumb_scale);
         let size = size.to_f64().upscale(thumb_scale);
 
-        // Round to physical pixels.
         size.to_physical_precise_round(scale).to_logical(scale)
     }
 
@@ -368,7 +325,6 @@ impl Thumbnail {
         };
         let bob_offset = Point::new(0., bob_y);
 
-        // Clip thumbnails to their geometry.
         let radius = if mapped.sizing_mode().is_normal() {
             mapped.geometry_corner_radius()
         } else {
@@ -378,7 +334,6 @@ impl Thumbnail {
         let has_border_shader = BorderRenderElement::has_shader(ctx.renderer);
         let clip_shader = ClippedSurfaceRenderElement::shader(ctx.renderer).cloned();
         let geo = Rectangle::from_size(self.size.to_f64());
-        // FIXME: deduplicate code with Tile::render_inner()
         let clip = move |elem| match elem {
             LayoutElementRenderElement::Wayland(elem) => {
                 if let Some(shader) = clip_shader.clone() {
@@ -389,17 +344,10 @@ impl Thumbnail {
                     }
                 }
 
-                // If we don't have the shader, render it normally.
                 let elem = LayoutElementRenderElement::Wayland(elem);
                 ThumbnailRenderElement::LayoutElement(elem)
             }
             LayoutElementRenderElement::SolidColor(elem) => {
-                // In this branch we're rendering a blocked-out window with a solid
-                // color. We need to render it with a rounded corner shader even if
-                // clip_to_geometry is false, because in this case we're assuming that
-                // the unclipped window CSD already has corners rounded to the
-                // user-provided radius, so our blocked-out rendering should match that
-                // radius.
                 if radius != CornerRadius::default() && has_border_shader {
                     return BorderRenderElement::new(
                         geo.size,
@@ -417,12 +365,9 @@ impl Thumbnail {
                     .into();
                 }
 
-                // Otherwise, render the solid color as is.
                 LayoutElementRenderElement::SolidColor(elem).into()
             }
             elem @ LayoutElementRenderElement::BackgroundEffect(_) => {
-                // This is only used on popups for now. If subsurface blur is implemented, this
-                // will need to be handled somehow.
                 error!("background effect clipping is unimplemented");
                 elem.into()
             }
@@ -447,7 +392,6 @@ impl Thumbnail {
             WindowMruUiRenderElement::Thumbnail(elem)
         };
 
-        // FIXME: this could use mipmaps, for that it should be rendered through an offscreen.
         mapped.render_normal(ctx.r(), Point::new(0., 0.), s, preview_alpha, &mut |elem| {
             let elem = clip(elem);
             let elem = downscale(elem);
@@ -463,14 +407,10 @@ impl Thumbnail {
             (texture, size)
         });
 
-        // Hide title for blocked-out windows, but only after computing the title size. This way,
-        // the background and the border won't have to oscillate in size between normal and
-        // screencast renders, causing excessive damage.
         let should_block_out = ctx.target.should_block_out(mapped.rules().block_out_from);
         let title_texture = title_texture.filter(|_| !should_block_out);
 
         if let Some((texture, size)) = title_texture {
-            // Clip from the right if it doesn't fit.
             let src = Rectangle::from_size(size);
 
             let loc = preview_geo.loc
@@ -507,11 +447,9 @@ impl Thumbnail {
 
             if let Some(title_size) = title_size {
                 size.h += title_gap + title_size.h;
-                // Subtract half the padding so it looks more balanced visually.
                 size.h -= round(padding.y / 2.);
             }
 
-            // FIXME: gradient support (will require passing down correct view_rect).
             let mut color = if is_urgent {
                 config.highlight.urgent_color
             } else {
@@ -662,7 +600,6 @@ impl WindowMru {
         self.current_id = Some(if let Some(next) = next {
             next.id
         } else {
-            // We wrapped around.
             self.thumbnails().next().unwrap().id
         });
     }
@@ -676,7 +613,6 @@ impl WindowMru {
         self.current_id = Some(if let Some(next) = next {
             next.id
         } else {
-            // We wrapped around.
             self.thumbnails().next_back().unwrap().id
         });
     }
@@ -714,8 +650,6 @@ impl WindowMru {
 
             self.scope = scope;
 
-            // Try to select the same, or the first thumbnail to the left. Failing that, select the
-            // first one to the right.
             let mut id = self.first_id();
 
             for (idx, thumbnail) in self.thumbnails_with_idx() {
@@ -735,7 +669,6 @@ impl WindowMru {
 
     pub fn set_filter(&mut self, filter: MruFilter) -> Option<Option<String>> {
         if self.app_id_filter.is_some() == (filter == MruFilter::AppId) {
-            // Filter unchanged.
             return None;
         }
 
@@ -751,7 +684,6 @@ impl WindowMru {
                     Some(old.expect("verified by early return at the top"))
                 }
                 MruFilter::AppId => {
-                    // If the current thumbnail is missing an app id, we can't set the filter.
                     let current = current_thumbnail.app_id.clone()?;
                     let old = self.app_id_filter.replace(current);
                     assert!(old.is_none(), "verified by early return at the top");
@@ -759,8 +691,6 @@ impl WindowMru {
                 }
             };
 
-            // Try to select the same, or the first thumbnail to the left. Failing that, select the
-            // first one to the right.
             let mut id = self.first_id();
 
             for (idx, thumbnail) in self.thumbnails_with_idx() {
@@ -781,7 +711,6 @@ impl WindowMru {
                     Some(Some(old))
                 }
                 MruFilter::AppId => {
-                    // We don't have a current window to set the app id filter.
                     None
                 }
             }
@@ -795,12 +724,10 @@ impl WindowMru {
     fn remove_by_idx(&mut self, idx: usize) -> Option<Thumbnail> {
         let id = self.thumbnails[idx].id;
 
-        // Try to pick a different window when removing the current one.
         if self.current_id == Some(id) {
             self.forward();
         }
 
-        // If we're still on the same window, that means it's the last visible one.
         if self.current_id == Some(id) {
             self.current_id = None;
         }
@@ -808,14 +735,11 @@ impl WindowMru {
         Some(self.thumbnails.remove(idx))
     }
 
-    /// Returns the thumbnail if it's visible to the left of the currently selected one.
     fn thumbnail_left_of_current(&self, id: MappedId) -> Option<&Thumbnail> {
         for thumbnail in self.thumbnails() {
             if Some(thumbnail.id) == self.current_id {
-                // We found the current window first, so the queried one is *not* to the left.
                 return None;
             } else if thumbnail.id == id {
-                // We found the queried window first, so the current one is to the right of it.
                 return Some(thumbnail);
             }
         }
@@ -880,7 +804,6 @@ impl ViewPos {
         config: zen_config::Animation,
         clock: Clock,
     ) {
-        // FIXME: also compute and use current velocity.
         let anim = Animation::new(clock, self.current() + from, self.target(), 0., config);
         *self = ViewPos::Animation(anim);
     }
@@ -969,7 +892,6 @@ impl WindowMruUi {
         };
 
         if !inner.is_fully_open() {
-            // Hasn't displayed yet, no need to fade out.
             let UiState::Closed { previous_scope } = &mut self.state else {
                 unreachable!()
             };
@@ -1028,7 +950,6 @@ impl WindowMruUi {
         let UiState::Open(inner) = &mut self.state else {
             return None;
         };
-        // Don't handle pointer until the UI is visible.
         if !inner.is_fully_open() {
             return None;
         }
@@ -1116,7 +1037,6 @@ impl WindowMruUi {
 
         let alpha = progress.clamp(0., 1.) as f32;
 
-        // Put a backdrop above the current desktop view to contrast the thumbnails.
         let mut buffers = inner.backdrop_buffers.borrow_mut();
         let buffer = buffers.entry(output.clone()).or_default();
         buffer.resize(output_size(output));
@@ -1128,11 +1048,8 @@ impl WindowMruUi {
                 alpha,
                 Kind::Unspecified,
             )
-            // Can't wrap into WindowMruUiRenderElement::SolidColor() right here since we have
-            // different <R> generic in offscreen vs. normal path.
         };
 
-        // During the closing fade, use an offscreen to avoid transparent compositing artifacts.
         let mut pushed_offscreen = false;
         if *output == inner.output && alpha < 1. {
             let mut ctx = ctx.as_gles();
@@ -1147,16 +1064,6 @@ impl WindowMruUi {
                 .render(ctx.renderer, Scale::from(scale), &elems)
             {
                 Ok((elem, _sync, _data)) => {
-                    // FIXME: would be good to passthrough offscreen data to visible windows here.
-                    // As is, during the closing fade, windows from other workspaces stop receiving
-                    // frame callbacks.
-                    //
-                    // However, we need to refactor our offscreen data a bit to make this nicer.
-                    // Currently it supports a stack of offscreens, but not a several unrelated
-                    // offscreens showing the same window (possibly in addition to the window
-                    // itself).
-                    //
-                    // Anyhow, this is not very noticeable since Alt-Tab closing happens quickly.
                     push(WindowMruUiRenderElement::Offscreen(elem.with_alpha(alpha)));
                     pushed_offscreen = true;
                 }
@@ -1166,15 +1073,10 @@ impl WindowMruUi {
             }
         }
 
-        // When alpha is 1., render everything directly, without an offscreen.
-        //
-        // This is not used as fallback when offscreen fails to render because it looks better to
-        // hide the previews immediately than to render them with alpha = 1. during a fade-out.
         if *output == inner.output && alpha == 1. {
             inner.render(zen, ctx, &mut |elem| push(elem));
         }
 
-        // This is used for both normal elems and for other outputs.
         if !pushed_offscreen {
             push(WindowMruUiRenderElement::SolidColor(render_backdrop(alpha)));
         }
@@ -1205,7 +1107,6 @@ impl WindowMruUi {
     }
 
     pub fn opened_bindings(&mut self, mods: Modifiers) -> impl Iterator<Item = &Bind> + Clone {
-        // Fill modifiers with the current mods.
         for bind in &mut self.preset_opened_binds {
             bind.key.modifiers = mods;
         }
@@ -1240,12 +1141,10 @@ fn compute_view_offset(cur_x: f64, working_width: f64, new_col_x: f64, new_col_w
     let new_x = new_col_x;
     let new_right_x = new_col_x + new_col_width;
 
-    // If the column is already fully visible, leave the view as is.
     if cur_x <= new_x && new_right_x <= cur_x + working_width {
         return -(new_col_x - cur_x);
     }
 
-    // Otherwise, prefer the alignment that results in less motion from the current position.
     let dist_to_left = (cur_x - new_x).abs();
     let dist_to_right = ((cur_x + working_width) - new_right_x).abs();
     if dist_to_left <= dist_to_right {
@@ -1314,14 +1213,11 @@ impl Inner {
             }
             strip_width = geo.loc.x + geo.size.w;
 
-            // If we found current_geo, and the strip width is already bigger than the working
-            // width, no need to compute further.
             if current_geo.size.w != 0. && strip_width > working_width {
                 break;
             }
         }
 
-        // If the whole strip fits on screen, center it.
         if strip_width <= working_width {
             return -(output_size.w - strip_width) / 2.;
         }
@@ -1339,8 +1235,6 @@ impl Inner {
         let output_size = output_size(&self.output);
         let scale = self.output.current_scale().fractional_scale();
 
-        // If the updated window is to the left of the currently selected one, we need to offset
-        // the view position to compensate for the change in size.
         let left = self.wmru.thumbnail_left_of_current(id);
         let prev_size = left.map(|thumbnail| thumbnail.preview_size(output_size, scale));
 
@@ -1368,10 +1262,6 @@ impl Inner {
         let last_visible = self.wmru.thumbnails().next_back();
         let removing_last_visible = last_visible.is_some_and(|t| t.id == id);
 
-        // When removing the last visible thumbnail, nothing needs to be animated.
-        // - If it's not currently selected, then it can't cause changes to view position.
-        // - If it's currently selected, then the first step in removal (focusing the next window)
-        //   will wrap back to the start, and no animations should happen.
         if !removing_last_visible {
             let output_size = output_size(&self.output);
             let scale = self.output.current_scale().fractional_scale();
@@ -1386,17 +1276,13 @@ impl Inner {
 
             let config = self.config.borrow().animations.window_movement.0;
 
-            // If the removed window is to the left of the currently selected one, we need to offset
-            // the view position to compensate for the change.
             if self.wmru.thumbnail_left_of_current(id).is_some() {
                 self.view_pos.offset(-delta);
 
-                // And animate movement of windows left of it.
                 for thumbnail in self.wmru.thumbnails_mut().take_while(|t| t.id != id) {
                     thumbnail.animate_move_from_with_config(-delta, config);
                 }
             } else {
-                // Otherwise, animate movement of windows right of it.
                 for thumbnail in self.wmru.thumbnails_mut().rev().take_while(|t| t.id != id) {
                     thumbnail.animate_move_from_with_config(delta, config);
                 }
@@ -1428,13 +1314,10 @@ impl Inner {
         old_filter: Option<Option<&str>>,
     ) {
         let Some(id) = self.wmru.current_id else {
-            // If there's no current_id then the new filter caused all windows to disappear, so
-            // there's nothing to animate.
             return;
         };
         let idx = self.wmru.idx_of(id).unwrap();
 
-        // Animate opening for newly appeared thumbnails.
         let config = self.config.borrow().animations.window_open.anim;
         let old_filter = old_filter.unwrap_or(self.wmru.app_id_filter.as_deref());
         let matches_old = match_filter(old_scope, old_filter);
@@ -1612,13 +1495,9 @@ impl Inner {
             geo.loc -= padding;
             geo.size += padding.to_size().upscale(2.);
 
-            // It doesn't really matter all that much if the title texture is stale here, and it
-            // would be annoying to thread the rendering into this function. The texture might be
-            // one frame stale or so.
             if let Some(texture) = thumbnail.title_texture.borrow().get_stale() {
                 let title_size = texture.logical_size();
                 geo.size.h += title_gap + title_size.h;
-                // Subtract half the padding so it looks more balanced visually.
                 geo.size.h -= round(padding.y / 2.);
             }
 
@@ -1667,8 +1546,6 @@ fn generate_title_texture(
     let cr = cairo::Context::new(&surface)?;
     let layout = pangocairo::functions::create_layout(&cr);
     layout.context().set_round_glyph_positions(false);
-    // On Window CSD, line breaks are either stripped or replaced with the linebreak symbol anyway.
-    // No use rendering it as multiple lines.
     layout.set_single_paragraph_mode(true);
     layout.set_font_description(Some(&font));
     layout.set_text(title);
@@ -1676,7 +1553,6 @@ fn generate_title_texture(
     let (width, height) = layout.pixel_size();
     ensure!(width > 0 && height > 0);
 
-    // Guard against overly long window titles.
     let width = min(width, 16383);
     let height = min(height, 16383);
 
@@ -1730,7 +1606,6 @@ fn generate_scope_panels(
         let span_shortcut = "<span face='mono' bgcolor='#2C2C2C' letter_spacing='5000'><b>";
         let span_shortcut_end = "</b></span>";
 
-        // Starts with a zero-width space to make letter_spacing work on the left.
         let mut buf =
             format!("\u{200B}{span_unselected}{span_shortcut}S{span_shortcut_end}cope:{span_end}");
 
@@ -1753,7 +1628,6 @@ fn generate_scope_panels(
         buf
     }
 
-    // Can't wait for array::try_map()
     Ok([
         render_panel(renderer, scale, &make_panel_text(0))?,
         render_panel(renderer, scale, &make_panel_text(1))?,
@@ -1768,8 +1642,6 @@ fn render_panel(renderer: &mut GlesRenderer, scale: f64, text: &str) -> anyhow::
     font.set_absolute_size(to_physical_precise_round(scale, font.size()));
 
     let padding: i32 = to_physical_precise_round(scale, PANEL_PADDING);
-    // Keep the border width even to avoid blurry edges.
-    // Render to a dummy surface to determine the size.
     let surface = ImageSurface::create(cairo::Format::ARgb32, 0, 0)?;
     let cr = cairo::Context::new(&surface)?;
     let layout = pangocairo::functions::create_layout(&cr);
@@ -1823,7 +1695,6 @@ fn render_panel(renderer: &mut GlesRenderer, scale: f64, text: &str) -> anyhow::
     Ok(buffer)
 }
 
-/// Returns key bindings available when the MRU UI is open.
 fn make_preset_opened_binds() -> Vec<Bind> {
     let mut rv = Vec::new();
 
@@ -1831,7 +1702,6 @@ fn make_preset_opened_binds() -> Vec<Bind> {
         rv.push(Bind {
             key: Key {
                 trigger: Trigger::Keysym(trigger),
-                // The modifier is filled dynamically.
                 modifiers: Modifiers::empty(),
             },
             action,
@@ -1851,8 +1721,6 @@ fn make_preset_opened_binds() -> Vec<Bind> {
     push(Keysym::w, Action::MruSetScope(MruScope::Workspace));
     push(Keysym::s, Action::MruCycleScope);
 
-    // Leave these in since they are the most expected and generally uncontroversial keys, so that
-    // they work even if these actions are absent from the normal binds.
     push(Keysym::Home, Action::MruFirst);
     push(Keysym::End, Action::MruLast);
     push(
@@ -1875,9 +1743,6 @@ fn make_preset_opened_binds() -> Vec<Bind> {
     rv
 }
 
-/// Returns dynamic key bindings available when the MRU UI is open.
-///
-/// These ones are generated based on the normal bindings.
 fn make_dynamic_opened_binds(config: &Config) -> Vec<Bind> {
     let mut binds: HashMap<Trigger, Vec<Bind>> = HashMap::new();
 
@@ -1914,7 +1779,6 @@ fn make_dynamic_opened_binds(config: &Config) -> Vec<Bind> {
 
     let mut rv = Vec::new();
 
-    // For each trigger, take the bind with the lowest number of modifiers.
     for binds in binds.into_values() {
         let bind = binds
             .into_iter()
@@ -1924,7 +1788,6 @@ fn make_dynamic_opened_binds(config: &Config) -> Vec<Bind> {
         rv.push(Bind {
             key: Key {
                 trigger: bind.key.trigger,
-                // The modifier is filled dynamically.
                 modifiers: Modifiers::empty(),
             },
             ..bind

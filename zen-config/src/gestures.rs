@@ -39,7 +39,7 @@ pub struct DndEdgeViewScroll {
 impl Default for DndEdgeViewScroll {
     fn default() -> Self {
         Self {
-            trigger_width: 30., // Taken from GTK 4.
+            trigger_width: 30.,
             delay_ms: 100,
             max_speed: 1500.,
         }

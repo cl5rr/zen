@@ -66,7 +66,6 @@ impl<R: ZenRenderer> ClippedSurfaceRenderElement<R> {
         let src_size = Vec2::new(view.src.size.w as f32, view.src.size.h as f32);
 
         let transform = self.inner.transform();
-        // HACK: ??? for some reason flipped ones are fine.
         let transform = match transform {
             Transform::_90 => Transform::_270,
             Transform::_270 => Transform::_90,
@@ -84,7 +83,6 @@ impl<R: ZenRenderer> ClippedSurfaceRenderElement<R> {
 
         let input_to_geo = transform_matrix * Mat3::from_scale(elem_geo_size / geo_size)
             * Mat3::from_translation((elem_geo_loc - geo_loc) / elem_geo_size)
-            // Apply viewporter src.
             * Mat3::from_scale(buf_size / src_size)
             * Mat3::from_translation(-src_loc / buf_size)
             * y_invert;
@@ -180,10 +178,8 @@ impl<R: ZenRenderer> Element for ClippedSurfaceRenderElement<R> {
         scale: Scale<f64>,
         commit: Option<CommitCounter>,
     ) -> DamageSet<i32, Physical> {
-        // FIXME: radius changes need to cause damage.
         let damage = self.inner.damage_since(scale, commit);
 
-        // Intersect with geometry, since we're clipping by it.
         let mut geo = self.geometry.to_physical_precise_round(scale);
         geo.loc -= self.geometry(scale).loc;
         damage
@@ -195,14 +191,12 @@ impl<R: ZenRenderer> Element for ClippedSurfaceRenderElement<R> {
     fn opaque_regions(&self, scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
         let regions = self.inner.opaque_regions(scale);
 
-        // Intersect with geometry, since we're clipping by it.
         let mut geo = self.geometry.to_physical_precise_round(scale);
         geo.loc -= self.geometry(scale).loc;
         let regions = regions
             .into_iter()
             .filter_map(|rect| rect.intersection(geo));
 
-        // Subtract the rounded corners.
         if self.corner_radius == CornerRadius::default() {
             regions.collect()
         } else {
@@ -253,8 +247,6 @@ impl RenderElement<GlesRenderer> for ClippedSurfaceRenderElement<GlesRenderer> {
     }
 
     fn underlying_storage(&self, _renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
-        // If scanout for things other than Wayland buffers is implemented, this will need to take
-        // the target GPU into account.
         None
     }
 }
@@ -283,8 +275,6 @@ impl<'render> RenderElement<TtyRenderer<'render>>
         &self,
         _renderer: &mut TtyRenderer<'render>,
     ) -> Option<UnderlyingStorage<'_>> {
-        // If scanout for things other than Wayland buffers is implemented, this will need to take
-        // the target GPU into account.
         None
     }
 }
@@ -295,7 +285,6 @@ impl RoundedCornerDamage {
             return;
         }
 
-        // FIXME: make the damage granular.
         self.corner_radius = corner_radius;
         self.damage.damage_all();
     }

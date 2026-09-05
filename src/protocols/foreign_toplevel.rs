@@ -56,7 +56,6 @@ struct ToplevelData {
 
     ext_list_instances: HashSet<ExtForeignToplevelHandleV1>,
     wlr_management_instances: HashMap<ZwlrForeignToplevelHandleV1, Vec<WlOutput>>,
-    // FIXME: parent.
 }
 
 #[derive(Clone)]
@@ -95,7 +94,6 @@ pub fn refresh(state: &mut State) {
 
     let protocol_state = &mut state.zen.foreign_toplevel_state;
 
-    // Handle closed windows.
     protocol_state.toplevels.retain(|surface, data| {
         if state.zen.layout.find_window_and_output(surface).is_some() {
             return true;
@@ -112,10 +110,6 @@ pub fn refresh(state: &mut State) {
         false
     });
 
-    // Handle new and existing windows.
-    //
-    // Save the focused window for last, this way when the focus changes, we will first deactivate
-    // the previous window and only then activate the newly focused window.
     let mut focused = None;
     state.zen.layout.with_windows(|mapped, output, _, _| {
         let toplevel = mapped.toplevel();
@@ -142,7 +136,6 @@ pub fn refresh(state: &mut State) {
         });
     });
 
-    // Finally, refresh the focused window.
     if let Some((identifier, window, output)) = focused {
         let toplevel = window.toplevel().expect("no X11 support");
         let wl_surface = toplevel.wl_surface();
@@ -203,7 +196,6 @@ fn refresh_toplevel(
 
     match protocol_state.toplevels.entry(wl_surface.clone()) {
         Entry::Occupied(entry) => {
-            // Existing window, check if anything changed.
             let data = entry.into_mut();
 
             let mut new_title = None;
@@ -283,12 +275,10 @@ fn refresh_toplevel(
             }
 
             for outputs in data.wlr_management_instances.values_mut() {
-                // Clean up dead wl_outputs.
                 outputs.retain(|x| x.is_alive());
             }
         }
         Entry::Vacant(entry) => {
-            // New window, start tracking it.
             let mut data = ToplevelData {
                 identifier,
                 title: role.title.clone(),
@@ -437,7 +427,6 @@ where
             ext_foreign_toplevel_list_v1::Request::Stop => {
                 resource.finished();
 
-                // remove the instance here so we won't send any more events.
                 let state = state.foreign_toplevel_manager_state();
                 state.ext_list_instances.remove(resource);
             }
@@ -447,7 +436,6 @@ where
     }
 
     fn destroyed(&self, state: &mut D, _client: ClientId, resource: &ExtForeignToplevelListV1) {
-        // also remove the instance here, in case `stop` was never sent, e.g. sudden disconnect.
         let state = state.foreign_toplevel_manager_state();
         state.ext_list_instances.remove(resource);
     }
@@ -527,7 +515,6 @@ where
             zwlr_foreign_toplevel_manager_v1::Request::Stop => {
                 resource.finished();
 
-                // remove the instance here so we won't send any more events.
                 let state = state.foreign_toplevel_manager_state();
                 state.wlr_management_instances.remove(resource);
             }
@@ -536,7 +523,6 @@ where
     }
 
     fn destroyed(&self, state: &mut D, _client: ClientId, resource: &ZwlrForeignToplevelManagerV1) {
-        // also remove the instance here, in case `stop` was never sent, e.g. sudden disconnect.
         let state = state.foreign_toplevel_manager_state();
         state.wlr_management_instances.remove(resource);
     }
@@ -608,14 +594,6 @@ fn to_state_vec(states: &ToplevelStateSet, has_focus: bool) -> ArrayVec<u32, 3> 
         rv.push(zwlr_foreign_toplevel_handle_v1::State::Fullscreen as u32);
     }
 
-    // HACK: wlr-foreign-toplevel-management states:
-    //
-    // These have the same meaning as the states with the same names defined in xdg-toplevel
-    //
-    // However, clients such as sfwbar and fcitx seem to treat the activated state as keyboard
-    // focus, i.e. they don't expect multiple windows to have it set at once. Even Waybar which
-    // handles multiple activated windows correctly uses it in its design in such a way that
-    // keyboard focus would make more sense. Let's do what the clients expect.
     if has_focus {
         rv.push(zwlr_foreign_toplevel_handle_v1::State::Activated as u32);
     }

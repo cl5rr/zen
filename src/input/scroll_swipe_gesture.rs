@@ -1,9 +1,3 @@
-//! Swipe gesture from scroll events.
-//!
-//! Tracks when to begin, update, and end a swipe gesture from pointer axis events, also whether
-//! the gesture is vertical or horizontal. Necessary because libinput only provides touchpad swipe
-//! gesture events for 3+ fingers.
-
 #[derive(Debug)]
 pub struct ScrollSwipeGesture {
     ongoing: bool,

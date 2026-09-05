@@ -1,9 +1,5 @@
-// We need to implement RenderElement manually due to AsGlesFrame requirement.
-// This macro does it for us.
 #[macro_export]
 macro_rules! zen_render_elements {
-    // The two callable variants: with <R> and without <R>. They include From impls because nested
-    // repetitions ($type and $variant with + and $R with ?) don't work properly.
     ($name:ident<R> => { $($variant:ident = $type:ty),+ $(,)? }) => {
         $crate::zen_render_elements!(@impl $name () ($name<R>) => { $($variant = $type),+ });
 
@@ -24,10 +20,6 @@ macro_rules! zen_render_elements {
         })+
     };
 
-    // The internal variant that generates most of the code. $name_no_R and $name_R are necessary
-    // for the impl RenderElement<SomeRenderer> for $name<SomeRenderer>: since $R does not appear
-    // in this line, we cannot condition based on $R like elsewhere, so we condition on duplicate
-    // names instead. Like this: $($name_R<SomeRenderer>)? $($name_no_R)? so only one is chosen.
     (@impl $name:ident ($($name_no_R:ident)?) ($($name_R:ident<$R:ident>)?) => { $($variant:ident = $type:ty),+ }) => {
         #[allow(clippy::large_enum_variant)]
         #[derive(Debug)]

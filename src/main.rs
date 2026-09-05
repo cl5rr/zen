@@ -39,7 +39,6 @@ static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
     tracy_client::ProfiledAllocator::new(std::alloc::System, 100);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Set backtrace defaults if not set.
     if env::var_os("RUST_BACKTRACE").is_none() {
         env::set_var("RUST_BACKTRACE", "1");
         REMOVE_ENV_RUST_BACKTRACE.store(true, Ordering::Relaxed);
@@ -71,10 +70,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     if cli.session {
-        // If we're starting as a session, assume that the intention is to start on a TTY unless
-        // this is a WSL environment. Remove DISPLAY, WAYLAND_DISPLAY or WAYLAND_SOCKET from our
-        // environment if they are set, since they will cause the winit backend to be selected
-        // instead.
         if env::var_os("WSL_DISTRO_NAME").is_none() {
             if env::var_os("DISPLAY").is_some() {
                 warn!("running as a session but DISPLAY is set, removing it");
@@ -90,13 +85,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // Set the current desktop for xdg-desktop-portal.
         env::set_var("XDG_CURRENT_DESKTOP", "zen");
-        // Ensure the session type is set to Wayland for xdg-autostart and Qt apps.
         env::set_var("XDG_SESSION_TYPE", "wayland");
     }
 
-    // Handle subcommands.
     if let Some(subcommand) = cli.subcommand {
         match subcommand {
             Sub::Validate { config } => {
@@ -136,23 +128,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Needs to be done before starting Tracy, so that it applies to Tracy's threads.
     zen::utils::signals::block_early().unwrap();
 
-    // Avoid starting Tracy for the `zen msg` code path since starting/stopping Tracy is a bit
-    // slow.
     tracy_client::Client::start();
 
-    // In on-demand mode, we must shut down Tracy manually to terminate the connection cleanly.
-    // Do it from a Drop impl here, so that it runs after the Drop code for all of the state created
-    // below, because some of those Drop impls themselves create Tracy spans.
     let _shutdown_tracy = ShutdownTracy;
 
     info!("starting version {}", &version());
 
-    // Load the config.
     let config_path = config_path(cli.config);
-    // Don't let children inherit these; they would load ZEN's config.
     env::remove_var("ZEN_CONFIG");
     let (config_created_at, config_load_result) = config_path.load_or_create();
     let config_errored = config_load_result.config.is_err();
@@ -168,16 +152,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     store_and_increase_nofile_rlimit();
 
-    // Create the main event loop.
     let mut event_loop = EventLoop::<State>::try_new().unwrap();
 
-    // Handle Ctrl+C and other signals.
     zen::utils::signals::listen(&event_loop.handle());
 
-    // Create the compositor.
     let display = Display::new().unwrap();
 
-    // Increase the buffer size so that it's harder to crash a frozen client with a 1000 Hz mouse.
     set_default_max_buffer_size(&display, 1024 * 1024);
 
     let mut state = State::new(
@@ -191,7 +171,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .unwrap();
 
-    // Set WAYLAND_DISPLAY for children.
     let socket_name = state.zen.socket_name.as_deref().unwrap();
     env::set_var("WAYLAND_DISPLAY", socket_name);
     info!(
@@ -199,14 +178,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         socket_name.to_string_lossy()
     );
 
-    // Set ZEN_SOCKET for children.
     if let Some(ipc) = &state.zen.ipc_server {
         let socket_path = ipc.socket_path.as_deref().unwrap();
         env::set_var(SOCKET_PATH_ENV, socket_path);
         info!("IPC listening on: {}", socket_path.to_string_lossy());
     }
 
-    // Setup xwayland-satellite integration.
     xwayland::satellite::setup(&mut state);
     if let Some(satellite) = &state.zen.satellite {
         let name = satellite.display_name();
@@ -214,15 +191,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         env::set_var("DISPLAY", name);
         info!("listening on X11 socket: {name}");
     } else {
-        // Avoid spawning children in the host X11.
         env::remove_var("DISPLAY");
     }
 
     if cli.session {
-        // We're starting as a session. Import our variables.
         import_environment();
 
-        // Inhibit power key handling so we can suspend on it.
         #[cfg(feature = "dbus")]
         if !state.zen.config.borrow().input.disable_power_key_handling {
             if let Err(err) = state.zen.inhibit_power_key() {
@@ -240,12 +214,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if env::var_os("ZEN_DISABLE_SYSTEM_MANAGER_NOTIFY").is_none_or(|x| x != "1") {
-        // Notify systemd we're ready.
         if let Err(err) = sd_notify::notify(&[NotifyState::Ready]) {
             warn!("error notifying systemd: {err:?}");
         };
 
-        // Send ready notification to the NOTIFY_FD file descriptor.
         if let Err(err) = notify_fd() {
             warn!("error notifying fd: {err:?}");
         }
@@ -253,7 +225,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     watcher::setup(&mut state, &config_path, config_includes);
 
-    // Spawn commands from cli and auto-start.
     spawn(cli.command, None);
 
     for elem in spawn_at_startup {
@@ -263,7 +234,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         spawn_sh(elem.command, None);
     }
 
-    // Show the config error notification right away if needed.
     if config_errored {
         state.zen.config_error_notification.show();
         state.ipc_config_loaded(true);
@@ -271,7 +241,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         state.zen.config_error_notification.show_created(path);
     }
 
-    // Run the compositor.
     event_loop
         .run(None, &mut state, |state| state.refresh_and_flush_clients())
         .unwrap();
@@ -311,8 +280,6 @@ fn import_environment() {
             ),
         ])
         .spawn();
-    // Wait for the import process to complete, otherwise services will start too fast without
-    // environment variables available.
     match rv {
         Ok(mut child) => match child.wait() {
             Ok(status) => {
@@ -365,7 +332,6 @@ fn config_path(cli_path: Option<PathBuf>) -> ConfigPath {
             system_path,
         }
     } else {
-        // Couldn't find the home directory, or whatever.
         ConfigPath::Explicit(system_path)
     }
 }
@@ -382,29 +348,21 @@ fn notify_fd() -> anyhow::Result<()> {
     Ok(())
 }
 
-// The wayland-server crate has set_default_max_buffer_size() under a libwayland_1_23 feature, but
-// this hard-requires libwayland-server >= 1.23 which is not present on e.g. Ubuntu 24.04. Since
-// calling this is an optional enhancement, do it optionally at runtime.
 fn set_default_max_buffer_size(display: &Display<State>, size: usize) {
     use std::ffi::c_void;
 
     unsafe {
-        // RTLD_NOLOAD ensures we only get a handle to the libwayland-server that wayland-rs has
-        // already loaded into this process, rather than potentially pulling in a different copy.
         let lib = libc::dlopen(
             c"libwayland-server.so.0".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_NOLOAD,
         );
         if lib.is_null() {
-            // It's not really expected that this can happen, maybe if some distro changes the
-            // library name?
             warn!("cannot set default max buffer size: libwayland-server.so.0 is not loaded");
             return;
         }
 
         let sym = libc::dlsym(lib, c"wl_display_set_default_max_buffer_size".as_ptr());
         if sym.is_null() {
-            // Expected on libwayland-server < 1.23.
             trace!("wl_display_set_default_max_buffer_size is missing; skipping");
         } else {
             let func: unsafe extern "C" fn(*mut c_void, libc::size_t) = std::mem::transmute(sym);

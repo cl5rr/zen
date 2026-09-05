@@ -9,40 +9,33 @@ pub struct Resources {
 }
 
 static INSTANCED_VERTS: [ffi::types::GLfloat; 8] = [
-    1.0, 0.0, // top right
-    0.0, 0.0, // top left
-    1.0, 1.0, // bottom right
-    0.0, 1.0, // bottom left
+    1.0, 0.0,
+    0.0, 0.0,
+    1.0, 1.0,
+    0.0, 1.0,
 ];
 
-/// Vertices for rendering individual triangles.
 const MAX_RECTS_PER_DRAW: usize = 10;
 const TRIANGLE_VERTS: [ffi::types::GLfloat; 12 * MAX_RECTS_PER_DRAW] = triangle_verts();
 const fn triangle_verts() -> [ffi::types::GLfloat; 12 * MAX_RECTS_PER_DRAW] {
     let mut verts = [0.; 12 * MAX_RECTS_PER_DRAW];
     let mut i = 0;
     loop {
-        // Top Left.
         verts[i * 12] = 0.0;
         verts[i * 12 + 1] = 0.0;
 
-        // Bottom left.
         verts[i * 12 + 2] = 0.0;
         verts[i * 12 + 3] = 1.0;
 
-        // Bottom right.
         verts[i * 12 + 4] = 1.0;
         verts[i * 12 + 5] = 1.0;
 
-        // Top left.
         verts[i * 12 + 6] = 0.0;
         verts[i * 12 + 7] = 0.0;
 
-        // Bottom right.
         verts[i * 12 + 8] = 1.0;
         verts[i * 12 + 9] = 1.0;
 
-        // Top right.
         verts[i * 12 + 10] = 1.0;
         verts[i * 12 + 11] = 0.0;
 

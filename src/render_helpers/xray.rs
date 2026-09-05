@@ -23,22 +23,16 @@ use crate::utils::region::TransformedRegion;
 
 #[derive(Debug)]
 pub struct Xray {
-    // The buffers are per-render-target to avoid constant rerendering when screencasting.
     pub background: [Rc<RefCell<EffectBuffer>>; RenderTarget::COUNT],
     pub backdrop: [Rc<RefCell<EffectBuffer>>; RenderTarget::COUNT],
     pub backdrop_color: Color32F,
     pub workspaces: Vec<(Rectangle<f64, Logical>, Color32F)>,
 }
 
-/// Position for drawing xray background.
 #[derive(Debug, Clone, Copy)]
 pub struct XrayPos {
-    /// Position of geometry relative to the backdrop in zoomed coordinates.
-    ///
-    /// Should be upscaled by `zoom` to get position in backdrop coordinates.
     pub pos_in_backdrop: Point<f64, Logical>,
 
-    /// Zoom factor between backdrop coordinates and geometry.
     pub zoom: f64,
 }
 
@@ -135,15 +129,8 @@ impl Xray {
             let buf_size = background.logical_size();
 
             for (ws_geo, bg_color) in &self.workspaces {
-                // If the background color is opaque, check if the workspace fully covers the
-                // element. In this case, we will skip the backdrop element since it's fully
-                // covered.
-                //
-                // FIXME: also implement some way to check if the background elements are fully
-                // covered in opaque regions, and not just the zen background color is opaque
                 let crop = if bg_color.is_opaque() && ws_geo.contains_rect(geo_in_backdrop) {
                     skip_backdrop = true;
-                    // No need to intersect, we know it's fully covered.
                     Some(geo_in_backdrop)
                 } else {
                     ws_geo.intersection(geo_in_backdrop)
@@ -153,14 +140,6 @@ impl Xray {
                     continue;
                 };
 
-                // If crop contains the intersection with backdrop, then the workspace fully
-                // covers the backdrop, so we can skip the backdrop.
-                //
-                // This can happen when the overview is closed (so workspaces align left/right with
-                // the backdrop) and the window is peeking out off screen to the side. In this
-                // case, this off-screen part is on top of nothing, neither workspace nor backdrop,
-                // but since the window doesn't fully cover the workspace, the check above doesn't
-                // skip the backdrop.
                 if bg_color.is_opaque()
                     && intersection_with_backdrop
                         .is_some_and(|backdrop| crop.contains_rect(backdrop))
@@ -168,8 +147,6 @@ impl Xray {
                     skip_backdrop = true;
                 }
 
-                // This can be different from zoom for surfaces that do not scale with
-                // workspaces, e.g. layer-shell top and overlay layer.
                 let ws_zoom = ws_geo.size / buf_size;
 
                 let src = Rectangle::new(crop.loc - ws_geo.loc, crop.size).downscale(ws_zoom);
@@ -207,7 +184,6 @@ impl Xray {
             }
         }
 
-        // If the backdrop is fully covered by opaque background, we can skip it.
         if skip_backdrop {
             return;
         }
@@ -290,8 +266,6 @@ impl Element for XrayElement {
     }
 
     fn opaque_regions(&self, _scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
-        // FIXME: if bg_color alpha is 1 then compute opaque regions here taking corners into
-        // account
         OpaqueRegions::default()
     }
 }
@@ -315,18 +289,15 @@ impl RenderElement<GlesRenderer> for XrayElement {
             }
         };
 
-        // FIXME: avoid reallocating a fresh Vec here somehow.
         let mut filtered_damage = Vec::new();
         let damage = if let Some(subregion) = &self.subregion {
             let src_to_geo = self.geometry.size / self.src.size;
 
-            // Compute crop in geometry coordinates.
             let mut crop = src;
             crop.loc -= self.src.loc;
             crop = crop.upscale(src_to_geo);
             let mut crop = crop.to_logical(1., Transform::Normal, &Size::default());
 
-            // Then convert to subregion coordinates.
             crop.loc += self.geometry.loc;
 
             subregion.filter_damage(crop, dst, damage, &mut filtered_damage);
@@ -347,7 +318,6 @@ impl RenderElement<GlesRenderer> for XrayElement {
             src,
             dst,
             damage,
-            // FIXME: opaque regions need to be filtered like damage.
             &[],
             Transform::Normal,
             1.,

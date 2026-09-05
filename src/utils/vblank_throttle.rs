@@ -1,8 +1,3 @@
-//! VBlank throttling.
-//!
-//! Some buggy drivers deliver VBlanks way earlier than necessary. This helper throttles the VBlank
-//! in such cases to avoid tearing and to get more consistent timings.
-
 use std::time::Duration;
 
 use calloop::timer::{TimeoutAction, Timer};

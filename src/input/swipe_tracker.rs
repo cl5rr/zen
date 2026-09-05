@@ -25,10 +25,7 @@ impl SwipeTracker {
         }
     }
 
-    /// Pushes a new reading into the tracker.
     pub fn push(&mut self, delta: f64, timestamp: Duration) {
-        // For the events that we care about, timestamps should always increase
-        // monotonically.
         if let Some(last) = self.history.back() {
             if timestamp < last.timestamp {
                 trace!(
@@ -45,12 +42,10 @@ impl SwipeTracker {
         self.trim_history();
     }
 
-    /// Returns the current gesture position.
     pub fn pos(&self) -> f64 {
         self.pos
     }
 
-    /// Computes the current gesture velocity.
     pub fn velocity(&self) -> f64 {
         let (Some(first), Some(last)) = (self.history.front(), self.history.back()) else {
             return 0.;
@@ -65,7 +60,6 @@ impl SwipeTracker {
         total_delta / total_time
     }
 
-    /// Computes the gesture end position after decelerating to a halt.
     pub fn projected_end_pos(&self) -> f64 {
         let vel = self.velocity();
         self.pos - vel / (1000. * DECELERATION_TOUCHPAD.ln())

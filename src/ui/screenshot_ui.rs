@@ -43,11 +43,6 @@ const TEXT_SHOW_P: &str =
     "Press <span face='mono' bgcolor='#2C2C2C'> Space </span> to save the screenshot.\n\
      Press <span face='mono' bgcolor='#2C2C2C'> P </span> to show the pointer.";
 
-// Ideally the screenshot UI should support cross-output selections. However, that poses some
-// technical challenges when the outputs have different scales and such. So, this implementation
-// allows only single-output selections for now.
-//
-// As a consequence of this, selection coordinates are in output-local coordinate space.
 #[allow(clippy::large_enum_variant)]
 pub enum ScreenshotUi {
     Closed {
@@ -67,12 +62,8 @@ pub enum ScreenshotUi {
     },
 }
 
-/// State for moving the selection (as opposed to just drawing).
 pub struct MoveState {
-    // Cursor offset from selection.1 when starting the move.
     pointer_offset: Point<i32, Physical>,
-    // If the move is initiated by a touch, this is the slot. If `None`, the move was initiated by
-    // holding Space.
     touch_slot: Option<TouchSlot>,
 }
 
@@ -90,7 +81,6 @@ pub struct OutputData {
     size: Size<i32, Physical>,
     scale: f64,
     transform: Transform,
-    // Output, screencast, screen capture.
     screenshot: [OutputScreenshot; 3],
     buffers: [SolidColorBuffer; 8],
     locations: [Point<i32, Physical>; 8],
@@ -138,7 +128,6 @@ impl ScreenshotUi {
     pub fn open(
         &mut self,
         renderer: &mut GlesRenderer,
-        // Output, screencast, screen capture.
         screenshots: HashMap<Output, [OutputScreenshot; 3]>,
         default_output: Output,
         show_pointer: bool,
@@ -300,7 +289,6 @@ impl ScreenshotUi {
                     });
                 }
             } else {
-                // Only clear if moving with Space.
                 if let Some(MoveState {
                     touch_slot: None, ..
                 }) = move_state
@@ -391,12 +379,6 @@ impl ScreenshotUi {
         self.update_buffers();
     }
 
-    /// Moves the screenshot selection to a different output.
-    ///
-    /// This preserves the relative position while keeping logical size. It is (intentionally) very
-    /// similar to how floating windows move across monitors, but with one difference: floating
-    /// windows can go partially outside the view, while the screenshot selection cannot. So, we
-    /// clamp it to new output bounds, trying to preserve the size if possible.
     pub fn move_to_output(&mut self, new_output: Output) {
         let Self::Open {
             selection,
@@ -566,7 +548,6 @@ impl ScreenshotUi {
             let scale = data.scale;
 
             if output == selection_output {
-                // Check if the selection is still valid. If not, reset it back to default.
                 if !Rectangle::from_size(size).contains_rect(rect) {
                     rect = Rectangle::new(
                         Point::from((size.w / 4, size.h / 4)),
@@ -645,7 +626,6 @@ impl ScreenshotUi {
         let scale = output_data.scale;
         let progress = open_anim.clamped_value().clamp(0., 1.) as f32;
 
-        // The help panel goes on top.
         if let Some((show, hide)) = &output_data.panel {
             let buffer = if *show_pointer { hide } else { show };
             let alpha = if button.is_dragging_selection() {
@@ -678,7 +658,6 @@ impl ScreenshotUi {
             push(elem.into());
         }
 
-        // The screenshot itself goes last.
         let index = match target {
             RenderTarget::Output => 0,
             RenderTarget::Screencast => 1,
@@ -715,7 +694,6 @@ impl ScreenshotUi {
 
         let screenshot = &data.screenshot[0];
 
-        // Composite the pointer on top if needed.
         let mut tex_rect = None;
         if *show_pointer {
             if let Some(pointer) = screenshot.pointer.clone() {
@@ -749,7 +727,6 @@ impl ScreenshotUi {
         }
 
         let (texture, rect) = tex_rect.unwrap_or_else(|| (screenshot.texture.clone(), rect));
-        // The size doesn't actually matter because we're not transforming anything.
         let buf_rect = rect
             .to_logical(1)
             .to_buffer(1, Transform::Normal, &Size::from((1, 1)));
@@ -769,7 +746,6 @@ impl ScreenshotUi {
             return None;
         };
 
-        // Pressing Space while the button is down goes into origin moving rather than capture.
         if matches!(button, Button::Down { .. }) && raw == Keysym::space {
             return None;
         }
@@ -798,9 +774,6 @@ impl ScreenshotUi {
         }
     }
 
-    /// The pointer has moved to `point` relative to the current selection output.
-    ///
-    /// The point may be outside output bounds.
     pub fn pointer_motion(&mut self, point: Point<i32, Physical>, slot: Option<TouchSlot>) {
         let Self::Open {
             selection,
@@ -829,7 +802,6 @@ impl ScreenshotUi {
         }
 
         if let Some(move_state) = move_state {
-            // The cursor offset is relative to selection.1.
             let delta = point - (selection.1 + move_state.pointer_offset);
 
             let desired = rect_from_corner_points(selection.1 + delta, selection.2 + delta);
@@ -865,7 +837,6 @@ impl ScreenshotUi {
             return false;
         };
 
-        // Check if this is a second touch (different slot) while already dragging.
         if let Some(new_slot) = slot {
             if let Button::Down {
                 on_capture_button: false,
@@ -966,7 +937,6 @@ impl ScreenshotUi {
         };
 
         if touch_slot != slot {
-            // This is not our main touch, but it might be the move touch. If so, stop the move.
             if let Some(state) = move_state {
                 if state.touch_slot.is_some_and(|m_slot| Some(m_slot) == slot) {
                     *move_state = None;
@@ -979,7 +949,6 @@ impl ScreenshotUi {
         let last_pos = last_pos.clone();
         *button = Button::Up;
 
-        // Check if we released still on the capture button.
         if on_capture_button {
             let (output, point) = last_pos;
 
@@ -999,8 +968,6 @@ impl ScreenshotUi {
             }
         }
 
-        // Check if the resulting selection is zero-sized, and try to come up with a small
-        // default rectangle.
         let (output, a, b) = selection;
         let mut rect = rect_from_corner_points(*a, *b);
         if rect.size.is_empty() || rect.size == Size::from((1, 1)) {
@@ -1103,8 +1070,6 @@ pub fn rect_from_corner_points(
     let y1 = min(a.y, b.y);
     let x2 = max(a.x, b.x);
     let y2 = max(a.y, b.y);
-    // We're adding + 1 because the pointer is clamped to output size - 1, so to get the full
-    // screen worth of selection we must add back that + 1.
     Rectangle::from_extremities((x1, y1), (x2 + 1, y2 + 1))
 }
 
@@ -1139,13 +1104,11 @@ fn render_panel(
     let _span = tracy_client::span!("screenshot_ui::render_panel");
 
     let padding: i32 = to_physical_precise_round(scale, PADDING);
-    // Keep the border width even to avoid blurry edges.
     let border_width = (f64::from(BORDER) / 2. * scale).round() * 2.;
     let half_border_width = (border_width / 2.) as i32;
     let radius: i32 = to_physical_precise_round(scale, RADIUS);
     let circle_stroke: f64 = to_physical_precise_round(scale, 2.);
 
-    // Add 2 px of spacing to separate the backgrounds of the "Space" and "P" keys.
     let spacing = to_physical_precise_round::<i32>(scale, 2) * 1024;
 
     let mut font = FontDescription::from_string(FONT);

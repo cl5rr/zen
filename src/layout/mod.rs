@@ -1,36 +1,3 @@
-//! Window layout logic.
-//!
-//! Zen implements scrollable tiling with dynamic workspaces. The scrollable tiling is mostly
-//! orthogonal to any particular workspace system, though outputs living in separate coordinate
-//! spaces suggest per-output workspaces.
-//!
-//! I chose a dynamic workspace system because I think it works very well. In particular, it works
-//! naturally across outputs getting added and removed, since workspaces can move between outputs
-//! as necessary.
-//!
-//! In the layout, one output (the first one to be added) is designated as *primary*. This is where
-//! workspaces from disconnected outputs will move. Currently, the primary output has no other
-//! distinction from other outputs.
-//!
-//! Where possible, zen tries to follow these principles with regards to outputs:
-//!
-//! 1. Disconnecting and reconnecting the same output must not change the layout.
-//!    * This includes both secondary outputs and the primary output.
-//! 2. Connecting an output must not change the layout for any workspaces that were never on that
-//!    output.
-//!
-//! Therefore, we implement the following logic: every workspace keeps track of which output it
-//! originated on-its *original output*. When an output disconnects, its workspaces are appended to
-//! the (potentially new) primary output, but remember their original output. Then, if the original
-//! output connects again, all workspaces originally from there move back to that output.
-//!
-//! In order to avoid surprising behavior, if the user creates or moves any new windows onto a
-//! workspace, it forgets its original output, and its current output becomes its original output.
-//! Imagine a scenario: the user works with a laptop and a monitor at home, then takes their laptop
-//! with them, disconnecting the monitor, and keeps working as normal, using the second monitor's
-//! workspace just like any other. Then they come back, reconnect the second monitor, and now we
-//! don't want an unassuming workspace to end up on it.
-
 use std::collections::HashMap;
 use std::mem;
 use std::rc::Rc;
@@ -93,16 +60,12 @@ pub mod workspace;
 #[cfg(test)]
 mod tests;
 
-/// Size changes up to this many pixels don't animate.
 pub const RESIZE_ANIMATION_THRESHOLD: f64 = 10.;
 
-/// Pointer needs to move this far to pull a window from the layout.
 const INTERACTIVE_MOVE_START_THRESHOLD: f64 = 256. * 256.;
 
-/// Opacity of interactively moved tiles targeting the scrolling layout.
 const INTERACTIVE_MOVE_ALPHA: f64 = 0.75;
 
-/// Amount of touchpad movement to toggle the overview.
 const OVERVIEW_GESTURE_MOVEMENT: f64 = 300.;
 
 const OVERVIEW_GESTURE_RUBBER_BAND: RubberBand = RubberBand {
@@ -110,22 +73,8 @@ const OVERVIEW_GESTURE_RUBBER_BAND: RubberBand = RubberBand {
     limit: 0.05,
 };
 
-/// Absolute positions on ZEN's canvas.
-///
-/// This replaced zen's `Canvas`, which stored floating-window positions as a *fraction of
-/// the working area*. That made positions output-relative and resolution-independent, which is
-/// a sensible property for a compositor whose windows always live on exactly one screen -- and
-/// exactly the wrong one for an unbounded canvas, where a window's place in the world should
-/// not shift because a monitor changed size.
-///
-/// Coordinates are plain logical pixels, bounded by [`CANVAS_LIMIT`].
 pub struct Canvas;
 
-/// How far from the origin canvas coordinates may go, in logical pixels.
-///
-/// "Infinite" in the product sense. f64 has plenty of precision left at 1e6, and no one is
-/// panning a million pixels by hand; the bound exists so that a runaway value cannot push
-/// positions into the range where float error becomes visible as jitter.
 pub const CANVAS_LIMIT: f64 = 1.0e6;
 
 zen_render_elements! {
@@ -147,37 +96,20 @@ pub enum SizingMode {
 }
 
 pub trait LayoutElement {
-    /// Type that can be used as a unique ID of this element.
     type Id: PartialEq + std::fmt::Debug + Clone;
 
-    /// Unique ID of this element.
     fn id(&self) -> &Self::Id;
 
-    /// Updates the config for the element.
     fn update_config(&mut self, blur_config: zen_config::Blur) {
         let _ = blur_config;
     }
 
-    /// Visual size of the element.
-    ///
-    /// This is what the user would consider the size, i.e. excluding CSD shadows and whatnot.
-    /// Corresponds to the Wayland window geometry size.
     fn size(&self) -> Size<i32, Logical>;
 
-    /// Returns the location of the element's buffer relative to the element's visual geometry.
-    ///
-    /// I.e. if the element has CSD shadows, its buffer location will have negative coordinates.
     fn buf_loc(&self) -> Point<i32, Logical>;
 
-    /// Checks whether a point is in the element's input region.
-    ///
-    /// The point is relative to the element's visual geometry.
     fn is_in_input_region(&self, point: Point<f64, Logical>) -> bool;
 
-    /// Renders the element at the given visual location.
-    ///
-    /// The element should be rendered in such a way that its visual geometry ends up at the given
-    /// location.
     fn render<R: ZenRenderer>(
         &self,
         mut ctx: RenderCtx<R>,
@@ -191,7 +123,6 @@ pub trait LayoutElement {
         self.render_normal(ctx.r(), location, scale, alpha, push);
     }
 
-    /// Renders the non-popup parts of the element.
     fn render_normal<R: ZenRenderer>(
         &self,
         ctx: RenderCtx<R>,
@@ -203,7 +134,6 @@ pub trait LayoutElement {
         let _ = (ctx, location, scale, alpha, push);
     }
 
-    /// Renders the popups of the element.
     fn render_popups<R: ZenRenderer>(
         &self,
         ctx: RenderCtx<R>,
@@ -216,7 +146,6 @@ pub trait LayoutElement {
         let _ = (ctx, location, scale, alpha, xray_pos, push);
     }
 
-    /// Renders the background effect behind the main surface of the element.
     #[allow(clippy::too_many_arguments)]
     fn render_background_effect(
         &self,
@@ -231,10 +160,6 @@ pub trait LayoutElement {
     ) {
     }
 
-    /// Requests the element to change its size.
-    ///
-    /// The size request is stored and will be continuously sent to the element on any further
-    /// state changes.
     fn request_size(
         &mut self,
         size: Size<i32, Logical>,
@@ -243,7 +168,6 @@ pub trait LayoutElement {
         transaction: Option<Transaction>,
     );
 
-    /// Requests the element to change size once, clearing the request afterwards.
     fn request_size_once(&mut self, size: Size<i32, Logical>, animate: bool) {
         self.request_size(size, SizingMode::Normal, animate, None);
     }
@@ -267,31 +191,12 @@ pub trait LayoutElement {
     fn configure_intent(&self) -> ConfigureIntent;
     fn send_pending_configure(&mut self);
 
-    /// The element's current sizing mode.
-    ///
-    /// This will *not* switch immediately after a [`LayoutElement::request_size()`] call.
     fn sizing_mode(&self) -> SizingMode;
 
-    /// The sizing mode that we're requesting the element to assume.
-    ///
-    /// This *will* switch immediately after a [`LayoutElement::request_size()`] call.
     fn pending_sizing_mode(&self) -> SizingMode;
 
-    /// Size previously requested through [`LayoutElement::request_size()`].
     fn requested_size(&self) -> Option<Size<i32, Logical>>;
 
-    /// Non-fullscreen size that we expect this window has or will shortly have.
-    ///
-    /// This can be different from [`requested_size()`](LayoutElement::requested_size()). For
-    /// example, for floating windows this will generally return the current window size, rather
-    /// than the last size that we requested, since we want floating windows to be able to change
-    /// size freely. But not always: if we just requested a floating window to resize and it hasn't
-    /// responded to it yet, this will return the newly requested size.
-    ///
-    /// This function should never return a 0 size component. `None` means there's no known
-    /// expected size (for example, the window is fullscreen).
-    ///
-    /// The default impl is for testing only, it will not preserve the window's own size changes.
     fn expected_size(&self) -> Option<Size<i32, Logical>> {
         if self.sizing_mode().is_fullscreen() {
             return None;
@@ -318,22 +223,9 @@ pub trait LayoutElement {
         let _ = value;
     }
 
-    /// The effective geometry corner radius for this element.
-    ///
-    /// Returns zero when the element is in windowed fullscreen, since fullscreen windows have
-    /// square corners.
-    ///
-    /// This method only handles windowed fullscreen and not maximized/real fullscreen. This is
-    /// because windowed fullscreen is handled by the element itself, whereas other sizing modes
-    /// are handled externally by the Tile, so the corner radius changes for those modes is also
-    /// handled externally.
     fn geometry_corner_radius(&self) -> CornerRadius {
         let rules = self.rules();
 
-        // When windows think they're fullscreen, they square their corners.
-        //
-        // However, if the user is clipping the window to geometry, they are likely going for
-        // consistent corner radius, and want this radius to remain in windowed fullscreen.
         if self.is_windowed_fullscreen() && rules.clip_to_geometry != Some(true) {
             return CornerRadius::default();
         }
@@ -345,7 +237,6 @@ pub trait LayoutElement {
 
     fn rules(&self) -> &ResolvedWindowRules;
 
-    /// Runs periodic clean-up tasks.
     fn refresh(&self);
 
     fn take_animation_snapshot(&mut self) -> Option<LayoutElementRenderSnapshot>;
@@ -359,54 +250,26 @@ pub trait LayoutElement {
 
 #[derive(Debug)]
 pub struct Layout<W: LayoutElement> {
-    /// Monitors and workspaes in the layout.
     monitor_set: MonitorSet<W>,
-    /// Whether the layout should draw as active.
-    ///
-    /// This normally indicates that the layout has keyboard focus, but not always. E.g. when the
-    /// screenshot UI is open, it keeps the layout drawing as active.
     is_active: bool,
-    /// Map from monitor name to id of its last active workspace.
-    ///
-    /// This data is stored upon monitor removal and is used to restore the active workspace when
-    /// the monitor is reconnected.
-    ///
-    /// The workspace id does not necessarily point to a valid workspace. If it doesn't, then it is
-    /// simply ignored.
     last_active_workspace_id: HashMap<String, WorkspaceId>,
-    /// Ongoing interactive move.
     interactive_move: Option<InteractiveMoveState<W>>,
-    /// Ongoing drag-and-drop operation.
     dnd: Option<DndData<W>>,
-    /// Clock for driving animations.
     clock: Clock,
-    /// Time that we last updated render elements for.
     update_render_elements_time: Duration,
-    /// Whether the overview is open.
-    ///
-    /// This is a boolean flag that controls things like where input goes to. The actual animation
-    /// is controlled by overview_progress.
     overview_open: bool,
-    /// The overview zoom progress.
     overview_progress: Option<OverviewProgress>,
-    /// Configurable properties of the layout.
     options: Rc<Options>,
 }
 
 #[derive(Debug)]
 enum MonitorSet<W: LayoutElement> {
-    /// At least one output is connected.
     Normal {
-        /// Connected monitors.
         monitors: Vec<Monitor<W>>,
-        /// Index of the primary monitor.
         primary_idx: usize,
-        /// Index of the active monitor.
         active_monitor_idx: usize,
     },
-    /// No outputs are connected, and these are the workspaces.
     NoOutputs {
-        /// The workspaces.
         workspaces: Vec<Workspace<W>>,
     },
 }
@@ -420,7 +283,6 @@ pub struct Options {
     pub camera: zen_config::Camera,
     pub widgets: zen_config::Widgets,
     pub blur: zen_config::Blur,
-    // Debug flags.
     pub disable_resize_throttling: bool,
     pub disable_transactions: bool,
     pub deactivate_unfocused_windows: bool,
@@ -429,64 +291,36 @@ pub struct Options {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 enum InteractiveMoveState<W: LayoutElement> {
-    /// Initial rubberbanding; the window remains in the layout.
     Starting {
-        /// The window we're moving.
         window_id: W::Id,
-        /// Current pointer delta from the starting location.
         pointer_delta: Point<f64, Logical>,
-        /// Pointer location within the visual window geometry as ratio from geometry size.
-        ///
-        /// This helps the pointer remain inside the window as it resizes.
         pointer_ratio_within_window: (f64, f64),
     },
-    /// Moving; the window is no longer in the layout.
     Moving(InteractiveMoveData<W>),
 }
 
 #[derive(Debug)]
 struct InteractiveMoveData<W: LayoutElement> {
-    /// The window being moved.
     pub(self) tile: Tile<W>,
-    /// Output where the window is currently located/rendered.
     pub(self) output: Output,
-    /// Current pointer position within output.
     pub(self) pointer_pos_within_output: Point<f64, Logical>,
-    /// Window column width.
     pub(self) width: ColumnWidth,
-    /// Whether the window column was full-width.
     pub(self) is_full_width: bool,
-    /// Whether the window targets the floating layout.
     pub(self) is_floating: bool,
-    /// Pointer location within the visual window geometry as ratio from geometry size.
-    ///
-    /// This helps the pointer remain inside the window as it resizes.
     pub(self) pointer_ratio_within_window: (f64, f64),
-    /// Config overrides for the output where the window is currently located.
-    ///
-    /// Cached here to be accessible while an output is removed.
     pub(self) output_config: Option<zen_config::LayoutPart>,
-    /// Config overrides for the workspace where the window is currently located.
-    ///
-    /// To avoid sudden window changes when starting an interactive move, it will remember the
-    /// config overrides for the workspace where the move originated from. As soon as the window
-    /// moves over some different workspace though, this override will reset.
     pub(self) workspace_config: Option<(WorkspaceId, zen_config::LayoutPart)>,
 }
 
 #[derive(Debug)]
 pub struct DndData<W: LayoutElement> {
-    /// Output where the pointer is currently located.
     output: Output,
-    /// Current pointer position within output.
     pointer_pos_within_output: Point<f64, Logical>,
-    /// Ongoing DnD hold to activate something.
     hold: Option<DndHold<W>>,
 }
 
 #[derive(Debug)]
 struct DndHold<W: LayoutElement> {
-    /// Time when we started holding on the target.
     start_time: Duration,
     target: DndHoldTarget<W::Id>,
 }
@@ -504,78 +338,44 @@ pub struct InteractiveResizeData {
 
 #[derive(Debug, Clone, Copy)]
 pub enum ConfigureIntent {
-    /// A configure is not needed (no changes to server pending state).
     NotNeeded,
-    /// A configure is throttled (due to resizing too fast for example).
     Throttled,
-    /// Can send the configure if it isn't throttled externally (only size changed).
     CanSend,
-    /// Should send the configure regardless of external throttling (something other than size
-    /// changed).
     ShouldSend,
 }
 
-/// Tile that was just removed from the layout.
 pub struct RemovedTile<W: LayoutElement> {
     tile: Tile<W>,
-    /// Width of the column the tile was in.
     width: ColumnWidth,
-    /// Whether the column the tile was in was full-width.
     is_full_width: bool,
-    /// Whether the tile was floating.
     is_floating: bool,
 }
 
-/// Whether to activate a newly added window.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ActivateWindow {
-    /// Activate unconditionally.
     Yes,
-    /// Activate based on heuristics.
     #[default]
     Smart,
-    /// Do not activate.
     No,
 }
 
-/// Where to put a newly added window.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum AddWindowTarget<'a, W: LayoutElement> {
-    /// No particular preference.
     #[default]
     Auto,
-    /// On this output.
     Output(&'a Output),
-    /// On this workspace.
     Workspace(WorkspaceId),
-    /// Next to this existing window.
     NextTo(&'a W::Id),
-    /// Into this island, tiling beside what is already in it.
-    ///
-    /// Added as a new variant rather than by changing the existing ones so that every current
-    /// caller keeps compiling untouched -- see `docs/zen/PHASE4-TRIAGE.md`.
     Island(IslandId),
 }
 
-/// Type of the window hit from `window_under()`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HitType {
-    /// The hit is within a window's input region and can be used for sending events to it.
     Input {
-        /// Position of the window's buffer, in the caller's coordinate space.
         win_pos: Point<f64, Logical>,
-        /// Scale between the window's own coordinate space and the caller's.
-        ///
-        /// 1.0 means the window is rendered at native size. Greater than 1.0 means the camera
-        /// is magnifying it. A position relative to `win_pos` must be divided by this to reach
-        /// the window's own (unscaled) coordinate space.
         scale: f64,
     },
-    /// The hit can activate a window, but it is not in the input region so cannot send events.
-    ///
-    /// For example, this could be clicking on a tile border outside the window.
     Activate {
-        /// Whether the hit was on the tab indicator.
         is_tab_indicator: bool,
     },
 }
@@ -590,17 +390,13 @@ enum OverviewProgress {
 #[derive(Debug)]
 struct OverviewGesture {
     tracker: SwipeTracker,
-    /// Start point.
     start: f64,
-    /// Current progress.
     value: f64,
 }
 
-/// Layer of windows to render.
 #[derive(Clone, Copy)]
 pub enum RenderLayer {
     Normal,
-    /// Windows currently moving between workspaces.
     MovingBetweenWorkspaces,
 }
 
@@ -648,7 +444,6 @@ impl<W: LayoutElement> InteractiveMoveData<W> {
         let pos = self.pointer_pos_within_output
             - (pointer_offset_within_window + self.tile.window_loc() - self.tile.render_offset())
                 .upscale(zoom);
-        // Round to physical pixels.
         pos.to_physical_precise_round(scale).to_logical(scale)
     }
 }
@@ -672,10 +467,6 @@ impl HitType {
         self
     }
 
-    /// Scales the hit about the origin of the current coordinate space.
-    ///
-    /// Apply this *before* `offset_win_pos`: the window position scales with the camera, but
-    /// the offset that places it within the output does not. Scale first, then translate.
     pub fn scaled_by(mut self, factor: f64) -> Self {
         match &mut self {
             HitType::Input { win_pos, scale } => {
@@ -751,9 +542,6 @@ impl OverviewProgress {
 }
 
 impl RenderLayer {
-    /// Returns `true` if the render layer is [`Normal`].
-    ///
-    /// [`Normal`]: RenderLayer::Normal
     #[must_use]
     pub fn is_normal(&self) -> bool {
         matches!(self, Self::Normal)
@@ -821,32 +609,16 @@ impl<W: LayoutElement> Layout<W> {
                     if primary.workspaces[i].original_output.matches(&output) {
                         let ws = primary.workspaces.remove(i);
 
-                        // FIXME: this can be coded in a way that the workspace switch won't be
-                        // affected if the removed workspace is invisible. But this is good enough
-                        // for now.
                         if primary.workspace_switch.is_some() {
                             primary.workspace_switch = None;
                             stopped_primary_ws_switch = true;
                         }
 
-                        // The user could've closed a window while remaining on this workspace, on
-                        // another monitor. However, we will add an empty workspace in the end
-                        // instead.
                         if ws.has_windows_or_name() {
                             workspaces.push(ws);
                         }
 
                         if i <= primary.active_workspace_idx
-                            // Generally when moving the currently active workspace, we want to
-                            // fall back to the workspace above, so as not to end up on the last
-                            // empty workspace. However, with empty workspace above first, when
-                            // moving the workspace at index 1 (first non-empty), we want to stay
-                            // at index 1, so as once again not to end up on an empty workspace.
-                            //
-                            // This comes into play at compositor startup when having named
-                            // workspaces set up across multiple monitors. Without this check, the
-                            // first monitor to connect can end up with the first empty workspace
-                            // focused instead of the first named workspace.
                             && !(primary.options.layout.empty_workspace_above_first
                                 && primary.active_workspace_idx == 1)
                         {
@@ -855,11 +627,6 @@ impl<W: LayoutElement> Layout<W> {
                         }
                     }
                 }
-
-                // If we stopped a workspace switch, then we might need to clean up workspaces.
-                // Also if empty_workspace_above_first is set and there are only 2 workspaces left,
-                // both will be empty and one of them needs to be removed. clean_up_workspaces
-                // takes care of this.
 
                 if stopped_primary_ws_switch
                     || (primary.options.layout.empty_workspace_above_first
@@ -934,24 +701,16 @@ impl<W: LayoutElement> Layout<W> {
                 let mut workspaces = monitor.into_workspaces();
 
                 if monitors.is_empty() {
-                    // Removed the last monitor.
-
                     for ws in &mut workspaces {
-                        // Reset base options to layout ones.
                         ws.update_config(self.options.clone());
                     }
 
                     MonitorSet::NoOutputs { workspaces }
                 } else {
                     if primary_idx >= idx {
-                        // Update primary_idx to either still point at the same monitor, or at some
-                        // other monitor if the primary has been removed.
                         primary_idx = primary_idx.saturating_sub(1);
                     }
                     if active_monitor_idx >= idx {
-                        // Update active_monitor_idx to either still point at the same monitor, or
-                        // at some other monitor if the active monitor has
-                        // been removed.
                         active_monitor_idx = active_monitor_idx.saturating_sub(1);
                     }
 
@@ -994,9 +753,6 @@ impl<W: LayoutElement> Layout<W> {
         }
     }
 
-    /// Adds a new window to the layout.
-    ///
-    /// Returns an output that the window was added to, if there were any outputs.
     #[allow(clippy::too_many_arguments)]
     pub fn add_window(
         &mut self,
@@ -1060,7 +816,6 @@ impl<W: LayoutElement> Layout<W> {
                             .filter(|move_| next_to == move_.tile.window().id())
                             .map(|move_| move_.output.clone())
                         {
-                            // The next_to window is being interactively moved.
                             let mon_idx = monitors
                                 .iter()
                                 .position(|mon| mon.output == output)
@@ -1097,7 +852,6 @@ impl<W: LayoutElement> Layout<W> {
                     *active_monitor_idx = mon_idx;
                 }
 
-                // Set the default height for scrolling windows.
                 if !is_floating {
                     if let Some(change) = scrolling_height {
                         let ws = mon
@@ -1157,8 +911,6 @@ impl<W: LayoutElement> Layout<W> {
                             .filter(|move_| next_to == move_.tile.window().id())
                             .is_some()
                         {
-                            // The next_to window is being interactively moved. If there are no
-                            // other windows, we may have no workspaces at all.
                             if workspaces.is_empty() {
                                 workspaces.push(Workspace::new_no_outputs(
                                     self.clock.clone(),
@@ -1191,7 +943,6 @@ impl<W: LayoutElement> Layout<W> {
                     None,
                 );
 
-                // Set the default height for scrolling windows.
                 if !is_floating {
                     if let Some(change) = scrolling_height {
                         ws.set_window_height(Some(&id), change);
@@ -1227,7 +978,6 @@ impl<W: LayoutElement> Layout<W> {
                             mon.dnd_scroll_gesture_end();
                         }
 
-                        // Unlock the view on the workspaces.
                         for ws in self.workspaces_mut() {
                             ws.dnd_scroll_gesture_end();
                         }
@@ -1250,7 +1000,6 @@ impl<W: LayoutElement> Layout<W> {
                         if ws.has_window(window) {
                             let removed = ws.remove_tile(window, transaction);
 
-                            // Clean up empty workspaces that are not active and not last.
                             if !ws.has_windows_or_name()
                                 && idx != mon.active_workspace_idx
                                 && idx != mon.workspaces.len() - 1
@@ -1263,8 +1012,6 @@ impl<W: LayoutElement> Layout<W> {
                                 }
                             }
 
-                            // Special case handling when empty_workspace_above_first is set and all
-                            // workspaces are empty.
                             if mon.options.layout.empty_workspace_above_first
                                 && mon.workspaces.len() == 2
                                 && mon.workspace_switch.is_none()
@@ -1284,7 +1031,6 @@ impl<W: LayoutElement> Layout<W> {
                     if ws.has_window(window) {
                         let removed = ws.remove_tile(window, transaction);
 
-                        // Clean up empty workspaces.
                         if !ws.has_windows_or_name() {
                             workspaces.remove(idx);
                         }
@@ -1311,7 +1057,6 @@ impl<W: LayoutElement> Layout<W> {
     pub fn update_window(&mut self, window: &W::Id, serial: Option<Serial>) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             if move_.tile.window().id() == window {
-                // Do this before calling update_window() so it can get up-to-date info.
                 if let Some(serial) = serial {
                     move_.tile.window_mut().on_commit(serial);
                 }
@@ -1440,7 +1185,6 @@ impl<W: LayoutElement> Layout<W> {
                     if ws.id() == id {
                         ws.unname();
 
-                        // Clean up empty workspaces.
                         if !ws.has_windows() {
                             workspaces.remove(idx);
                         }
@@ -1513,19 +1257,12 @@ impl<W: LayoutElement> Layout<W> {
         None
     }
 
-    /// Computes the window-geometry-relative target rect for popup unconstraining.
-    ///
-    /// We will try to fit popups inside this rect.
     pub fn popup_target_rect(&self, window: &W::Id) -> Rectangle<f64, Logical> {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
             if move_.tile.window().id() == window {
-                // Follow the scrolling layout logic and fit the popup horizontally within the
-                // window geometry.
                 let width = move_.tile.window_size().w;
                 let height = output_size(&move_.output).h;
                 let mut target = Rectangle::from_size(Size::from((width, height)));
-                // FIXME: ideally this shouldn't include the tile render offset, but the code
-                // duplication would be a bit annoying for this edge case.
                 target.loc.y -= move_.tile_render_location(1.).y;
                 target.loc.y -= move_.tile.window_loc().y;
                 return target;
@@ -1567,12 +1304,6 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn should_trigger_focus_follows_mouse_on(&self, window: &W::Id) -> bool {
-        // During an animation, it's easy to trigger focus-follows-mouse on the previous workspace,
-        // especially when clicking to switch workspace on a bar of some kind. This cancels the
-        // workspace switch, which is annoying and not intended.
-        //
-        // This function allows focus-follows-mouse to trigger only on the animation target
-        // workspace.
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
             if move_.tile.window().id() == window {
                 return true;
@@ -1593,7 +1324,6 @@ impl<W: LayoutElement> Layout<W> {
             })
             .unwrap();
 
-        // During a gesture, focus-follows-mouse does not cause any unintended workspace switches.
         if let Some(WorkspaceSwitch::Gesture(_)) = mon.workspace_switch {
             return true;
         }
@@ -1622,8 +1352,6 @@ impl<W: LayoutElement> Layout<W> {
                 if ws.activate_window(window) {
                     *active_monitor_idx = monitor_idx;
 
-                    // If currently in the middle of a vertical swipe between the target workspace
-                    // and some other, don't switch the workspace.
                     match &mon.workspace_switch {
                         Some(WorkspaceSwitch::Gesture(gesture))
                             if gesture.current_idx.floor() == workspace_idx as f64
@@ -1658,8 +1386,6 @@ impl<W: LayoutElement> Layout<W> {
                 if ws.activate_window_without_raising(window) {
                     *active_monitor_idx = monitor_idx;
 
-                    // If currently in the middle of a vertical swipe between the target workspace
-                    // and some other, don't switch the workspace.
                     match &mon.workspace_switch {
                         Some(WorkspaceSwitch::Gesture(gesture))
                             if gesture.current_idx.floor() == workspace_idx as f64
@@ -1760,7 +1486,6 @@ impl<W: LayoutElement> Layout<W> {
         mut f: impl FnMut(&W, Option<&Output>, Option<WorkspaceId>, WindowLayout),
     ) {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
-            // We don't fill any positions for interactively moved windows.
             let layout = move_.tile.ipc_layout_template();
             f(move_.tile.window(), Some(&move_.output), None, layout);
         }
@@ -1823,20 +1548,6 @@ impl<W: LayoutElement> Layout<W> {
         Some(&mut monitors[*active_monitor_idx])
     }
 
-    /// Where a new window should go on the canvas, given what the camera is looking at.
-    ///
-    /// `None` means "somewhere empty": the caller falls back to `AddWindowTarget::Auto`, and
-    /// floating placement puts the window at the centre of the view.
-    ///
-    /// Note that the transient rule in `island::spawn_target` is deliberately not reached from
-    /// here. A window with a parent takes `AddWindowTarget::NextTo`, which centres it over that
-    /// parent -- following your parent and tiling into a column beside it are different things,
-    /// and a modal dialog wants the first.
-    /// Moves focus to the nearest island in a direction.
-    ///
-    /// Distinct from `focus_left` and friends, which walk window to window and therefore step
-    /// through a cluster's members. This jumps cluster to cluster, which is the motion you want
-    /// once a canvas has more on it than fits on a screen.
     pub fn focus_island(&mut self, dir: Direction) -> bool {
         let Some(mon) = self.active_monitor() else {
             return false;
@@ -1844,7 +1555,6 @@ impl<W: LayoutElement> Layout<W> {
         mon.active_workspace().focus_island_in_direction(dir)
     }
 
-    /// Merges the active window into the neighbouring island in a direction.
     pub fn move_window_to_island(&mut self, dir: Direction) -> bool {
         let Some(mon) = self.active_monitor() else {
             return false;
@@ -1852,7 +1562,6 @@ impl<W: LayoutElement> Layout<W> {
         mon.active_workspace().move_window_to_island(dir)
     }
 
-    /// Pulls the active window out of its cluster into an island of its own.
     pub fn split_window_from_island(&mut self) -> bool {
         let Some(mon) = self.active_monitor() else {
             return false;
@@ -1860,7 +1569,6 @@ impl<W: LayoutElement> Layout<W> {
         mon.active_workspace().split_window_from_island()
     }
 
-    /// Whether new windows open onto the canvas rather than into the scrolling strip.
     pub fn opens_on_canvas(&self) -> bool {
         self.options.camera.open_on_canvas
     }
@@ -2453,8 +2161,6 @@ impl<W: LayoutElement> Layout<W> {
                     let pos_within_tile = (pos_within_output - tile_pos).downscale(zoom);
                     let (win, hit) =
                         HitType::hit_tile(&move_.tile, Point::from((0., 0.)), pos_within_tile)?;
-                    // Scale first, then translate: the hit is in the tile's own unscaled space,
-                    // while tile_pos is already in output coordinates.
                     Some((win, hit.scaled_by(zoom).offset_win_pos(tile_pos)))
                 } else {
                     let tile_pos = move_.tile_render_location(1.);
@@ -2468,7 +2174,6 @@ impl<W: LayoutElement> Layout<W> {
         }
     }
 
-    /// Returns the window under the cursor and the hit type.
     pub fn window_under(
         &self,
         output: &Output,
@@ -2508,11 +2213,6 @@ impl<W: LayoutElement> Layout<W> {
         }
     }
 
-    /// Effective view scale, delegating to the active output's camera.
-    ///
-    /// Zoom stopped being a global property once the camera became per-output, so this now
-    /// answers for the active monitor. Callers that care about a *specific* output should ask
-    /// its `Monitor` directly.
     pub fn overview_zoom(&self) -> f64 {
         if let Some(mon) = self.active_monitor_ref() {
             return mon.overview_zoom();
@@ -2563,7 +2263,6 @@ impl<W: LayoutElement> Layout<W> {
                     let tile_pos = move_.tile_render_location(zoom);
                     let rounded_pos = tile_pos.to_physical_precise_round(scale).to_logical(scale);
 
-                    // Tile position must be rounded to physical pixels.
                     assert_abs_diff_eq!(tile_pos.x, rounded_pos.x, epsilon = 1e-5);
                     assert_abs_diff_eq!(tile_pos.y, rounded_pos.y, epsilon = 1e-5);
 
@@ -2666,7 +2365,6 @@ impl<W: LayoutElement> Layout<W> {
             if idx == primary_idx {
                 for ws in &monitor.workspaces {
                     if ws.original_output.matches(&monitor.output) {
-                        // This is the primary monitor's own workspace.
                         continue;
                     }
 
@@ -2688,9 +2386,6 @@ impl<W: LayoutElement> Layout<W> {
                 );
             }
 
-            // FIXME: verify that primary doesn't have any workspaces for which their own monitor
-            // exists.
-
             for workspace in &monitor.workspaces {
                 assert!(
                     seen_workspace_id.insert(workspace.id()),
@@ -2711,18 +2406,6 @@ impl<W: LayoutElement> Layout<W> {
 
                 let has_view_offset_gesture = workspace.scrolling().view_offset().is_gesture();
                 if self.dnd.is_some() || self.interactive_move.is_some() {
-                    // We'd like to check that all workspaces have the gesture here, furthermore we
-                    // want to check that they have the gesture only if the interactive move
-                    // targets the scrolling layout. However, we cannot do that because we start
-                    // and stop the gesture lazily. Otherwise the gesture code would pollute a lot
-                    // of places like adding new workspaces, implicitly moving windows between
-                    // floating and tiling on fullscreen, etc.
-                    //
-                    // assert!(
-                    //     has_view_offset_gesture,
-                    //     "during an interactive move in the scrolling layout, \
-                    //      all workspaces should be in a view offset gesture"
-                    // );
                 } else if saw_view_offset_gesture {
                     assert!(
                         !has_view_offset_gesture,
@@ -2758,7 +2441,6 @@ impl<W: LayoutElement> Layout<W> {
 
         let is_overview_open = self.overview_open;
 
-        // Scroll the view if needed.
         if let Some((output, pos_within_output, is_scrolling)) = dnd_scroll {
             if let Some(mon) = self.monitor_for_output_mut(&output) {
                 let mut scrolled = false;
@@ -2770,8 +2452,6 @@ impl<W: LayoutElement> Layout<W> {
                     if let Some((ws, geo)) = mon.workspace_under(pos_within_output) {
                         let idx = mon.idx_of_ws(ws.id()).unwrap();
                         let ws = &mut mon.workspaces[idx];
-                        // As far as the DnD scroll gesture is concerned, the workspace spans across
-                        // the whole monitor horizontally.
                         let ws_pos = Point::from((0., geo.loc.y));
                         scrolled |=
                             ws.dnd_scroll_gesture_scroll(pos_within_output - ws_pos, 1. / zoom);
@@ -2779,7 +2459,6 @@ impl<W: LayoutElement> Layout<W> {
                 }
 
                 if scrolled {
-                    // Don't trigger DnD hold while scrolling.
                     if let Some(dnd) = &mut self.dnd {
                         dnd.hold = None;
                     }
@@ -2809,13 +2488,10 @@ impl<W: LayoutElement> Layout<W> {
                             hold.start_time
                         };
 
-                        // Delay copied from gnome-shell.
                         let delay = Duration::from_millis(750);
                         if delay <= now.saturating_sub(start_time) {
                             let hold = dnd.hold.take().unwrap();
 
-                            // Synchronize workspace switch to overview close to get a monotonic
-                            // animation.
                             let config = is_overview_open
                                 .then_some(self.options.animations.overview_open_close.0);
 
@@ -2840,7 +2516,6 @@ impl<W: LayoutElement> Layout<W> {
                             }
                         }
                     } else {
-                        // No target, reset the hold timer.
                         dnd.hold = None;
                     }
                 }
@@ -2873,7 +2548,6 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn are_animations_ongoing(&self, output: Option<&Output>) -> bool {
-        // Keep advancing animations if we might need to scroll the view.
         if let Some(dnd) = &self.dnd {
             if output.is_none_or(|output| *output == dnd.output) {
                 return true;
@@ -2886,7 +2560,6 @@ impl<W: LayoutElement> Layout<W> {
                     return true;
                 }
 
-                // Keep advancing animations if we might need to scroll the view.
                 if !move_.is_floating || self.overview_open {
                     return true;
                 }
@@ -2924,13 +2597,6 @@ impl<W: LayoutElement> Layout<W> {
             if output.is_none_or(|output| move_.output == *output) {
                 let pos_within_output = move_.tile_render_location(zoom);
 
-                // We're not on any specific workspace so we can't compute a "workspace view" rect.
-                // Let's instead compute a rect relative to the output.
-                //
-                // FIXME: we could make the colors match up better in the overview by figuring out
-                // where a centered workspace would currently be, and computing the view rect
-                // against that. Since most of the time the dragged window will be on a centered
-                // workspace.
                 let view_rect =
                     Rectangle::new(pos_within_output.upscale(-1.), output_size(&move_.output))
                         .downscale(zoom);
@@ -3091,7 +2757,6 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn update_config(&mut self, config: &Config) {
-        // Update workspace-specific config for all named workspaces.
         for ws in self.workspaces_mut() {
             let Some(name) = ws.name() else { continue };
             if let Some(config) = config.workspaces.iter().find(|w| &w.name.0 == name) {
@@ -3279,16 +2944,12 @@ impl<W: LayoutElement> Layout<W> {
             if window.is_none() || window == Some(move_.tile.window().id()) {
                 move_.is_floating = !move_.is_floating;
 
-                // When going to floating, restore the floating window size.
                 if move_.is_floating {
                     let floating_size = move_.tile.floating_window_size;
                     let win = move_.tile.window_mut();
                     let mut size =
                         floating_size.unwrap_or_else(|| win.expected_size().unwrap_or_default());
 
-                    // Apply min/max size window rules. If requesting a concrete size, apply
-                    // completely; if requesting (0, 0), apply only when min/max results in a fixed
-                    // size.
                     let min_size = win.min_size();
                     let max_size = win.max_size();
                     size.w = ensure_min_max_size_maybe_zero(size.w, min_size.w, max_size.w);
@@ -3296,19 +2957,16 @@ impl<W: LayoutElement> Layout<W> {
 
                     win.request_size_once(size, true);
 
-                    // Animate the tile back to opaque.
                     move_.tile.animate_alpha(
                         INTERACTIVE_MOVE_ALPHA,
                         1.,
                         self.options.animations.window_movement.0,
                     );
 
-                    // Unlock the view on the workspaces.
                     for ws in self.workspaces_mut() {
                         ws.dnd_scroll_gesture_end();
                     }
                 } else {
-                    // Animate the tile back to semitransparent.
                     move_.tile.animate_alpha(
                         1.,
                         INTERACTIVE_MOVE_ALPHA,
@@ -3577,7 +3235,6 @@ impl<W: LayoutElement> Layout<W> {
         self.move_workspace_to_output_by_id(idx, None, output)
     }
 
-    // FIXME: accept workspace by id
     pub fn move_workspace_to_output_by_id(
         &mut self,
         old_idx: usize,
@@ -3612,16 +3269,12 @@ impl<W: LayoutElement> Layout<W> {
             return false;
         }
 
-        // Do not do anything if the output is already correct
         if current_idx == target_idx {
-            // Just update the original output since this is an explicit movement action.
             current.workspaces[old_idx].original_output = OutputId::new(&current.output);
 
             return false;
         }
 
-        // Only switch active monitor if the workspace to be moved is the currently focused one on
-        // the current monitor.
         let activate =
             current_idx == *active_monitor_idx && old_idx == current.active_workspace_idx;
 
@@ -3639,7 +3292,6 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn set_fullscreen(&mut self, id: &W::Id, is_fullscreen: bool) {
-        // Check if this is a request to unset the windowed fullscreen state.
         if !is_fullscreen {
             let mut handled = false;
             self.with_windows_mut(|window, _| {
@@ -3685,7 +3337,6 @@ impl<W: LayoutElement> Layout<W> {
     pub fn toggle_windowed_fullscreen(&mut self, id: &W::Id) {
         let (_, window) = self.windows().find(|(_, win)| win.id() == id).unwrap();
         if window.pending_sizing_mode().is_fullscreen() {
-            // Remove the real fullscreen.
             for ws in self.workspaces_mut() {
                 if ws.has_window(id) {
                     ws.set_fullscreen(id, false);
@@ -3694,7 +3345,6 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
-        // This will switch is_pending_fullscreen() to false right away.
         self.with_windows_mut(|window, _| {
             if window.id() == id {
                 window.request_windowed_fullscreen(!window.is_pending_windowed_fullscreen());
@@ -3739,7 +3389,6 @@ impl<W: LayoutElement> Layout<W> {
         };
 
         for monitor in monitors {
-            // Cancel the gesture on other outputs.
             if &monitor.output != output {
                 monitor.workspace_switch_gesture_end(None);
                 continue;
@@ -3803,7 +3452,6 @@ impl<W: LayoutElement> Layout<W> {
 
         for monitor in monitors {
             for (idx, ws) in monitor.workspaces.iter_mut().enumerate() {
-                // Cancel the gesture on other workspaces.
                 if &monitor.output != output
                     || idx != workspace_idx.unwrap_or(monitor.active_workspace_idx)
                 {
@@ -3905,7 +3553,6 @@ impl<W: LayoutElement> Layout<W> {
             return false;
         };
 
-        // Take into account any idle time between the last event and now.
         let now = self.clock.now_unadjusted();
         gesture.tracker.push(0., now);
 
@@ -3986,7 +3633,6 @@ impl<W: LayoutElement> Layout<W> {
             mon.dnd_scroll_gesture_begin();
         }
 
-        // Lock the view for scrolling interactive move.
         if !is_floating {
             for ws in self.workspaces_mut() {
                 ws.dnd_scroll_gesture_begin();
@@ -4052,7 +3698,6 @@ impl<W: LayoutElement> Layout<W> {
                     .unwrap();
                 tile.interactive_move_offset = pointer_delta.upscale(factor);
 
-                // Put it back to be able to easily return.
                 self.interactive_move = Some(InteractiveMoveState::Starting {
                     window_id: window_id.clone(),
                     pointer_delta,
@@ -4068,13 +3713,6 @@ impl<W: LayoutElement> Layout<W> {
                     .find(|mon| mon.output() == &output)
                     .and_then(|mon| mon.layout_config().cloned());
 
-                // If the pointer is currently on the window's own output, then we can animate the
-                // window movement from its current (rubberbanded and possibly moved away) position
-                // to the pointer. Otherwise, we just teleport it as the layout code is not aware
-                // of monitor positions.
-                //
-                // FIXME: when and if the layout code knows about monitor positions, this will be
-                // potentially animatable.
                 let mut tile_pos = None;
                 if let Some((mon, (ws, ws_geo))) = self.monitors().find_map(|mon| {
                     mon.workspaces_with_render_geo()
@@ -4092,12 +3730,8 @@ impl<W: LayoutElement> Layout<W> {
                     }
                 }
 
-                // Clear it before calling remove_window() to avoid running interactive_move_end()
-                // in the middle of interactive_move_update() and the confusion that causes.
                 self.interactive_move = None;
 
-                // Unset fullscreen before removing the tile. This will restore its size properly,
-                // and move it to floating if needed, so we don't have to deal with that here.
                 let ws = self
                     .workspaces_mut()
                     .find(|ws| ws.has_window(&window_id))
@@ -4129,13 +3763,10 @@ impl<W: LayoutElement> Layout<W> {
                 tile.update_config(view_size, scale, Rc::new(options));
 
                 if is_floating {
-                    // Unlock the view in case we locked it moving a fullscreen window that is
-                    // going to unfullscreen to floating.
                     for ws in self.workspaces_mut() {
                         ws.dnd_scroll_gesture_end();
                     }
                 } else {
-                    // Animate to semitransparent.
                     tile.animate_alpha(
                         1.,
                         INTERACTIVE_MOVE_ALPHA,
@@ -4178,7 +3809,6 @@ impl<W: LayoutElement> Layout<W> {
                     }
                 }
 
-                // If moved over a different workspace, reset the config override.
                 let mut update_config = false;
                 if let Some((id, _)) = &move_.workspace_config {
                     if Some(*id) != ws_id {
@@ -4252,8 +3882,6 @@ impl<W: LayoutElement> Layout<W> {
                         tile.animate_move_from(offset);
                     }
 
-                    // Unlock the view on the workspaces, but if the moved window was active,
-                    // preserve that.
                     let moved_tile_was_active =
                         ws.active_window().is_some_and(|win| *win.id() == window_id);
 
@@ -4281,13 +3909,11 @@ impl<W: LayoutElement> Layout<W> {
             mon.dnd_scroll_gesture_end();
         }
 
-        // Unlock the view on the workspaces.
         if !move_.is_floating {
             for ws in self.workspaces_mut() {
                 ws.dnd_scroll_gesture_end();
             }
 
-            // Also animate the tile back to opaque.
             move_.tile.animate_alpha(
                 INTERACTIVE_MOVE_ALPHA,
                 1.,
@@ -4295,7 +3921,6 @@ impl<W: LayoutElement> Layout<W> {
             );
         }
 
-        // Dragging in the overview shouldn't switch the workspace and so on.
         let allow_to_activate_workspace = !self.overview_open;
 
         match &mut self.monitor_set {
@@ -4339,7 +3964,6 @@ impl<W: LayoutElement> Layout<W> {
                     } else {
                         let mon = &mut monitors[*active_monitor_idx];
                         let zoom = mon.overview_zoom();
-                        // No point in trying to use the pointer position on the wrong output.
                         let ws = &mon.workspaces[0];
                         let ws_geo = mon.workspaces_render_geo().next().unwrap();
 
@@ -4360,10 +3984,8 @@ impl<W: LayoutElement> Layout<W> {
                     InsertWorkspace::Existing(ws_id) => mon.idx_of_ws(ws_id).unwrap(),
                     InsertWorkspace::NewAt(ws_idx) => {
                         if mon.options.layout.empty_workspace_above_first && ws_idx == 0 {
-                            // Reuse the top empty workspace.
                             0
                         } else if mon.workspaces.len() - 1 <= ws_idx {
-                            // Reuse the bottom empty workspace.
                             mon.workspaces.len() - 1
                         } else {
                             mon.add_workspace_at(ws_idx);
@@ -4418,13 +4040,9 @@ impl<W: LayoutElement> Layout<W> {
                                 }
                             }
                             InsertWorkspace::NewAt(_) => {
-                                // When putting a floating tile on a new workspace, we don't really
-                                // have a good pre-existing position.
                             }
                         }
 
-                        // Set the floating size so it takes into account any window resizing that
-                        // took place during the move.
                         if let Some(size) = tile.window().expected_size() {
                             tile.floating_window_size = Some(size);
                         }
@@ -4446,7 +4064,6 @@ impl<W: LayoutElement> Layout<W> {
                     }
                 }
 
-                // needed because empty_workspace_above_first could have modified the idx
                 let (tile, tile_offset, ws_geo) = mon
                     .workspaces_with_render_geo_mut(false)
                     .find_map(|(ws, geo)| {
@@ -4459,9 +4076,6 @@ impl<W: LayoutElement> Layout<W> {
 
                 tile.animate_move_from((tile_render_loc - new_tile_render_loc).downscale(zoom));
 
-                // Interactive move into floating barely animates (it doesn't really move after
-                // being dropped), so setting it as moving between workspaces would just cause it to
-                // awkwardly sit unclipped for a moment before the animation runs out.
                 if !matches!(position, InsertPosition::Floating) {
                     tile.set_anim_y_between_workspaces();
                 }
@@ -4475,7 +4089,6 @@ impl<W: LayoutElement> Layout<W> {
                 }
                 let ws = &mut workspaces[0];
 
-                // No point in trying to use the pointer position without outputs.
                 ws.add_tile(
                     move_.tile,
                     WorkspaceAddWindowTarget::Auto,
@@ -4644,7 +4257,6 @@ impl<W: LayoutElement> Layout<W> {
                 };
                 monitor
             } else {
-                // In case a numbered workspace reference is used, assume the active monitor
                 let Some(monitor) = self.active_monitor() else {
                     return;
                 };
@@ -4664,7 +4276,6 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn set_workspace_name(&mut self, name: String, reference: Option<WorkspaceReference>) {
-        // ignore the request if the name is already used by another workspace
         if self.find_workspace_by_name(&name).is_some() {
             return;
         }
@@ -4681,12 +4292,6 @@ impl<W: LayoutElement> Layout<W> {
         ws.name.replace(name);
 
         let wsid = ws.id();
-
-        // if `empty_workspace_above_first` is set and `ws` is the first
-        // workspace on a monitor, another empty workspace needs to
-        // be added before.
-        // Conversely, if `ws` was the last workspace on a monitor, an
-        // empty workspace needs to be added after.
 
         if let MonitorSet::Normal {
             monitors,
@@ -4738,33 +4343,20 @@ impl<W: LayoutElement> Layout<W> {
         }
     }
 
-    /// Nudges overview progress directly, past its normal 0..=1 range.
-    ///
-    /// Progress below 0 makes `compute_overview_zoom` return a zoom above 1.0, which is how
-    /// the Phase 1 spike reaches magnification with no new state. Negative delta zooms in.
-    ///
-    /// THROWAWAY: delete when the real per-output Camera lands in Phase 2.
-    /// Zooms the active output's camera by `factor`, holding `anchor` still.
-    ///
-    /// `anchor` is in output-local coordinates -- normally the pointer, so that whatever is
-    /// under the cursor stays under it.
     pub fn camera_zoom_by(&mut self, factor: f64, anchor: Point<f64, Logical>) {
         let Some(mon) = self.active_monitor() else {
             return;
         };
-        // Taking the camera by hand ends any follow.
         mon.clear_camera_focus();
         mon.camera.zoom_about(anchor, factor);
     }
 
-    /// Zooms the active output's camera by one configured step.
     pub fn camera_zoom_step(&mut self, zoom_in: bool, anchor: Point<f64, Logical>) {
         let step = self.options.camera.zoom_step.max(1.0001);
         let factor = if zoom_in { step } else { 1. / step };
         self.camera_zoom_by(factor, anchor);
     }
 
-    /// Springs the active output's camera back to an identity transform.
     pub fn camera_reset(&mut self) {
         let config = self.options.animations.overview_open_close.0;
         let Some(mon) = self.active_monitor() else {
@@ -4774,11 +4366,6 @@ impl<W: LayoutElement> Layout<W> {
         mon.camera.reset(config);
     }
 
-    /// Pans the active output's camera by a delta in view pixels.
-    /// Pushes the camera in a direction for as long as the key is held.
-    ///
-    /// Only the sign of `delta` matters; speed belongs to the camera, which ramps it up while
-    /// the key repeats and coasts to a stop when it stops.
     pub fn camera_pan_by(&mut self, delta: Point<f64, Logical>) {
         let Some(mon) = self.active_monitor() else {
             return;
@@ -4787,10 +4374,6 @@ impl<W: LayoutElement> Layout<W> {
         mon.camera.pan_drive(delta);
     }
 
-    /// Pans by a raw view delta, with no animation.
-    ///
-    /// This is the pointer-drag path: the canvas has to track the cursor exactly, so anything
-    /// that springs or smooths would feel like dragging something through treacle.
     pub fn camera_pan_immediate(&mut self, delta: Point<f64, Logical>) {
         let Some(mon) = self.active_monitor() else {
             return;
@@ -4799,14 +4382,6 @@ impl<W: LayoutElement> Layout<W> {
         mon.camera.pan_by_view_delta(delta);
     }
 
-    /// Frames the active window with the camera -- ZEN's maximize.
-    ///
-    /// The window is not touched: no resize, no move, and crucially no Wayland configure. Only
-    /// the viewport moves, so there is no relayout, no reflow, and nothing to "restore",
-    /// because nothing was disturbed. Panning away afterwards leaves the window exactly where
-    /// it always was.
-    ///
-    /// Returns false when there is no active window to frame.
     pub fn camera_maximize(&mut self) -> bool {
         let config = self.options.animations.overview_open_close.0;
         let Some(mon) = self.active_monitor() else {
@@ -4815,13 +4390,6 @@ impl<W: LayoutElement> Layout<W> {
         mon.set_camera_focus(config)
     }
 
-    /// Frames every floating window on the active output.
-    ///
-    /// The way back when you have panned somewhere empty. Returns false when there is nothing
-    /// to frame, so the caller can leave the camera alone rather than jumping to nowhere.
-    ///
-    /// Only floating tiles for now: they are the ones with canvas positions. Scrolling columns
-    /// still live in the workspace strip and are always on screen.
     pub fn camera_fit_all(&mut self) -> bool {
         let config = self.options.animations.overview_open_close.0;
         let Some(mon) = self.active_monitor() else {
@@ -4834,18 +4402,15 @@ impl<W: LayoutElement> Layout<W> {
         true
     }
 
-    /// The active output's camera pan, for tests.
     pub fn camera_pan(&self) -> Point<f64, Logical> {
         self.active_monitor_ref()
             .map_or_else(|| Point::from((0., 0.)), |mon| mon.camera.pan_offset_view())
     }
 
-    /// The active output's current camera zoom, for tests and IPC.
     pub fn camera_zoom(&self) -> f64 {
         self.active_monitor_ref().map_or(1., |mon| mon.camera.zoom())
     }
 
-    /// Sets the active output's camera zoom immediately, without animating.
     pub fn set_camera_zoom(&mut self, zoom: f64) {
         let Some(mon) = self.active_monitor() else {
             return;
@@ -4925,7 +4490,6 @@ impl<W: LayoutElement> Layout<W> {
             if move_.tile.window().id() == window {
                 let pos_within_output = move_.tile_render_location(zoom);
 
-                // Computation matches update_render_elements().
                 let view_rect =
                     Rectangle::new(pos_within_output.upscale(-1.), output_size(&move_.output))
                         .downscale(zoom);
@@ -5142,7 +4706,6 @@ impl<W: LayoutElement> Layout<W> {
                         && !matches!(self.interactive_move, Some(InteractiveMoveState::Moving(_)));
 
                     if ongoing_scrolling_dnd.is_some() && self.overview_open {
-                        // Begin the scroll on new monitors and when opening the overview.
                         mon.dnd_scroll_gesture_begin();
                     } else if !self.overview_open {
                         mon.dnd_scroll_gesture_end();
@@ -5153,14 +4716,12 @@ impl<W: LayoutElement> Layout<W> {
                         ws.refresh(is_active, is_focused);
 
                         if let Some(is_scrolling) = ongoing_scrolling_dnd {
-                            // Lock or unlock the view for scrolling interactive move.
                             if is_scrolling {
                                 ws.dnd_scroll_gesture_begin();
                             } else {
                                 ws.dnd_scroll_gesture_end();
                             }
                         } else {
-                            // Cancel the view offset gesture after workspace switches, moves, etc.
                             if !self.overview_open && ws_idx != mon.active_workspace_idx {
                                 ws.view_offset_gesture_end(None);
                             }
@@ -5258,7 +4819,6 @@ impl<W: LayoutElement> Default for MonitorSet<W> {
 }
 
 fn compute_overview_zoom(options: &Options, overview_progress: Option<f64>) -> f64 {
-    // Clamp to some sane values.
     let zoom = options.overview.zoom.clamp(0.0001, 0.75);
 
     if let Some(p) = overview_progress {

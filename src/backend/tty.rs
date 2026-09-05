@@ -70,12 +70,9 @@ use crate::render_helpers::renderer::AsGlesRenderer;
 use crate::render_helpers::{resources, shaders, RenderCtx, RenderTarget};
 use crate::utils::{get_monotonic_time, is_laptop_panel, logical_output, PanelOrientation};
 
-// When copying from rendering Nvidia dGPU to target iGPU,
-// it only understands X/Abgr and not X/Argb.
 const SUPPORTED_COLOR_FORMATS_10BIT: [Fourcc; 3] =
     [Fourcc::Abgr2101010, Fourcc::Argb8888, Fourcc::Abgr8888];
 
-// Smithay should fall back to Xrgb/Xbgr automatically if needed.
 const SUPPORTED_COLOR_FORMATS: [Fourcc; 2] = [Fourcc::Argb8888, Fourcc::Abgr8888];
 
 pub struct Tty {
@@ -84,21 +81,12 @@ pub struct Tty {
     udev_dispatcher: Dispatcher<'static, UdevBackend, State>,
     libinput: Libinput,
     gpu_manager: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
-    // DRM node corresponding to the primary GPU. May or may not be the same as
-    // primary_render_node.
     primary_node: DrmNode,
-    // DRM render node corresponding to the primary GPU.
     primary_render_node: DrmNode,
-    // Ignored DRM nodes.
     ignored_nodes: HashSet<DrmNode>,
-    // Devices indexed by DRM node (not necessarily the render node).
     devices: HashMap<DrmNode, OutputDevice>,
-    // The dma-buf global corresponds to the output device (the primary GPU). It is only `Some()`
-    // if we have a device corresponding to the primary GPU.
     dmabuf_global: Option<DmabufGlobal>,
-    // The output config had changed, but the session is paused, so we need to update it on resume.
     update_output_config_on_resume: bool,
-    // Whether the debug tinting is enabled.
     debug_tint: bool,
     ipc_outputs: Arc<Mutex<IpcOutputMap>>,
 }
@@ -130,16 +118,12 @@ type GbmDrmCompositor = DrmCompositor<
 
 pub struct OutputDevice {
     token: RegistrationToken,
-    // Can be None for display-only devices such as DisplayLink.
     render_node: Option<DrmNode>,
     drm_scanner: DrmScanner,
     surfaces: HashMap<crtc::Handle, Surface>,
     known_crtcs: HashMap<crtc::Handle, CrtcInfo>,
-    // SAFETY: drop after all the objects used with them are dropped.
-    // See https://github.com/Smithay/smithay/issues/1102.
     drm: DrmDevice,
     gbm: GbmDevice<DrmDeviceFd>,
-    // For display-only devices this will be the allocator from the primary device.
     allocator: GbmAllocator<DrmDeviceFd>,
 
     pub drm_lease_state: Option<DrmLeaseState>,
@@ -147,7 +131,6 @@ pub struct OutputDevice {
     active_leases: Vec<DrmLease>,
 }
 
-// A connected, but not necessarily enabled, crtc.
 #[derive(Debug, Clone)]
 pub struct CrtcInfo {
     id: OutputId,
@@ -240,17 +223,11 @@ impl OutputDevice {
 
         let mut req = AtomicModeReq::new();
 
-        // We want to disable all CRTCs that do not correspond to a connector we're using.
         let mut cleanup = HashSet::<crtc::Handle>::new();
         cleanup.extend(res_handles.crtcs());
 
         for (conn, info) in self.drm_scanner.connectors() {
-            // We only keep the connector if it has a CRTC and the output isn't off in zen.
             if let Some(crtc) = self.drm_scanner.crtc_for_connector(conn) {
-                // Verify that the connector's current CRTC matches the CRTC we expect. If not,
-                // clear the CRTC and the connector so that all connectors can get the expected
-                // CRTCs afterwards. (We do this because we do not handle CRTC rotations across TTY
-                // switches.)
                 let mut has_different_crtc = false;
                 if let Some(enc) = info.current_encoder() {
                     match self.drm.get_encoder(enc) {
@@ -263,20 +240,17 @@ impl OutputDevice {
                         }
                         Err(err) => {
                             debug!("couldn't get encoder: {err:?}");
-                            // Err on the safe side.
                             has_different_crtc = true;
                         }
                     }
                 }
 
                 if !has_different_crtc && !should_be_off(crtc, info) {
-                    // Keep the corresponding CRTC.
                     cleanup.remove(&crtc);
                     continue;
                 }
             }
 
-            // Clear the connector.
             let Some((crtc_id, _, _)) = find_drm_property(&self.drm, *conn, "CRTC_ID") else {
                 debug!("couldn't find connector CRTC_ID property");
                 continue;
@@ -285,7 +259,6 @@ impl OutputDevice {
             req.add_property(*conn, crtc_id, property::Value::CRTC(None));
         }
 
-        // Legacy fallback.
         if !self.drm.is_atomic() {
             for crtc in res_handles.crtcs() {
                 #[allow(deprecated)]
@@ -297,7 +270,6 @@ impl OutputDevice {
             return Ok(());
         }
 
-        // Disable non-primary planes, and planes belonging to disabled CRTCs.
         let is_primary = |plane: plane::Handle| {
             if let Some((_, info, value)) = find_drm_property(&self.drm, plane, "type") {
                 match info.value_type().convert_value(value) {
@@ -341,7 +313,6 @@ impl OutputDevice {
             req.add_property(plane, fb_id, property::Value::Framebuffer(None));
         }
 
-        // Disable the CRTCs.
         for crtc in cleanup {
             let Some((mode_id, _, _)) = find_drm_property(&self.drm, crtc, "MODE_ID") else {
                 debug!("couldn't find CRTC MODE_ID property");
@@ -377,15 +348,10 @@ struct Surface {
     connector: connector::Handle,
     dmabuf_feedback: Option<SurfaceDmabufFeedback>,
     gamma_props: Option<GammaProps>,
-    /// Gamma change to apply upon session resume.
     pending_gamma_change: Option<Option<Vec<u16>>>,
-    /// Tracy frame that goes from vblank to vblank.
     vblank_frame: Option<tracy_client::Frame>,
-    /// Frame name for the VBlank frame.
     vblank_frame_name: tracy_client::FrameName,
-    /// Plot name for the time since presentation plot.
     time_since_presentation_plot_name: tracy_client::PlotName,
-    /// Plot name for the presentation misprediction plot.
     presentation_misprediction_plot_name: tracy_client::PlotName,
     sequence_delta_plot_name: tracy_client::PlotName,
 }
@@ -441,9 +407,6 @@ impl Tty {
         }
         .map_err(|()| anyhow!("error assigning the seat to libinput"))?;
 
-        // If the session is not active at startup (e.g. zen was launched from a different TTY),
-        // suspend libinput now so that when ActivateSession fires, libinput.resume() performs a
-        // full re-enumeration of input devices instead of being a no-op.
         if !session.is_active() {
             debug!("session is not active, starting libinput in paused state");
             libinput.suspend();
@@ -513,22 +476,15 @@ impl Tty {
     }
 
     pub fn init(&mut self, zen: &mut Zen) {
-        // If the session is inactive, skip initialization because we won't be able to do much with
-        // the devices anyway. We'll get ActivateSession and add the devices there instead.
-        //
-        // This can happen when starting zen while having a different TTY active (e.g. via tmux).
         if !self.session.is_active() {
             return;
         }
 
-        // Initialize the ignored nodes.
         self.ignored_nodes = self.compute_ignored_nodes();
 
         let udev = self.udev_dispatcher.clone();
         let udev = udev.as_source_ref();
 
-        // Initialize the primary node first as later nodes might depend on the primary render node
-        // being available.
         if let Some((primary_device_id, primary_device_path)) = udev
             .device_list()
             .find(|&(device_id, _)| device_id == self.primary_node.dev_id())
@@ -563,8 +519,6 @@ impl Tty {
                     return;
                 }
 
-                // Recompute ignored nodes to resolve symlinks (like /dev/dri/by-path/...) to their
-                // new underlying device IDs.
                 self.ignored_nodes = self.compute_ignored_nodes();
 
                 if let Err(err) = self.device_added(device_id, &path, zen) {
@@ -614,8 +568,6 @@ impl Tty {
                     warn!("error resuming libinput");
                 }
 
-                // While the session was suspended, GPUs could have been added, so
-                // /dev/dri/by-path/... symlinks need to be re-resolved.
                 self.ignored_nodes = self.compute_ignored_nodes();
 
                 let mut device_list = self
@@ -645,21 +597,16 @@ impl Tty {
                     .copied()
                     .collect::<Vec<_>>();
 
-                // Remove removed devices.
                 for node in removed_devices {
                     device_list.remove(&node.dev_id());
                     self.device_removed(node.dev_id(), zen);
                 }
 
-                // Update remained devices.
                 for node in remained_devices {
                     device_list.remove(&node.dev_id());
 
-                    // It hasn't been removed, update its state as usual.
                     let device = self.devices.get_mut(&node).unwrap();
 
-                    // Someone on an old device hit what seems to be a driver bug without this:
-                    // upstream issue #3048
                     let force_disable = self
                         .config
                         .borrow()
@@ -673,10 +620,8 @@ impl Tty {
                         lease_state.resume::<State>();
                     }
 
-                    // Refresh the connectors.
                     self.device_changed(node.dev_id(), zen, true);
 
-                    // Apply pending gamma changes and restore our existing gamma.
                     let device = self.devices.get_mut(&node).unwrap();
                     for (crtc, surface) in device.surfaces.iter_mut() {
                         if let Ok(mut props) =
@@ -711,10 +656,6 @@ impl Tty {
                     }
                 }
 
-                // Add new devices.
-                //
-                // Add the primary node first as later nodes might depend on the primary render
-                // node being available.
                 let primary_device_id = self.primary_node.dev_id();
                 let primary_device_path = device_list.remove(&primary_device_id);
                 let primary = primary_device_path.map(|path| (primary_device_id, path));
@@ -753,8 +694,6 @@ impl Tty {
             debug!("this is the primary node");
         }
 
-        // Only consider primary node on udev event
-        // https://gitlab.freedesktop.org/wlroots/wlroots/-/commit/768fbaad54027f8dd027e7e015e8eeb93cb38c52
         if node.ty() != NodeType::Primary {
             debug!("not a primary node, skipping");
             return Ok(());
@@ -787,9 +726,6 @@ impl Tty {
             let display = unsafe { EGLDisplay::new(gbm.clone())? };
             let egl_device = EGLDevice::device_for_display(&display)?;
 
-            // Software EGL devices (e.g., llvmpipe/softpipe) are rejected for now. They have some
-            // problems (segfault on importing dmabufs from other renderers) and need to be
-            // excluded from some places like DRM leasing.
             ensure!(
                 !egl_device.is_software(),
                 "software EGL renderers are skipped"
@@ -829,7 +765,6 @@ impl Tty {
                 .context("error creating renderer")?;
 
             if let Err(err) = renderer.bind_wl_display(&zen.display_handle) {
-                // wl_drm is on its way out so this is expected on most modern distros.
                 trace!("error binding legacy EGL to wl_display: {err}");
             } else {
                 debug!("bound legacy EGL to wl_display");
@@ -853,7 +788,6 @@ impl Tty {
 
             zen.update_shaders();
 
-            // Create the dmabuf global.
             let primary_formats = renderer.dmabuf_formats();
             let default_feedback =
                 DmabufFeedbackBuilder::new(render_node.dev_id(), primary_formats.clone())
@@ -867,7 +801,6 @@ impl Tty {
                 );
             assert!(self.dmabuf_global.replace(dmabuf_global).is_none());
 
-            // Update the dmabuf feedbacks for all surfaces.
             for (node, device) in self.devices.iter_mut() {
                 for surface in device.surfaces.values_mut() {
                     match surface_dmabuf_feedback(
@@ -968,7 +901,6 @@ impl Tty {
             return;
         };
 
-        // DrmScanner will preserve any existing connector-CRTC mapping.
         let scan_result = match device.drm_scanner.scan_connectors(&device.drm) {
             Ok(x) => x,
             Err(err) => {
@@ -993,7 +925,6 @@ impl Tty {
                         name.format_make_model_serial(),
                     );
 
-                    // Assign an id to this crtc.
                     let id = OutputId::next();
                     added.push((crtc, CrtcInfo { id, name }));
                 }
@@ -1002,11 +933,6 @@ impl Tty {
                 } => {
                     removed.push(crtc);
                 }
-                // Emitted when the list of connector modes changes at runtime.
-                //
-                // Some devices, notably USB-C docks with DP-MST/alt-mode, report Connected before
-                // the EDID has been read, with an empty mode list. Then, at a later point, the
-                // modes will be populated, at which point we'll get this Changed event.
                 DrmScanEvent::Changed {
                     connector,
                     crtc: Some(crtc),
@@ -1020,13 +946,8 @@ impl Tty {
                     );
 
                     if !device.known_crtcs.contains_key(&crtc) {
-                        // I guess this can happen if the connector initially wasn't mapped to a
-                        // CRTC but then got mapped before being changed.
                         warn!("changed connector missing from known crtcs");
                     }
-
-                    // We don't actually need to do anything here; on_output_config_changed() will
-                    // take care of picking a new mode if needed.
                 }
                 _ => (),
             }
@@ -1048,11 +969,6 @@ impl Tty {
         }
 
         for (crtc, mut info) in added {
-            // Make/model/serial can match exactly between different physical monitors. This doesn't
-            // happen often, but our Layout does not support such duplicates and will panic.
-            //
-            // As a workaround, search for duplicates, and unname the new connectors if one is
-            // found. Connector names are always unique.
             let name = &mut info.name;
             let formatted = name.format_make_model_serial_or_connector();
             for info in self.devices.values().flat_map(|d| d.known_crtcs.values()) {
@@ -1073,17 +989,13 @@ impl Tty {
                 }
             }
 
-            // Insert it right away so next added connector will check against this one too.
             let device = self.devices.get_mut(&node).unwrap();
             device.known_crtcs.insert(crtc, info);
         }
 
-        // If the device was just added or resumed, we need to cleanup any disconnected connectors
-        // and planes.
         if cleanup {
             let device = self.devices.get(&node).unwrap();
 
-            // Follow the logic in on_output_config_changed().
             let disable_laptop_panels = self.should_disable_laptop_panels(zen.is_lid_closed);
             let should_disable = |conn: &str| disable_laptop_panels && is_laptop_panel(conn);
 
@@ -1108,9 +1020,6 @@ impl Tty {
 
             let device = self.devices.get_mut(&node).unwrap();
             for surface in device.surfaces.values_mut() {
-                // We aren't force-clearing the CRTCs, so we need to make the surfaces read the
-                // updated state after a session resume. This also causes a full damage for the
-                // next redraw.
                 if let Err(err) = surface.compositor.reset_state() {
                     warn!("error resetting DrmCompositor state: {err:?}");
                 }
@@ -1118,11 +1027,6 @@ impl Tty {
             }
         }
 
-        // This will connect any new connectors if needed, and apply other changes, such as
-        // connecting back the internal laptop monitor once it becomes the only monitor left.
-        //
-        // It will also call refresh_ipc_outputs(), which will catch the disconnected connectors
-        // above.
         self.on_output_config_changed(zen);
     }
 
@@ -1162,9 +1066,6 @@ impl Tty {
         }
 
         if let Some(render_node) = device.render_node {
-            // Sometimes (Asahi DisplayLink), multiple primary nodes will correspond to the same
-            // render node. In this case, we want to keep the render node active until the last
-            // primary node that uses it is gone.
             let was_last = !self
                 .devices
                 .values()
@@ -1180,7 +1081,6 @@ impl Tty {
                     }
                 }
 
-                // Disable and destroy the dmabuf global.
                 if let Some(global) = self.dmabuf_global.take() {
                     zen.dmabuf_state
                         .disable_global::<State>(&zen.display_handle, &global);
@@ -1197,7 +1097,6 @@ impl Tty {
                         )
                         .unwrap();
 
-                    // Clear the dmabuf feedbacks for all surfaces.
                     for device in self.devices.values_mut() {
                         for surface in device.surfaces.values_mut() {
                             surface.dmabuf_feedback = None;
@@ -1210,7 +1109,6 @@ impl Tty {
 
             if was_last {
                 self.gpu_manager.as_mut().remove_node(&render_node);
-                // Trigger re-enumeration in order to remove the device from gpu_manager.
                 let _ = self.gpu_manager.devices();
             }
         }
@@ -1325,7 +1223,6 @@ impl Tty {
             .map_err(|err| debug!("couldn't get gamma properties: {err:?}"))
             .ok();
 
-        // Reset gamma in case it was set before.
         let res = if let Some(gamma_props) = &mut gamma_props {
             gamma_props.set_gamma(&device.drm, None)
         } else {
@@ -1339,10 +1236,8 @@ impl Tty {
             .drm
             .create_surface(crtc, mode, &[connector.handle()])?;
 
-        // Try to enable VRR if requested.
         match surface.vrr_supported(connector.handle()) {
             Ok(VrrSupport::Supported | VrrSupport::RequiresModeset) => {
-                // Even if on-demand, we still disable it until later checks.
                 let vrr = config.is_vrr_always_on();
                 let word = if vrr { "enabling" } else { "disabling" };
 
@@ -1355,8 +1250,6 @@ impl Tty {
                     warn!("cannot enable VRR because connector does not support it");
                 }
 
-                // Try to disable it anyway to work around a bug where resetting DRM state causes
-                // vrr_capable to be reset to 0, potentially leaving VRR_ENABLED at 1.
                 let _ = surface.use_vrr(false);
             }
             Err(err) => {
@@ -1364,7 +1257,6 @@ impl Tty {
             }
         }
 
-        // Update the output mode.
         let (physical_width, physical_height) = connector.size().unwrap_or((0, 0));
 
         let output = Output::new(
@@ -1399,15 +1291,6 @@ impl Tty {
         let egl_context = renderer.as_ref().egl_context();
         let render_formats = egl_context.dmabuf_render_formats();
 
-        // Filter out the CCS modifiers as they have increased bandwidth, causing some monitor
-        // configurations to stop working.
-        //
-        // For display only devices, restrict to linear buffers for best compatibility.
-        //
-        // The invalid modifier attempt below should make this unnecessary in some cases, but it
-        // would still be a bad idea to remove this until Smithay has some kind of full-device
-        // modesetting test that is able to "downgrade" existing connector modifiers to get enough
-        // bandwidth for a newly connected one.
         let render_formats = render_formats
             .iter()
             .copied()
@@ -1419,17 +1302,12 @@ impl Tty {
                 let is_ccs = matches!(
                     format.modifier,
                     Modifier::I915_y_tiled_ccs
-                    // I915_FORMAT_MOD_Yf_TILED_CCS
                     | Modifier::Unrecognized(0x100000000000005)
                     | Modifier::I915_y_tiled_gen12_rc_ccs
                     | Modifier::I915_y_tiled_gen12_mc_ccs
-                    // I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS_CC
                     | Modifier::Unrecognized(0x100000000000008)
-                    // I915_FORMAT_MOD_4_TILED_DG2_RC_CCS
                     | Modifier::Unrecognized(0x10000000000000a)
-                    // I915_FORMAT_MOD_4_TILED_DG2_MC_CCS
                     | Modifier::Unrecognized(0x10000000000000b)
-                    // I915_FORMAT_MOD_4_TILED_DG2_RC_CCS_CC
                     | Modifier::Unrecognized(0x10000000000000c)
                 );
 
@@ -1445,7 +1323,6 @@ impl Tty {
         .iter()
         .copied();
 
-        // Create the compositor.
         let res = DrmCompositor::new(
             OutputModeSource::Auto(output.downgrade()),
             surface,
@@ -1453,8 +1330,6 @@ impl Tty {
             device.allocator.clone(),
             GbmFramebufferExporter::new(device.gbm.clone(), device.render_node.into()),
             color_formats.clone(),
-            // This is only used to pick a good internal format, so it can use the surface's render
-            // formats, even though we only ever render on the primary GPU.
             render_formats.clone(),
             device.drm.cursor_size(),
             Some(device.gbm.clone()),
@@ -1471,7 +1346,6 @@ impl Tty {
                     .filter(|format| format.modifier == Modifier::Invalid)
                     .collect::<FormatSet>();
 
-                // DrmCompositor::new() consumed the surface...
                 let surface = device
                     .drm
                     .create_surface(crtc, mode, &[connector.handle()])?;
@@ -1515,8 +1389,6 @@ impl Tty {
             }
         }
 
-        // Some buggy monitors replug upon powering off, so powering on here would prevent such
-        // monitors from powering off. Therefore, we avoid unconditionally powering on.
         if !zen.monitors_active {
             if let Err(err) = compositor.clear() {
                 warn!("error clearing drm surface: {err:?}");
@@ -1556,9 +1428,7 @@ impl Tty {
         zen.add_output(output.clone(), Some(refresh_interval(mode)), vrr_enabled);
 
         if zen.monitors_active {
-            // Redraw the new monitor.
             zen.event_loop.insert_idle(move |state| {
-                // Guard against output disconnecting before the idle has a chance to run.
                 if state.zen.output_state.contains_key(&output) {
                     state.zen.queue_redraw(&output);
                 }
@@ -1627,7 +1497,6 @@ impl Tty {
         let now = get_monotonic_time();
 
         let Some(device) = self.devices.get_mut(&node) else {
-            // I've seen it happen.
             error!("missing device in vblank callback for crtc {crtc:?}");
             return;
         };
@@ -1637,7 +1506,6 @@ impl Tty {
             return;
         };
 
-        // Finish the Tracy frame, if any.
         drop(surface.vblank_frame.take());
 
         let name = &surface.name.connector;
@@ -1647,9 +1515,6 @@ impl Tty {
         let presentation_time = match meta.time {
             DrmEventTime::Monotonic(time) => time,
             DrmEventTime::Realtime(_) => {
-                // Not supported.
-
-                // This value will be ignored in the frame clock code.
                 Duration::ZERO
             }
         };
@@ -1718,7 +1583,6 @@ impl Tty {
                 tty.on_vblank(&mut state.zen, node, crtc, meta);
             })
         {
-            // Throttled.
             return;
         }
 
@@ -1728,11 +1592,6 @@ impl Tty {
             | RedrawState::Queued
             | RedrawState::WaitingForEstimatedVBlank(_)
             | RedrawState::WaitingForEstimatedVBlankAndQueued(_)) => {
-                // This is an error!() because it shouldn't happen, but on some systems it somehow
-                // does. Kernel sending rogue vblank events?
-                //
-                // upstream issue #556
-                // upstream issue #615
                 error!(
                     "unexpected redraw state for output {name} (should be WaitingForVBlank); \
                      can happen when resuming from sleep or powering on monitors: {state:?}"
@@ -1741,7 +1600,6 @@ impl Tty {
             }
         };
 
-        // Mark the last frame as submitted.
         match surface.compositor.frame_submitted() {
             Ok(Some((mut feedback, target_presentation_time))) => {
                 let refresh = match refresh_interval {
@@ -1755,7 +1613,6 @@ impl Tty {
                     None => Refresh::Unknown,
                 };
 
-                // FIXME: ideally should be monotonically increasing for a surface.
                 let seq = meta.sequence as u64;
                 let mut flags = wp_presentation_feedback::Kind::Vsync
                     | wp_presentation_feedback::Kind::HwCompletion;
@@ -1814,7 +1671,6 @@ impl Tty {
             return;
         };
 
-        // We waited for the timer, now we can send frame callbacks again.
         output_state.frame_callback_sequence = output_state.frame_callback_sequence.wrapping_add(1);
 
         match mem::replace(&mut output_state.redraw_state, RedrawState::Idle) {
@@ -1822,7 +1678,6 @@ impl Tty {
             RedrawState::Queued => unreachable!(),
             RedrawState::WaitingForVBlank { .. } => unreachable!(),
             RedrawState::WaitingForEstimatedVBlank(_) => (),
-            // The timer fired just in front of a redraw.
             RedrawState::WaitingForEstimatedVBlankAndQueued(_) => {
                 output_state.redraw_state = RedrawState::Queued;
                 return;
@@ -1875,8 +1730,6 @@ impl Tty {
         span.emit_text(&surface.name.connector);
 
         if !device.drm.is_active() {
-            // This branch hits any time we try to render while the user had switched to a
-            // different VT, so don't print anything here.
             return rv;
         }
 
@@ -1892,7 +1745,6 @@ impl Tty {
             }
         };
 
-        // Render the elements.
         let ctx = RenderCtx {
             renderer: &mut renderer,
             target: RenderTarget::Output,
@@ -1900,14 +1752,11 @@ impl Tty {
         };
         let mut elements = zen.render_to_vec(ctx, output, true);
 
-        // Visualize the damage, if enabled.
         if zen.debug_draw_damage {
             let output_state = zen.output_state.get_mut(output).unwrap();
             draw_damage(&mut output_state.debug_damage_tracker, &mut elements);
         }
 
-        // Overlay planes are disabled by default as they cause weird performance issues on my
-        // system.
         let flags = {
             let debug = &self.config.borrow().debug;
 
@@ -1938,7 +1787,6 @@ impl Tty {
             flags
         };
 
-        // Hand them over to the DRM.
         let drm_compositor = &mut surface.compositor;
         match drm_compositor.render_frame::<_, _>(&mut renderer, &elements, [0.; 4], flags) {
             Ok(res) => {
@@ -1983,9 +1831,6 @@ impl Tty {
                                 }
                             };
 
-                            // We queued this frame successfully, so the current client buffers were
-                            // latched. We can send frame callbacks now, since a new client commit
-                            // will no longer overwrite this frame and will wait for a VBlank.
                             output_state.frame_callback_sequence =
                                 output_state.frame_callback_sequence.wrapping_add(1);
 
@@ -2000,15 +1845,12 @@ impl Tty {
                 }
             }
             Err(err) => {
-                // Can fail if we switched to a different TTY.
                 warn!("error rendering frame: {err}");
             }
         }
 
-        // We're not expecting a vblank right after this.
         drop(surface.vblank_frame.take());
 
-        // Queue a timer to fire at the predicted vblank time.
         queue_estimated_vblank_timer(zen, output.clone(), target_presentation_time);
 
         rv
@@ -2066,7 +1908,6 @@ impl Tty {
 
     pub fn early_import(&mut self, surface: &WlSurface) {
         if let Err(err) = self.gpu_manager.early_import(
-            // We always render on the primary GPU.
             self.primary_render_node,
             surface,
         ) {
@@ -2105,7 +1946,6 @@ impl Tty {
             .context("missing device")?;
         let surface = device.surfaces.get_mut(&crtc).context("missing surface")?;
 
-        // Cannot change properties while the device is inactive.
         if !self.session.is_active() {
             surface.pending_gamma_change = Some(ramp);
             return Ok(());
@@ -2156,7 +1996,6 @@ impl Tty {
                     .collect();
 
                 if let Some(crtc_mode) = current_crtc_mode {
-                    // Custom mode
                     if crtc_mode.mode_type().contains(ModeTypeFlags::USERDEF) {
                         modes.insert(
                             0,
@@ -2246,23 +2085,16 @@ impl Tty {
 
     #[cfg(feature = "xdp-gnome-screencast")]
     pub fn primary_gbm_device(&self) -> Option<GbmDevice<DrmDeviceFd>> {
-        // Try to find a device corresponding to the primary render node.
         let device = self
             .devices
             .values()
             .find(|d| d.render_node == Some(self.primary_render_node));
-        // Otherwise, try to get the device corresponding to the primary node.
         let device = device.or_else(|| self.devices.get(&self.primary_node));
 
         Some(device?.gbm.clone())
     }
 
     pub fn set_monitors_active(&mut self, active: bool) {
-        // We only disable the CRTC here, this will also reset the
-        // surface state so that the next call to `render_frame` will
-        // always produce a new frame and `queue_frame` will change
-        // the CRTC to active. This makes sure we always enable a CRTC
-        // within an atomic operation.
         if active {
             return;
         }
@@ -2319,7 +2151,6 @@ impl Tty {
     pub fn update_ignored_nodes_config(&mut self, zen: &mut Zen) {
         let _span = tracy_client::span!("Tty::update_ignored_nodes_config");
 
-        // If we're inactive, we can't do anything, but we'll recompute in ActivateSession.
         if !self.session.is_active() {
             return;
         }
@@ -2369,7 +2200,6 @@ impl Tty {
 
         let config = self.config.borrow();
         if !config.debug.keep_laptop_panel_on_when_lid_is_closed {
-            // Check if any external monitor is connected.
             for device in self.devices.values() {
                 for (connector, _crtc) in device.drm_scanner.crtcs() {
                     if !is_laptop_panel(&format_connector_name(connector)) {
@@ -2385,14 +2215,12 @@ impl Tty {
     pub fn on_output_config_changed(&mut self, zen: &mut Zen) {
         let _span = tracy_client::span!("Tty::on_output_config_changed");
 
-        // If we're inactive, we can't do anything, so just set a flag for later.
         if !self.session.is_active() {
             self.update_output_config_on_resume = true;
             return;
         }
         self.update_output_config_on_resume = false;
 
-        // Figure out if we should disable laptop panels.
         let disable_laptop_panels = self.should_disable_laptop_panels(zen.is_lid_closed);
         let should_disable = |connector: &str| disable_laptop_panels && is_laptop_panel(connector);
 
@@ -2413,7 +2241,6 @@ impl Tty {
                     continue;
                 }
 
-                // Check if we need to change the mode.
                 let Some(connector) = device.drm_scanner.connectors().get(&surface.connector)
                 else {
                     error!("missing enabled connector in drm_scanner");
@@ -2536,12 +2363,10 @@ impl Tty {
             let disable_monitor_names = config.debug.disable_monitor_names;
 
             for (connector, crtc) in device.drm_scanner.crtcs() {
-                // Check if connected.
                 if connector.state() != connector::State::Connected {
                     continue;
                 }
 
-                // Check if already enabled.
                 if device.surfaces.contains_key(&crtc)
                     || device
                         .non_desktop_connectors
@@ -2568,8 +2393,6 @@ impl Tty {
             self.connector_disconnected(zen, node, crtc);
         }
 
-        // Sort by output name to get more predictable first focused output at initial compositor
-        // startup, when multiple connectors appear at once.
         to_connect.sort_unstable_by(|a, b| a.3.compare(&b.3));
 
         for (node, connector, crtc, _name) in to_connect {
@@ -2589,12 +2412,10 @@ impl Tty {
         let disable_monitor_names = self.config.borrow().debug.disable_monitor_names;
         for device in self.devices.values() {
             for (connector, crtc) in device.drm_scanner.crtcs() {
-                // Check if connected.
                 if connector.state() != connector::State::Connected {
                     continue;
                 }
 
-                // Check if already enabled.
                 if device.surfaces.contains_key(&crtc)
                     || device
                         .non_desktop_connectors
@@ -2719,7 +2540,6 @@ impl GammaProps {
                 .context("error setting GAMMA_LUT")
                 .inspect_err(|_| {
                     if blob != 0 {
-                        // Destroy the blob we just allocated.
                         if let Err(err) = device.destroy_property_blob(blob) {
                             warn!("error destroying GAMMA_LUT property blob: {err:?}");
                         }
@@ -2770,7 +2590,6 @@ fn primary_node_from_render_node(path: &Path) -> Option<(DrmNode, DrmNode)> {
             } else {
                 warn!("DRM node {path:?} is not a render node");
 
-                // Gracefully handle misconfiguration on regular desktop systems.
                 if let Some(Ok(render_node)) = node.node_with_type(NodeType::Render) {
                     return Some((node, render_node));
                 }
@@ -2824,8 +2643,6 @@ fn surface_dmabuf_feedback(
         .copied()
         .collect::<FormatSet>();
 
-    // We limit the scan-out trache to formats we can also render from so that there is always a
-    // fallback render path available in case the supplied buffer can not be scanned out directly.
     let mut primary_scanout_formats = primary_plane_formats
         .intersection(&primary_formats)
         .copied()
@@ -2835,11 +2652,6 @@ fn surface_dmabuf_feedback(
         .copied()
         .collect::<Vec<_>>();
 
-    // HACK: AMD iGPU + dGPU systems share some modifiers between the two, and yet cross-device
-    // buffers produce a glitched scanout if the modifier is not Linear...
-    //
-    // Also limit scan-out formats to Linear if we have a device without a render node (i.e.
-    // we're rendering on a different device).
     if surface_render_node != Some(primary_render_node) {
         primary_scanout_formats.retain(|f| f.modifier == Modifier::Linear);
         primary_or_overlay_scanout_formats.retain(|f| f.modifier == Modifier::Linear);
@@ -2853,9 +2665,6 @@ fn surface_dmabuf_feedback(
         primary_or_overlay_scanout_formats.len() - primary_scanout_formats.len(),
     );
 
-    // Prefer the primary-plane-only formats, then primary-or-overlay-plane formats. This will
-    // increase the chance of scanning out a client even with our disabled-by-default overlay
-    // planes.
     let scanout = builder
         .clone()
         .add_preference_tranche(
@@ -2872,8 +2681,6 @@ fn surface_dmabuf_feedback(
         )
         .build()?;
 
-    // If this is the primary node surface, send scanout formats in both tranches to avoid
-    // duplication.
     let render = if surface_render_node == Some(primary_render_node) {
         scanout.clone()
     } else {
@@ -2982,14 +2789,10 @@ fn queue_estimated_vblank_timer(
     let now = get_monotonic_time();
     let mut duration = target_presentation_time.saturating_sub(now);
 
-    // No use setting a zero timer, since we'll send frame callbacks anyway right after the call to
-    // render(). This can happen for example with unknown presentation time from DRM.
     if duration.is_zero() {
         duration += output_state
             .frame_clock
             .refresh_interval()
-            // Unknown refresh interval, i.e. winit backend. Would be good to estimate it somehow
-            // but it's not that important for this code path.
             .unwrap_or(Duration::from_micros(16_667));
     }
 
@@ -3047,8 +2850,6 @@ pub fn calculate_drm_mode_from_modeline(modeline: &Modeline) -> anyhow::Result<D
     );
 
     let pixel_clock_kilo_hertz = modeline.clock * 1000.0;
-    // Calculated as documented in the CVT 1.2 standard:
-    // https://app.box.com/s/vcocw3z73ta09txiskj7cnk6289j356b/file/93518784646
     let vrefresh_hertz = (pixel_clock_kilo_hertz * 1000.0)
         / (modeline.htotal as u64 * modeline.vtotal as u64) as f64;
     ensure!(
@@ -3071,7 +2872,6 @@ pub fn calculate_drm_mode_from_modeline(modeline: &Modeline) -> anyhow::Result<D
     );
     let name = modeinfo_name_slice_from_string(&mode_name);
 
-    // https://www.kernel.org/doc/html/v6.17/gpu/drm-uapi.html#c.drm_mode_modeinfo
     Ok(DrmMode::from(drm_mode_modeinfo {
         clock: pixel_clock_kilo_hertz.round() as u32,
         hdisplay: modeline.hdisplay,
@@ -3085,7 +2885,6 @@ pub fn calculate_drm_mode_from_modeline(modeline: &Modeline) -> anyhow::Result<D
         vrefresh: vrefresh_rounded,
         flags: flags.bits(),
         name,
-        // Defaults
         type_: drm_ffi::DRM_MODE_TYPE_USERDEF,
         hskew: 0,
         vscan: 0,
@@ -3093,16 +2892,12 @@ pub fn calculate_drm_mode_from_modeline(modeline: &Modeline) -> anyhow::Result<D
 }
 
 pub fn calculate_mode_cvt(width: u16, height: u16, refresh: f64) -> DrmMode {
-    // Cross-checked with sway's implementation:
-    // https://gitlab.freedesktop.org/wlroots/wlroots/-/blob/22528542970687720556035790212df8d9bb30bb/backend/drm/util.c#L251
-
     let options = libdisplay_info::cvt::Options {
         red_blank_ver: libdisplay_info::cvt::ReducedBlankingVersion::None,
         h_pixels: width as i32,
         v_lines: height as i32,
         ip_freq_rqd: refresh,
 
-        // Defaults
         video_opt: false,
         vblank: 0f64,
         additional_hblank: 0,
@@ -3147,7 +2942,6 @@ pub fn calculate_mode_cvt(width: u16, height: u16, refresh: f64) -> DrmMode {
         type_: drm_ffi::DRM_MODE_TYPE_USERDEF,
         name,
 
-        // Defaults
         hskew: 0,
         vscan: 0,
     };
@@ -3155,13 +2949,10 @@ pub fn calculate_mode_cvt(width: u16, height: u16, refresh: f64) -> DrmMode {
     DrmMode::from(drm_ffi_mode)
 }
 
-// Returns a c-string of maximally 31 Rust string chars + null terminator. Excess characters are
-// dropped.
 fn modeinfo_name_slice_from_string(mode_name: &str) -> [core::ffi::c_char; 32] {
     let mut name: [core::ffi::c_char; 32] = [0; 32];
 
     for (a, b) in zip(&mut name[..31], mode_name.as_bytes()) {
-        // Can be u8 on aarch64 and i8 on x86_64.
         *a = *b as _;
     }
 
@@ -3194,19 +2985,16 @@ fn pick_mode(
                 continue;
             }
 
-            // Interlaced modes don't appear to work.
             if m.flags().contains(ModeFlags::INTERLACE) {
                 continue;
             }
 
             if let Some(refresh) = refresh {
-                // If refresh is set, only pick modes with matching refresh.
                 let wl_mode = Mode::from(*m);
                 if wl_mode.refresh == refresh {
                     mode = Some(m);
                 }
             } else if let Some(curr) = mode {
-                // If refresh isn't set, pick the mode with the highest refresh.
                 if curr.vrefresh() < m.vrefresh() {
                     mode = Some(m);
                 }
@@ -3221,7 +3009,6 @@ fn pick_mode(
     }
 
     if mode.is_none() {
-        // Pick a preferred mode.
         for m in connector.modes() {
             if !m.mode_type().contains(ModeTypeFlags::PREFERRED) {
                 continue;
@@ -3238,7 +3025,6 @@ fn pick_mode(
     }
 
     if mode.is_none() {
-        // Last attempt.
         mode = connector.modes().first();
     }
 
@@ -3301,13 +3087,9 @@ impl<'a> ConnectorProperties<'a> {
         let (info, value) = self.find(c"panel orientation")?;
         match info.value_type().convert_value(*value) {
             property::Value::Enum(Some(val)) => match val.value() {
-                // "Normal"
                 0 => Ok(Transform::Normal),
-                // "Upside Down"
                 1 => Ok(Transform::_180),
-                // "Left Side Up"
                 2 => Ok(Transform::_90),
-                // "Right Side Up"
                 3 => Ok(Transform::_270),
                 _ => bail!("panel orientation has invalid value: {:?}", val),
             },
@@ -3431,7 +3213,6 @@ pub fn set_gamma_for_crtc(
     } else {
         let _span = tracy_client::span!("generate linear gamma");
 
-        // The legacy API provides no way to reset the gamma, so set a linear one manually.
         temp = vec![0u16; gamma_length * 3];
 
         let (red, rest) = temp.split_at_mut(gamma_length);
@@ -3481,12 +3262,6 @@ fn make_output_name(
     }
 }
 
-/// Initializes the libinput plugin system.
-///
-/// # Safety
-///
-/// This function must be called before libinput iterates through the devices, i.e. before
-/// libinput_udev_assign_seat() or the first call to libinput_path_add_device().
 unsafe fn init_libinput_plugin_system(libinput: &Libinput) {
     #[cfg(have_libinput_plugin_system)]
     unsafe {
@@ -3508,7 +3283,6 @@ unsafe fn init_libinput_plugin_system(libinput: &Libinput) {
         const LIBINPUT_PLUGIN_SYSTEM_FLAG_NONE: c_int = 0;
         let libinput = libinput.as_raw();
 
-        // Also load plugins from $XDG_CONFIG_HOME/libinput/plugins.
         if let Some(dirs) = BaseDirs::new() {
             let mut plugins_dir = dirs.config_dir().to_path_buf();
             plugins_dir.push("libinput");
@@ -3617,7 +3391,6 @@ mod tests {
 
     #[test]
     fn test_calc_cvt() {
-        // Crosschecked with other calculators like the cvt commandline utility.
         assert_debug_snapshot!(calculate_mode_cvt(1920, 1080, 60.0), @r#"
         Mode {
             name: "1920x1080@59.96",

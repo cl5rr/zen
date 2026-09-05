@@ -16,7 +16,6 @@ use crate::cli::Msg;
 use crate::utils::version;
 
 pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
-    // For actions taking paths, prepend the zen CLI's working directory.
     if let Msg::Action {
         action:
             Action::Screenshot { path, .. }
@@ -55,23 +54,18 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
 
     let result = socket.send(request);
 
-    // For errors that can be caused by a version mismatch between the running zen instance and
-    // the zen msg CLI, we will try to fetch and compare the versions.
     let check_compositor_version = match &result {
         Err(err) => {
-            // Response JSON parsing errors.
             matches!(
                 err.kind(),
                 ErrorKind::InvalidData | ErrorKind::UnexpectedEof
             )
         }
-        // Error returned from zen.
         Ok(Err(_)) => true,
         _ => false,
     };
 
     let compositor_version = if check_compositor_version && !matches!(msg, Msg::Version) {
-        // Reconnect to support older zen versions with one request per connection.
         Socket::connect()
             .and_then(|mut socket| socket.send(Request::Version))
             .ok()
@@ -79,12 +73,10 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
         None
     };
 
-    // Default SIGPIPE so that our prints don't panic on stdout closing.
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
 
-    // Check for CLI-server version mismatch to add helpful context.
     match compositor_version {
         Some(Ok(Response::Version(compositor_version))) => {
             let cli_version = version();
@@ -102,8 +94,6 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
             eprintln!();
         }
         None => {
-            // Communication error, or the original request was already a version request, or the
-            // original request had succeeded. Don't add irrelevant context.
         }
     }
 
@@ -606,7 +596,6 @@ fn print_output(output: Output) -> anyhow::Result<()> {
         } = mode;
         let refresh = refresh_rate as f64 / 1000.;
 
-        // This is technically the current mode, but the println below already specifies that.
         let qualifier = print_qualifier(is_preferred, false, is_custom_mode);
         println!("  Current mode: {width}x{height} @ {refresh:.3} Hz{qualifier}");
     } else {

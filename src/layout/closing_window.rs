@@ -26,40 +26,26 @@ use crate::utils::transaction::TransactionBlocker;
 
 #[derive(Debug)]
 pub struct ClosingWindow {
-    /// Contents of the window.
     buffer: TextureBuffer<GlesTexture>,
 
-    /// Contents that are not blocked out, but the background is blocked out.
-    ///
-    /// If `None` then the background doesn't have any blocked-out surfaces, and normal `buffer`
-    /// can be used instead.
     buffer_with_blocked_out_bg: Option<TextureBuffer<GlesTexture>>,
 
-    /// Blocked-out contents of the window.
     blocked_out_buffer: TextureBuffer<GlesTexture>,
 
-    /// Where the window should be blocked out from.
     block_out_from: Option<BlockOutFrom>,
 
-    /// Size of the window geometry.
     geo_size: Size<f64, Logical>,
 
-    /// Position in the workspace.
     pos: Point<f64, Logical>,
 
-    /// How much the texture should be offset.
     buffer_offset: Point<f64, Logical>,
 
-    /// How much the texture with blocked-out bg should be offset.
     buffer_with_blocked_out_bg_offset: Point<f64, Logical>,
 
-    /// How much the blocked-out texture should be offset.
     blocked_out_buffer_offset: Point<f64, Logical>,
 
-    /// The closing animation.
     anim_state: AnimationState,
 
-    /// Random seed for the shader.
     random_seed: f32,
 }
 
@@ -73,7 +59,6 @@ zen_render_elements! {
 #[derive(Debug)]
 enum AnimationState {
     Waiting {
-        /// Blocker for a transaction before starting the animation.
         blocker: TransactionBlocker,
         anim: Animation,
     },
@@ -85,9 +70,6 @@ impl AnimationState {
         if blocker.state() == BlockerState::Pending {
             Self::Waiting { blocker, anim }
         } else {
-            // This actually doesn't normally happen because the window is removed only after the
-            // closing animation is created. Though, it does happen with disable-transactions debug
-            // flag.
             Self::Animating(anim)
         }
     }
@@ -230,8 +212,6 @@ impl ClosingWindow {
             let area_loc = Vec2::new(view_rect.loc.x as f32, view_rect.loc.y as f32);
             let area_size = Vec2::new(view_rect.size.w as f32, view_rect.size.h as f32);
 
-            // Round to physical pixels relative to the view position. This is similar to what
-            // happens when rendering normal windows.
             let relative = self.pos - view_rect.loc;
             let pos = view_rect.loc + relative.to_physical_precise_round(scale).to_logical(scale);
 

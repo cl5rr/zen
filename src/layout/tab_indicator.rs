@@ -24,9 +24,7 @@ pub struct TabIndicator {
 
 #[derive(Debug)]
 pub struct TabInfo {
-    /// Gradient for the tab indicator.
     pub gradient: Gradient,
-    /// Tab geometry in the same coordinate system as the area.
     pub geometry: Rectangle<f64, Logical>,
 }
 
@@ -96,8 +94,6 @@ impl TabIndicator {
         let total_prop = self.config.length.total_proportion.unwrap_or(0.5);
         let min_length = round(side * total_prop.clamp(0., 2.));
 
-        // Compute px_per_tab before applying the animation to gaps_between in order to avoid it
-        // growing and shrinking over the duration of the animation.
         let pixel = 1. / scale;
         let shortest_length = count as f64 * (pixel + gaps_between) - gaps_between;
         let length = f64::max(min_length, shortest_length);
@@ -158,11 +154,8 @@ impl TabIndicator {
     pub fn update_render_elements(
         &mut self,
         enabled: bool,
-        // Geometry of the tabs area.
         area: Rectangle<f64, Logical>,
-        // View rect relative to the tabs area.
         area_view_rect: Rectangle<f64, Logical>,
-        // Tab count, should match the tabs iterator length.
         tab_count: usize,
         tabs: impl Iterator<Item = TabInfo>,
         is_active: bool,
@@ -211,7 +204,6 @@ impl TabIndicator {
 
             let radius = if shared_rounded_corners && tab_count > 1 {
                 if tabs_left == tab_count {
-                    // First tab.
                     match position {
                         TabIndicatorPosition::Left | TabIndicatorPosition::Right => CornerRadius {
                             top_left: radius,
@@ -227,7 +219,6 @@ impl TabIndicator {
                         },
                     }
                 } else if tabs_left == 1 {
-                    // Last tab.
                     match position {
                         TabIndicatorPosition::Left | TabIndicatorPosition::Right => CornerRadius {
                             top_left: 0.,
@@ -243,11 +234,9 @@ impl TabIndicator {
                         },
                     }
                 } else {
-                    // Tab in the middle.
                     CornerRadius::default()
                 }
             } else {
-                // Separate tabs, or the only tab.
                 CornerRadius::from(radius)
             };
             let radius = radius.fit_to(rect.size.w as f32, rect.size.h as f32);
@@ -307,7 +296,6 @@ impl TabIndicator {
         }
     }
 
-    /// Extra size occupied by the tab indicator.
     pub fn extra_size(&self, tab_count: usize, scale: f64) -> Size<f64, Logical> {
         if self.config.off
             || !self.config.place_within_column
@@ -320,8 +308,6 @@ impl TabIndicator {
         let width = round(self.config.width);
         let gap = round(self.config.gap);
 
-        // No, I am *not* falling into the rabbit hole of "what if the tab indicator is wide enough
-        // that it peeks from the other side of the window".
         let size = f64::max(0., width + gap);
 
         match self.config.position {
@@ -330,7 +316,6 @@ impl TabIndicator {
         }
     }
 
-    /// Offset of the tabbed content due to space occupied by the tab indicator.
     pub fn content_offset(&self, tab_count: usize, scale: f64) -> Point<f64, Logical> {
         match self.config.position {
             TabIndicatorPosition::Left | TabIndicatorPosition::Top => {
@@ -381,8 +366,6 @@ impl TabInfo {
         };
 
         let gradient_from_border = || {
-            // Come up with tab indicator gradient matching the focus ring or the border, whichever
-            // one is enabled.
             let focus_ring_config = tile.focus_ring().config();
             let border_config = tile.border().config();
             let config = if focus_ring_config.off {

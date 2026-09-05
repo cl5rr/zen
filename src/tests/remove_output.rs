@@ -19,15 +19,11 @@ fn set_fullscreen_on_removed_output_does_not_panic() {
     window.ack_last_and_commit();
     f.double_roundtrip(id);
 
-    // Grab the second output's wl_output proxy on the client side.
     let wl_output = f.client(id).output("headless-2");
 
-    // Remove the output on the zen side. Its wl_output global is disabled but not yet
-    // destroyed, so the client's wl_output resource is still valid and usable.
     let output = f.zen_output(2);
     f.zen().remove_output(&output);
 
-    // Request fullscreen on the now-removed wl_output. zen must not panic.
     let window = f.client(id).window(&surface);
     window.set_fullscreen(Some(&wl_output));
     f.double_roundtrip(id);

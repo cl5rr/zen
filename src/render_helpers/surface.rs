@@ -10,7 +10,6 @@ use smithay::wayland::compositor::{with_surface_tree_downward, TraversalAction};
 use super::texture::TextureBuffer;
 use super::BakedBuffer;
 
-/// Renders elements from a surface tree as textures into `storage`.
 pub fn render_snapshot_from_surface_tree(
     renderer: &mut GlesRenderer,
     surface: &WlSurface,
@@ -84,7 +83,6 @@ pub fn render_snapshot_from_surface_tree(
 pub fn push_elements_from_surface_tree<R>(
     renderer: &mut R,
     surface: &WlSurface,
-    // Fractional scale expects surface buffers to be aligned to physical pixels.
     location: Point<i32, Physical>,
     scale: Scale<f64>,
     alpha: f32,
@@ -133,7 +131,7 @@ pub fn push_elements_from_surface_tree<R>(
                         renderer, surface, states, location, alpha, kind,
                     ) {
                         Ok(Some(surface)) => push(surface),
-                        Ok(None) => {} // surface is not mapped
+                        Ok(None) => {}
                         Err(err) => {
                             warn!("failed to import surface: {}", err);
                         }

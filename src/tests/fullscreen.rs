@@ -6,7 +6,6 @@ use wayland_client::protocol::wl_surface::WlSurface;
 use super::*;
 use crate::layout::LayoutElement as _;
 
-// Sets up a fixture with two outputs and 100×100 window.
 fn set_up() -> (Fixture, ClientId, WlSurface) {
     let mut f = Fixture::new();
     f.add_output(1, (1920, 1080));
@@ -37,11 +36,9 @@ fn windowed_fullscreen() {
     let mapped = zen.layout.windows().next().unwrap().1;
     let window_id = mapped.window.clone();
 
-    // Enable windowed fullscreen.
     zen.layout.toggle_windowed_fullscreen(&window_id);
     f.double_roundtrip(id);
 
-    // Should request fullscreen state with the tiled size.
     let window = f.client(id).window(&surface);
     assert_snapshot!(
         window.format_recent_configures(),
@@ -49,23 +46,18 @@ fn windowed_fullscreen() {
     );
 
     let mapped = f.zen().layout.windows().next().unwrap().1;
-    // Not committed yet.
     assert!(!mapped.is_windowed_fullscreen());
 
-    // Commit in response.
     let window = f.client(id).window(&surface);
     window.ack_last_and_commit();
     f.roundtrip(id);
 
     let mapped = f.zen().layout.windows().next().unwrap().1;
-    // Now it is committed.
     assert!(mapped.is_windowed_fullscreen());
 
-    // Disable windowed fullscreen.
     f.zen().layout.toggle_windowed_fullscreen(&window_id);
     f.double_roundtrip(id);
 
-    // Should request without fullscreen state with the tiled size.
     let window = f.client(id).window(&surface);
     assert_snapshot!(
         window.format_recent_configures(),
@@ -73,16 +65,13 @@ fn windowed_fullscreen() {
     );
 
     let mapped = f.zen().layout.windows().next().unwrap().1;
-    // Not committed yet.
     assert!(mapped.is_windowed_fullscreen());
 
-    // Commit in response.
     let window = f.client(id).window(&surface);
     window.ack_last_and_commit();
     f.roundtrip(id);
 
     let mapped = f.zen().layout.windows().next().unwrap().1;
-    // Now it is committed.
     assert!(!mapped.is_windowed_fullscreen());
 }
 
@@ -104,7 +93,6 @@ fn windowed_fullscreen_chain() {
     f.zen().layout.toggle_windowed_fullscreen(&window_id);
     f.double_roundtrip(id);
 
-    // Should be four configures matching the four requests.
     let window = f.client(id).window(&surface);
     assert_snapshot!(
         window.format_recent_configures(),
@@ -141,8 +129,6 @@ fn windowed_fullscreen_chain() {
         states.push(get_state(&mut f));
     }
 
-    // We expect fs to always be false (because each Fullscreen state request corresponded to a
-    // windowed fullscreen), and wfs to toggle on and off.
     assert_snapshot!(
         states.join("\n"),
         @r"
@@ -176,17 +162,13 @@ fn unfullscreen_before_fullscreen_ack_doesnt_prevent_view_offset_save_restore() 
     let mapped2 = zen.layout.windows().last().unwrap().1;
     let window2_id = mapped2.window.clone();
 
-    // The view position is at the first window.
     assert_snapshot!(zen.layout.active_workspace().unwrap().scrolling().view_pos(), @"-16");
 
-    // Fullscreen window2 and send the configure so we can clear pending.
     zen.layout.set_fullscreen(&window2_id, true);
     f.double_roundtrip(id);
 
-    // Before acking, unfullscreen the column, clearing the pending fullscreen flag.
     f.zen().layout.set_fullscreen(&window2_id, false);
 
-    // Now, window2 receives the fullscreen configure and resizes in response.
     let window2 = f.client(id).window(&surface2);
     assert_snapshot!(
         window2.format_recent_configures(),
@@ -198,10 +180,8 @@ fn unfullscreen_before_fullscreen_ack_doesnt_prevent_view_offset_save_restore() 
     f.double_roundtrip(id);
     f.zen_complete_animations();
 
-    // The view position is now at the fullscreen-sized window2.
     assert_snapshot!(f.zen().layout.active_workspace().unwrap().scrolling().view_pos(), @"116");
 
-    // Now, window2 receives the unfullscreen configure and resizes in response.
     let window2 = f.client(id).window(&surface2);
     assert_snapshot!(
         window2.format_recent_configures(),
@@ -212,7 +192,6 @@ fn unfullscreen_before_fullscreen_ack_doesnt_prevent_view_offset_save_restore() 
     f.roundtrip(id);
     f.zen_complete_animations();
 
-    // The view position should restore to the first window.
     assert_snapshot!(f.zen().layout.active_workspace().unwrap().scrolling().view_pos(), @"-16");
 }
 
@@ -228,13 +207,11 @@ fn interactive_move_unfullscreen_to_scrolling_restores_size() {
     zen.layout.set_fullscreen(&window, true);
     f.double_roundtrip(id);
 
-    // This should request a fullscreen size.
     assert_snapshot!(
         f.client(id).window(&surface).format_recent_configures(),
         @"size: 1920 × 1080, bounds: 1888 × 1048, states: [Activated, Fullscreen]"
     );
 
-    // Start an interactive move which causes an unfullscreen.
     let output = f.zen_output(1);
     let zen = f.zen();
     let mapped = zen.layout.windows().next().unwrap().1;
@@ -249,7 +226,6 @@ fn interactive_move_unfullscreen_to_scrolling_restores_size() {
     );
     f.double_roundtrip(id);
 
-    // This should request the tiled size.
     assert_snapshot!(
         f.client(id).window(&surface).format_recent_configures(),
         @"size: 936 × 1048, bounds: 1920 × 1080, states: [Activated]"
@@ -268,13 +244,11 @@ fn interactive_move_unmaximize_to_scrolling_restores_size() {
     zen.layout.set_maximized(&window, true);
     f.double_roundtrip(id);
 
-    // This should request a maximized size.
     assert_snapshot!(
         f.client(id).window(&surface).format_recent_configures(),
         @"size: 1920 × 1080, bounds: 1888 × 1048, states: [Activated, Maximized]"
     );
 
-    // Start an interactive move which causes an unmaximize.
     let output = f.zen_output(1);
     let zen = f.zen();
     let mapped = zen.layout.windows().next().unwrap().1;
@@ -289,7 +263,6 @@ fn interactive_move_unmaximize_to_scrolling_restores_size() {
     );
     f.double_roundtrip(id);
 
-    // This should request the tiled size.
     assert_snapshot!(
         f.client(id).window(&surface).format_recent_configures(),
         @"size: 936 × 1048, bounds: 1920 × 1080, states: [Activated]"

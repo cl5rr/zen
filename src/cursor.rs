@@ -15,7 +15,6 @@ use smithay::wayland::compositor::with_states;
 use xcursor::parser::{parse_xcursor, Image};
 use xcursor::CursorTheme;
 
-/// Some default looking `left_ptr` icon.
 static FALLBACK_CURSOR_DATA: &[u8] = include_bytes!("../resources/cursor.rgba");
 
 type XCursorCache = HashMap<(CursorIcon, i32), Option<Rc<XCursor>>>;
@@ -41,7 +40,6 @@ impl CursorManager {
         }
     }
 
-    /// Reload the cursor theme.
     pub fn reload(&mut self, theme: &str, size: u8) {
         Self::ensure_env(theme, size);
         self.theme = CursorTheme::load(theme);
@@ -49,7 +47,6 @@ impl CursorManager {
         self.named_cursor_cache.get_mut().clear();
     }
 
-    /// Checks if the cursor WlSurface is alive, and if not, cleans it up.
     pub fn check_cursor_image_surface_alive(&mut self) {
         if let CursorImageStatus::Surface(surface) = &self.current_cursor {
             if !surface.alive() {
@@ -58,7 +55,6 @@ impl CursorManager {
         }
     }
 
-    /// Get the current rendering cursor.
     pub fn get_render_cursor(&self, scale: i32) -> RenderCursor {
         match self.current_cursor.clone() {
             CursorImageStatus::Hidden => RenderCursor::Hidden,
@@ -104,7 +100,6 @@ impl CursorManager {
         }
     }
 
-    /// Get named cursor for the given `icon` and `scale`.
     pub fn get_cursor_with_name(&self, icon: CursorIcon, scale: i32) -> Option<Rc<XCursor>> {
         self.named_cursor_cache
             .borrow_mut()
@@ -113,7 +108,6 @@ impl CursorManager {
                 let size = self.size as i32 * scale;
                 let mut cursor = Self::load_xcursor(&self.theme, icon.name(), size);
 
-                // Check alternative names to account for non-compliant themes.
                 if cursor.is_err() {
                     for name in icon.alt_names() {
                         cursor = Self::load_xcursor(&self.theme, name, size);
@@ -127,7 +121,6 @@ impl CursorManager {
                     warn!("error loading xcursor {}@{size}: {err:?}", icon.name());
                 }
 
-                // The default cursor must always have a fallback.
                 if *icon == CursorIcon::Default && cursor.is_err() {
                     cursor = Ok(Self::fallback_cursor());
                 }
@@ -137,25 +130,19 @@ impl CursorManager {
             .clone()
     }
 
-    /// Get default cursor.
     pub fn get_default_cursor(&self, scale: i32) -> Rc<XCursor> {
-        // The default cursor always has a fallback.
         self.get_cursor_with_name(CursorIcon::Default, scale)
             .unwrap()
     }
 
-    /// Currently used cursor_image as a cursor provider.
     pub fn cursor_image(&self) -> &CursorImageStatus {
         &self.current_cursor
     }
 
-    /// Set new cursor image provider.
     pub fn set_cursor_image(&mut self, cursor: CursorImageStatus) {
         self.current_cursor = cursor;
     }
 
-    /// Load the cursor with the given `name` from the file system picking the closest
-    /// one to the given `size`.
     fn load_xcursor(theme: &CursorTheme, name: &str, size: i32) -> anyhow::Result<XCursor> {
         let _span = tracy_client::span!("load_xcursor");
 
@@ -186,7 +173,6 @@ impl CursorManager {
         })
     }
 
-    /// Set the common XCURSOR env variables.
     fn ensure_env(theme: &str, size: u8) {
         env::set_var("XCURSOR_THEME", theme);
         env::set_var("XCURSOR_SIZE", size.to_string());
@@ -211,7 +197,6 @@ impl CursorManager {
     }
 }
 
-/// The cursor prepared for renderer.
 pub enum RenderCursor {
     Hidden,
     Surface {
@@ -267,21 +252,12 @@ impl CursorTextureCache {
     }
 }
 
-// The XCursorBuffer implementation is inspired by `wayland-rs`, thus provided under MIT license.
-
-/// The state of the `NamedCursor`.
 pub struct XCursor {
-    /// The image for the underlying named cursor.
     images: Vec<Image>,
-    /// The total duration of the animation.
     animation_duration: u32,
 }
 
 impl XCursor {
-    /// Given a time, calculate which frame to show, and how much time remains until the next frame.
-    ///
-    /// Time will wrap, so if for instance the cursor has an animation lasting 100ms,
-    /// then calling this function with 5ms and 105ms as input gives the same output.
     pub fn frame(&self, mut millis: u32) -> (usize, &Image) {
         if self.animation_duration == 0 {
             return (0, &self.images[0]);
@@ -301,17 +277,14 @@ impl XCursor {
         (res, &self.images[res])
     }
 
-    /// Get the frames for the given `XCursor`.
     pub fn frames(&self) -> &[Image] {
         &self.images
     }
 
-    /// Check whether the cursor is animated.
     pub fn is_animated_cursor(&self) -> bool {
         self.images.len() > 1
     }
 
-    /// Get hotspot for the given `image`.
     pub fn hotspot(image: &Image) -> Point<i32, Physical> {
         (image.xhot as i32, image.yhot as i32).into()
     }

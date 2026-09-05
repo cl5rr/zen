@@ -21,7 +21,6 @@ pub struct SpatialMovementGrab {
     workspace_id: WorkspaceId,
     gesture: GestureState,
 
-    // Accumulated and applied in frame().
     new_location: Point<f64, Logical>,
     event_timestamp: Option<Duration>,
     relative_delta: Option<Point<f64, Logical>>,
@@ -84,7 +83,6 @@ impl SpatialMovementGrab {
             GestureState::Recognizing => {
                 let c = self.new_location - self.start_data.location;
 
-                // Check if the gesture moved far enough to decide. Threshold copied from GTK 4.
                 if c.x * c.x + c.y * c.y >= 8. * 8. {
                     if c.x.abs() > c.y.abs() {
                         self.gesture = GestureState::ViewOffset;
@@ -152,12 +150,10 @@ impl PointerGrab<State> for SpatialMovementGrab {
         _focus: Option<(<State as SeatHandler>::PointerFocus, Point<f64, Logical>)>,
         event: &MotionEvent,
     ) {
-        // While the grab is active, no client has pointer focus.
         handle.motion(data, None, event);
 
         self.new_location = event.location;
 
-        // Relative motion takes precedence over normal motion.
         if self.relative_delta.is_none() {
             self.event_timestamp = Some(Duration::from_millis(u64::from(event.time)));
         }
@@ -170,7 +166,6 @@ impl PointerGrab<State> for SpatialMovementGrab {
         _focus: Option<(<State as SeatHandler>::PointerFocus, Point<f64, Logical>)>,
         event: &RelativeMotionEvent,
     ) {
-        // While the grab is active, no client has pointer focus.
         handle.relative_motion(data, None, event);
 
         *self.relative_delta.get_or_insert_default() += event.delta;
@@ -186,7 +181,6 @@ impl PointerGrab<State> for SpatialMovementGrab {
         handle.button(data, event);
 
         if handle.current_pressed().is_empty() {
-            // No more buttons are pressed, release the grab.
             handle.unset_grab(self, data, event.serial, event.time, true);
         }
     }
@@ -204,7 +198,6 @@ impl PointerGrab<State> for SpatialMovementGrab {
         handle.frame(data);
 
         if !self.on_frame(data) {
-            // The gesture is no longer ongoing.
             handle.unset_grab(
                 self,
                 data,

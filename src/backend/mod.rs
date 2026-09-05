@@ -29,11 +29,8 @@ pub enum Backend {
 
 #[derive(PartialEq, Eq)]
 pub enum RenderResult {
-    /// The frame was submitted to the backend for presentation.
     Submitted,
-    /// Rendering succeeded, but there was no damage.
     NoDamage,
-    /// The frame was not rendered and submitted, due to an error or otherwise.
     Skipped,
 }
 

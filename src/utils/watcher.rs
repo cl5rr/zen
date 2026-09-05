@@ -1,5 +1,3 @@
-//! File modification watcher.
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -18,29 +16,17 @@ pub struct Watcher {
 }
 
 struct WatcherInner {
-    /// The paths we're watching.
     path: ConfigPath,
 
-    /// Last observed props of the watched file.
     last_props: Option<Props>,
 
-    /// Last observed props for included files.
     includes: HashMap<PathBuf, Option<Props>>,
 }
 
-/// Properties of the watched file.
-///
-/// Equality on this means the file did not change.
 #[derive(Debug, PartialEq, Eq)]
 struct Props {
-    /// Modification time of the watched file.
     mtime: SystemTime,
 
-    /// Canonical form of the watched path.
-    ///
-    /// We store the absolute path in addition to mtime to account for symlinked configs where the
-    /// symlink target may change without mtime. This is common on nix where everything is a
-    /// symlink to /nix/store, which keeps no mtime (= 1970-01-01).
     canonical: PathBuf,
 }
 
@@ -97,11 +83,6 @@ impl Watcher {
                             break;
                         }
 
-                        // There's a bit of time here between reading the config and reading
-                        // properties of included files where an included file could change and
-                        // remain unnoticed by the watcher. Not sure there's any good way around it
-                        // though since we don't know the final set of includes until the config is
-                        // parsed.
                         inner.set_includes(res.includes);
                     }
                 }
@@ -158,8 +139,6 @@ impl WatcherInner {
                 for (path, last_props) in &mut self.includes {
                     let new_props = Props::from_path(path).ok();
 
-                    // If an include goes missing while the main config file is unchanged, we
-                    // consider that a change and reload.
                     if *last_props != new_props {
                         return CheckResult::Changed;
                     }
@@ -184,8 +163,6 @@ impl WatcherInner {
 }
 
 pub fn setup(state: &mut State, config_path: &ConfigPath, includes: Vec<PathBuf>) {
-    // Parsing the config actually takes > 20 ms on my beefy machine, so let's do it on the
-    // watcher thread.
     let process = |path: &ConfigPath| {
         path.load().map_config_res(|res| {
             res.map_err(|err| {
@@ -321,14 +298,10 @@ mod tests {
                 watcher: WatcherInner::new(config_path, includes),
             };
 
-            // don't trigger before we start
             test.assert_unchanged();
-            // pass_time() inside assert_unchanged() ensures that mtime
-            // isn't the same as the initial time
 
             body(&sh, &mut test)?;
 
-            // nothing should trigger after the test runs
             test.assert_unchanged();
 
             Ok(())
@@ -340,7 +313,6 @@ mod tests {
     }
 
     impl TestUtil {
-        // Ensures that mtime is different between writes in the tests.
         fn pass_time(&self) {
             thread::sleep(Duration::from_millis(50));
         }
@@ -348,7 +320,6 @@ mod tests {
         fn assert_unchanged(&mut self) {
             let res = self.watcher.check();
 
-            // This may be Missing or Unchanged, both are fine.
             assert_ne!(
                 res,
                 CheckResult::Changed,
@@ -627,8 +598,6 @@ mod tests {
             })
     }
 
-    // Important: On systems like NixOS, mtime is not kept for config files.
-    // So, this is testing that the watcher handles that correctly.
     fn create_epoch(path: impl AsRef<Path>, content: &str) -> Result {
         let mut file = File::create(path)?;
         file.write_all(content.as_bytes())?;

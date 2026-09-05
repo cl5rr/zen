@@ -1,22 +1,5 @@
-//! Islands: free-positioned clusters of windows that tile internally.
-//!
-//! This module holds the parts that are pure geometry, deliberately separated from anything
-//! generic over `LayoutElement` so they can be tested on their own. Two things live here:
-//!
-//! - **Internal layout.** How an island arranges the tiles it holds. Reuses the shape of zen's
-//!   column model rather than inventing one.
-//! - **Spatial navigation.** `nearest_in_direction`, which is what `focus_left` and its 23
-//!   siblings become on a canvas. On a strip those were index arithmetic; a canvas has no index
-//!   to do arithmetic on, so direction becomes a real spatial query -- and a better-defined one.
-//!
-//! See `docs/zen/PHASE4-TRIAGE.md` for how this fits the rest of the phase.
-
 use smithay::utils::{Logical, Rectangle};
 
-/// Identifies an island within a space.
-///
-/// Monotonic and never reused, so a stale id fails to resolve rather than silently naming
-/// whatever took its place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct IslandId(u32);
 
@@ -32,19 +15,14 @@ impl IslandId {
     }
 }
 
-/// How an island arranges the tiles it holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IslandLayout {
-    /// One tile filling the island. What a freshly spawned island is.
     #[default]
     Single,
-    /// Side-by-side columns, the way zen's scrolling space tiles -- minus the scrolling.
     Columns,
-    /// Stacked, one visible at a time.
     Tabbed,
 }
 
-/// A direction for spatial navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     Left,
@@ -54,12 +32,10 @@ pub enum Direction {
 }
 
 impl Direction {
-    /// Whether this direction runs along the x axis.
     fn is_horizontal(self) -> bool {
         matches!(self, Direction::Left | Direction::Right)
     }
 
-    /// -1 or +1 along the direction's axis.
     fn sign(self) -> f64 {
         match self {
             Direction::Left | Direction::Up => -1.,
@@ -68,11 +44,6 @@ impl Direction {
     }
 }
 
-/// Lays out `count` tiles inside an island of `size`, with `gap` between them.
-///
-/// Returns rectangles in island-local coordinates. Columns divide the width evenly, which is
-/// the sane default; per-column widths come later, lifted from `ScrollingSpace`'s `ColumnWidth`
-/// rather than reinvented.
 pub fn layout_tiles(
     layout: IslandLayout,
     size: (f64, f64),
@@ -88,8 +59,6 @@ pub fn layout_tiles(
     let (w, h) = size;
 
     match layout {
-        // Tabbed shows one at a time, so every tile gets the full island. Which one is visible
-        // is the island's business, not the geometry's.
         IslandLayout::Single | IslandLayout::Tabbed => (0..count)
             .map(|_| {
                 Rectangle::new(Point::from((0., 0.)), Size::from((w.max(0.), h.max(0.))))
@@ -99,8 +68,6 @@ pub fn layout_tiles(
         IslandLayout::Columns => {
             let n = count as f64;
             let total_gap = gap * (n - 1.);
-            // Never hand back a negative width: a heavily gapped island with many tiles would
-            // otherwise produce inverted rectangles that break hit-testing downstream.
             let col_w = ((w - total_gap) / n).max(0.);
 
             (0..count)
@@ -116,15 +83,6 @@ pub fn layout_tiles(
     }
 }
 
-/// Finds the nearest candidate in `dir` from `from`.
-///
-/// This replaces index arithmetic, and is a better definition than the thing it replaces: on a
-/// strip `focus_left` means "index - 1", which cannot express a two-dimensional arrangement at
-/// all.
-///
-/// Candidates whose perpendicular extent overlaps `from` win over ones that do not, so moving
-/// left from a window prefers the window actually beside it over something further away
-/// diagonally. Among equals, nearest along the direction's axis wins.
 pub fn nearest_in_direction<T: Copy>(
     from: Rectangle<f64, Logical>,
     candidates: &[(T, Rectangle<f64, Logical>)],
@@ -133,7 +91,6 @@ pub fn nearest_in_direction<T: Copy>(
     let horizontal = dir.is_horizontal();
     let sign = dir.sign();
 
-    // Along the direction's axis, and across it.
     let along = |r: Rectangle<f64, Logical>| if horizontal { r.loc.x } else { r.loc.y };
     let along_size = |r: Rectangle<f64, Logical>| if horizontal { r.size.w } else { r.size.h };
     let across = |r: Rectangle<f64, Logical>| if horizontal { r.loc.y } else { r.loc.x };
@@ -149,8 +106,6 @@ pub fn nearest_in_direction<T: Copy>(
         let centre_along = along(rect) + along_size(rect) / 2.;
         let delta = (centre_along - from_centre_along) * sign;
 
-        // Strictly beyond us in this direction. Equal centres are ambiguous rather than
-        // adjacent, so they are skipped.
         if delta <= 0. {
             continue;
         }
@@ -159,7 +114,6 @@ pub fn nearest_in_direction<T: Copy>(
         let hi = across(rect) + across_size(rect);
         let overlaps = lo < from_hi && from_lo < hi;
 
-        // Distance across the axis, zero when they overlap.
         let across_gap = if overlaps {
             0.
         } else if hi <= from_lo {
@@ -168,7 +122,6 @@ pub fn nearest_in_direction<T: Copy>(
             lo - from_hi
         };
 
-        // Overlapping beats non-overlapping outright; then nearest along; then nearest across.
         let key = (!overlaps, delta, across_gap, item);
         let better = match &best {
             None => true,
@@ -219,7 +172,6 @@ mod tests {
         let tiles = layout_tiles(IslandLayout::Columns, (800., 600.), 3, 10.);
         assert_eq!(tiles.len(), 3);
 
-        // Two gaps of 10 leave 780 for three columns.
         for t in &tiles {
             assert!((t.size.w - 260.).abs() < 1e-9, "got {}", t.size.w);
             assert_eq!(t.size.h, 600.);
@@ -228,12 +180,10 @@ mod tests {
         assert!((tiles[1].loc.x - 270.).abs() < 1e-9);
         assert!((tiles[2].loc.x - 540.).abs() < 1e-9);
 
-        // The last column ends exactly at the island's edge.
         let last = tiles[2];
         assert!((last.loc.x + last.size.w - 800.).abs() < 1e-9);
     }
 
-    /// A heavily gapped island must not produce inverted rectangles.
     #[test]
     fn columns_never_go_negative() {
         let tiles = layout_tiles(IslandLayout::Columns, (100., 200.), 20, 40.);
@@ -252,9 +202,9 @@ mod tests {
     fn nearest_picks_the_adjacent_one() {
         let from = rect(0., 0., 100., 100.);
         let candidates = [
-            (1u32, rect(200., 0., 100., 100.)),  // directly right, adjacent
-            (2u32, rect(500., 0., 100., 100.)),  // directly right, further
-            (3u32, rect(-200., 0., 100., 100.)), // left
+            (1u32, rect(200., 0., 100., 100.)),
+            (2u32, rect(500., 0., 100., 100.)),
+            (3u32, rect(-200., 0., 100., 100.)),
         ];
         assert_eq!(
             nearest_in_direction(from, &candidates, Direction::Right),
@@ -266,13 +216,12 @@ mod tests {
         );
     }
 
-    /// An aligned neighbour beats a nearer diagonal one -- the reason for the overlap rule.
     #[test]
     fn aligned_beats_diagonal() {
         let from = rect(0., 0., 100., 100.);
         let candidates = [
-            (1u32, rect(150., 400., 100., 100.)), // nearer along x, but way off across
-            (2u32, rect(300., 0., 100., 100.)),   // further, but level with us
+            (1u32, rect(150., 400., 100., 100.)),
+            (2u32, rect(300., 0., 100., 100.)),
         ];
         assert_eq!(
             nearest_in_direction(from, &candidates, Direction::Right),
@@ -288,7 +237,6 @@ mod tests {
         assert_eq!(nearest_in_direction(from, &candidates, Direction::Right), None);
     }
 
-    /// Something sitting exactly on top of us is ambiguous, not adjacent.
     #[test]
     fn identical_position_is_not_a_neighbour() {
         let from = rect(0., 0., 100., 100.);
@@ -320,7 +268,6 @@ mod tests {
         );
     }
 
-    /// Every direction from the middle of a ring should find its own side.
     #[test]
     fn a_ring_resolves_in_all_four_directions() {
         let from = rect(0., 0., 100., 100.);
@@ -337,31 +284,20 @@ mod tests {
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-// The container
-//
-// Generic over what an island holds rather than over `LayoutElement`, for the same reason the
-// geometry above is separate: it can be tested without dragging a mock window into scope. The
-// real thing is `IslandSpace<Tile<W>>`; the tests below use `IslandSpace<u32>`.
-// ---------------------------------------------------------------------------------------------
+// -
+// -
 
 use smithay::utils::{Point, Size};
 
 use super::Canvas;
 
-/// A cluster of windows at a place on the canvas, tiled internally.
 #[derive(Debug)]
 pub struct Island<T> {
     id: IslandId,
-    /// Top-left corner on the canvas.
     pos: Point<f64, Canvas>,
-    /// Size in logical pixels.
     size: Size<f64, Logical>,
     layout: IslandLayout,
-    /// Contents, in the island's internal order.
     items: Vec<T>,
-    /// Index into `items`. Meaningless when empty; kept in range at all times so callers never
-    /// have to reason about a stale index.
     active_idx: usize,
 }
 
@@ -405,10 +341,6 @@ impl<T> Island<T> {
         self.layout = layout;
     }
 
-    /// The island's footprint on the canvas.
-    ///
-    /// `size` is stored island-local; canvas and logical are both plain logical pixels, so this
-    /// is a unit relabel rather than a conversion.
     pub fn rect(&self) -> Rectangle<f64, Canvas> {
         Rectangle::new(self.pos, Size::from((self.size.w, self.size.h)))
     }
@@ -429,10 +361,6 @@ impl<T> Island<T> {
         self.items.is_empty()
     }
 
-    /// Adds an item next to the active one and focuses it.
-    ///
-    /// Inserting beside the active item rather than appending is what makes a new window appear
-    /// where you were looking within the island, instead of always at the far end.
     pub fn add(&mut self, item: T) -> usize {
         let idx = if self.items.is_empty() {
             0
@@ -450,7 +378,6 @@ impl<T> Island<T> {
         }
         let item = self.items.remove(idx);
 
-        // Keep the active index in range, preferring the item that slid into the gap.
         if self.items.is_empty() {
             self.active_idx = 0;
         } else if self.active_idx >= self.items.len() {
@@ -479,7 +406,6 @@ impl<T> Island<T> {
         }
     }
 
-    /// Where each item sits, in island-local coordinates.
     pub fn item_rects(&self, gap: f64) -> Vec<Rectangle<f64, Logical>> {
         layout_tiles(
             self.layout,
@@ -489,10 +415,6 @@ impl<T> Island<T> {
         )
     }
 
-    /// The item under a point given in island-local coordinates.
-    ///
-    /// Tabbed islands stack every item in the same place, so only the active one can be hit --
-    /// otherwise a click would land on whichever happened to be first in the list.
     pub fn item_at(&self, local: Point<f64, Logical>, gap: f64) -> Option<usize> {
         let rects = self.item_rects(gap);
         match self.layout {
@@ -524,17 +446,9 @@ impl<T> Island<T> {
     }
 }
 
-/// The islands on one canvas, in top-to-bottom Z order.
-///
-/// Flat `Vec` with explicit Z-order and linear hit-testing, exactly like `FloatingSpace`. A
-/// quadtree buys nothing here: a linear scan over a few hundred rectangles is microseconds, and
-/// the ordering has to be explicit anyway because Z is a user-visible property rather than a
-/// derived one.
 #[derive(Debug)]
 pub struct IslandSpace<T> {
     islands: Vec<Island<T>>,
-    /// Which island has focus. Not necessarily the topmost: focus-follows-mouse should focus
-    /// without raising, because raising on hover is maddening.
     active: Option<IslandId>,
 }
 
@@ -552,7 +466,6 @@ impl<T> IslandSpace<T> {
         Self::default()
     }
 
-    /// Islands from top to bottom.
     pub fn islands(&self) -> impl Iterator<Item = &Island<T>> {
         self.islands.iter()
     }
@@ -569,7 +482,6 @@ impl<T> IslandSpace<T> {
         self.islands.is_empty()
     }
 
-    /// Adds an island on top and focuses it.
     pub fn add(&mut self, island: Island<T>) -> IslandId {
         let id = island.id();
         self.islands.insert(0, island);
@@ -582,7 +494,6 @@ impl<T> IslandSpace<T> {
         let island = self.islands.remove(idx);
 
         if self.active == Some(id) {
-            // Focus whatever is now topmost, rather than leaving focus dangling.
             self.active = self.islands.first().map(|i| i.id());
         }
 
@@ -614,7 +525,6 @@ impl<T> IslandSpace<T> {
         }
     }
 
-    /// Brings an island to the front. Does not change focus.
     pub fn raise(&mut self, id: IslandId) -> bool {
         let Some(idx) = self.islands.iter().position(|i| i.id() == id) else {
             return false;
@@ -624,19 +534,13 @@ impl<T> IslandSpace<T> {
         true
     }
 
-    /// The topmost island containing a canvas point.
     pub fn island_at(&self, point: Point<f64, Canvas>) -> Option<&Island<T>> {
         self.islands.iter().find(|i| i.rect().contains(point))
     }
 
-    /// The nearest island in a direction from the active one.
-    ///
-    /// This is what the 24 direction functions route through. See `nearest_in_direction`.
     pub fn neighbour(&self, dir: Direction) -> Option<IslandId> {
         let from = self.active()?.rect();
 
-        // The spatial helper works in `Logical`; islands live in `Canvas`. Both are plain
-        // logical pixels, so this is a unit change rather than a conversion.
         let strip = |r: Rectangle<f64, Canvas>| -> Rectangle<f64, Logical> {
             Rectangle::new(
                 Point::from((r.loc.x, r.loc.y)),
@@ -654,7 +558,6 @@ impl<T> IslandSpace<T> {
         nearest_in_direction(strip(from), &candidates, dir)
     }
 
-    /// Bounding box of every island, for framing the lot.
     pub fn bbox(&self) -> Option<Rectangle<f64, Canvas>> {
         let mut acc: Option<Rectangle<f64, Canvas>> = None;
         for island in &self.islands {
@@ -768,11 +671,9 @@ mod container_tests {
         let under = space.add(island_at(0., 0., 200., 200., IslandLayout::Single));
         let over = space.add(island_at(50., 50., 200., 200., IslandLayout::Single));
 
-        // Overlapping region: the later addition is on top.
         let hit = space.island_at(Point::from((100., 100.))).unwrap().id();
         assert_eq!(hit, over);
 
-        // Only the lower one covers this.
         let hit = space.island_at(Point::from((10., 10.))).unwrap().id();
         assert_eq!(hit, under);
 
@@ -810,7 +711,6 @@ mod container_tests {
         island.add(2);
         assert_eq!(island.items(), &[1, 2]);
 
-        // Focus the first, then add: the new item lands beside it, not at the end.
         assert!(island.set_active_idx(0));
         island.add(3);
         assert_eq!(island.items(), &[1, 3, 2]);
@@ -826,18 +726,15 @@ mod container_tests {
         }
         assert_eq!(island.active_idx(), Some(3));
 
-        // Removing something before the active item shifts it down.
         island.remove(0);
         assert_eq!(island.active_idx(), Some(2));
         island.verify_invariants();
 
-        // Removing the last item, while it is active, must not leave the index past the end.
         assert!(island.set_active_idx(2));
         island.remove(2);
         assert_eq!(island.active_idx(), Some(1));
         island.verify_invariants();
 
-        // Emptying it parks the index.
         while island.remove(0).is_some() {}
         assert_eq!(island.active_idx(), None);
         island.verify_invariants();
@@ -849,14 +746,12 @@ mod container_tests {
         for i in 0..3 {
             island.add(i);
         }
-        // Three 300-wide columns, no gap.
         assert_eq!(island.item_at(Point::from((10., 10.)), 0.), Some(0));
         assert_eq!(island.item_at(Point::from((450., 10.)), 0.), Some(1));
         assert_eq!(island.item_at(Point::from((890., 10.)), 0.), Some(2));
         assert_eq!(island.item_at(Point::from((10., 999.)), 0.), None);
     }
 
-    /// Tabbed islands stack every item in one place, so only the visible one is hittable.
     #[test]
     fn tabbed_only_hits_the_active_item() {
         let mut island = island_at(0., 0., 400., 300., IslandLayout::Tabbed);
@@ -873,51 +768,23 @@ mod container_tests {
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Spawn placement
-//
-// Where a new window goes. The rule has to be stateless and predictable -- "it appears where I
-// am looking" is learnable in one use, and every cleverer alternative (remember per-app
-// position, auto-arrange, pack into a grid) fails because you cannot predict it, and
-// unpredictable placement on an unbounded canvas is hostile.
-// ---------------------------------------------------------------------------------------------
+// -
+// -
 
-/// Where a newly opened window should go.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpawnTarget {
-    /// Join an existing island, tiling into it.
     Join(IslandId),
-    /// Start a new island. The position is carried separately by [`spawn_target`]'s caller.
     New,
 }
 
-/// Everything the placement rule needs to decide.
 #[derive(Debug, Clone, Copy)]
 pub struct SpawnContext {
-    /// Current camera zoom.
     pub zoom: f64,
-    /// Where the viewport centre lands on the canvas.
     pub viewport_center: Point<f64, Canvas>,
-    /// The island that had focus, if any.
     pub last_focused: Option<IslandId>,
-    /// For a transient (a dialog, a file picker), the island holding its parent.
     pub parent_island: Option<IslandId>,
-    /// Whether the camera is deliberately framing something.
-    ///
-    /// This gates rule 3 below, and it exists because the viewport centre alone is the wrong
-    /// evidence for "I am looking at this island". A window opens at the viewport centre, so on
-    /// the very next spawn the centre is sitting on top of it -- and rule 3 would join, and the
-    /// one after that, until an unbounded canvas has collapsed into a single island. Three
-    /// terminals opened in a row have to be three islands.
-    ///
-    /// What distinguishes meaning it is the camera *holding* that island: camera-maximize and
-    /// focus-follow are deliberate acts, an unmoved viewport is not. So when you have framed
-    /// your editor and open a terminal, it tiles beside the editor; when you are just looking at
-    /// the canvas, you get an island of your own.
     pub camera_is_framing: bool,
-    /// Below this zoom, the viewport centre stops being a meaningful place to put things.
     pub zoom_threshold: f64,
-    /// How far outside an island still counts as "over" it, in canvas pixels.
     pub snap_margin: f64,
 }
 
@@ -935,31 +802,13 @@ impl Default for SpawnContext {
     }
 }
 
-/// Decides where a new window goes.
-///
-/// The order of the rules is the whole design:
-///
-/// 1. **A transient joins its parent's island.** This is checked first, ahead of the zoom rule,
-///    which is a deliberate departure from the original sketch. A Save dialog must appear with
-///    the window that opened it whatever the camera is doing; sending it to the last-focused
-///    island because you happened to be zoomed out would detach it from its parent, which is
-///    the one thing a dialog must never do.
-/// 2. **Zoomed far out, join the last-focused island.** At map scale the viewport centre covers
-///    a thousand canvas pixels of nothing, and a new window placed there is an unreachable
-///    speck.
-/// 3. **Over an island the camera is framing, join it.** With a margin, so "nearly on it"
-///    counts. The framing condition is what keeps this from swallowing the whole canvas -- see
-///    `SpawnContext::camera_is_framing`.
-/// 4. **Otherwise, a new island** where you are looking.
 pub fn spawn_target<T>(space: &IslandSpace<T>, ctx: &SpawnContext) -> SpawnTarget {
-    // 1. A dialog belongs with its parent, always.
     if let Some(parent) = ctx.parent_island {
         if space.get(parent).is_some() {
             return SpawnTarget::Join(parent);
         }
     }
 
-    // 2. Too far out for "where I am looking" to mean anything.
     if ctx.zoom < ctx.zoom_threshold {
         if let Some(last) = ctx.last_focused {
             if space.get(last).is_some() {
@@ -968,7 +817,6 @@ pub fn spawn_target<T>(space: &IslandSpace<T>, ctx: &SpawnContext) -> SpawnTarge
         }
     }
 
-    // 3. Looking at an island on purpose, grown by the snap margin.
     if ctx.camera_is_framing {
         let m = ctx.snap_margin.max(0.);
         for island in space.islands() {
@@ -983,16 +831,9 @@ pub fn spawn_target<T>(space: &IslandSpace<T>, ctx: &SpawnContext) -> SpawnTarge
         }
     }
 
-    // 4. Somewhere empty: start fresh.
     SpawnTarget::New
 }
 
-/// Finds a spot for a new island near `preferred` that does not sit exactly on another.
-///
-/// Exact overlap is the thing worth avoiding: open three terminals without moving and all three
-/// land on the same point, perfectly stacked, and you drag two apart every single time. A
-/// spiral outward is enough -- it keeps the window near where you were looking, which is the
-/// whole point, while guaranteeing you can see that a new one appeared.
 pub fn free_spot_near<T>(
     space: &IslandSpace<T>,
     preferred: Point<f64, Canvas>,
@@ -1004,8 +845,6 @@ pub fn free_spot_near<T>(
     let overlaps_at = |p: Point<f64, Canvas>| {
         let candidate = Rectangle::new(p, Size::from((size.w, size.h)));
         space.islands().any(|i| {
-            // Only *near-exact* overlap counts. Islands are expected to overlap on a canvas;
-            // what is unusable is one hidden precisely behind another.
             let r = i.rect();
             (r.loc.x - candidate.loc.x).abs() < step && (r.loc.y - candidate.loc.y).abs() < step
         })
@@ -1015,7 +854,6 @@ pub fn free_spot_near<T>(
         return preferred;
     }
 
-    // Square spiral: right, down, left, up, growing every two legs.
     let (mut dx, mut dy) = (1i32, 0i32);
     let (mut x, mut y) = (0i32, 0i32);
     let mut leg = 1i32;
@@ -1033,7 +871,6 @@ pub fn free_spot_near<T>(
                 return p;
             }
         }
-        // Turn right.
         let (ndx, ndy) = (-dy, dx);
         dx = ndx;
         dy = ndy;
@@ -1044,7 +881,6 @@ pub fn free_spot_near<T>(
         }
     }
 
-    // Everything nearby is taken. Better to stack than to refuse to open a window.
     preferred
 }
 
@@ -1079,8 +915,6 @@ mod spawn_tests {
         assert_eq!(spawn_target(&space, &ctx), SpawnTarget::Join(id));
     }
 
-    /// The rule that keeps a canvas a canvas: sitting on an island by accident is not the same
-    /// as looking at one on purpose.
     #[test]
     fn an_unframed_island_under_the_viewport_is_not_joined() {
         let (space, _) = space_with_one_at(0., 0.);
@@ -1092,7 +926,6 @@ mod spawn_tests {
         assert_eq!(spawn_target(&space, &ctx), SpawnTarget::New);
     }
 
-    /// ...but the zoom rule still outranks it, because a speck on a map is worse.
     #[test]
     fn zoomed_out_still_joins_even_unframed() {
         let (space, id) = space_with_one_at(0., 0.);
@@ -1119,7 +952,6 @@ mod spawn_tests {
     #[test]
     fn the_snap_margin_counts_as_over_it() {
         let (space, id) = space_with_one_at(0., 0.);
-        // 10px outside the right edge, inside the default 32px margin.
         let ctx = SpawnContext {
             viewport_center: Point::from((410., 150.)),
             ..Default::default()
@@ -1127,7 +959,6 @@ mod spawn_tests {
         assert_eq!(spawn_target(&space, &ctx), SpawnTarget::Join(id));
     }
 
-    /// At map scale the viewport centre is meaningless, so fall back to the last focus.
     #[test]
     fn zoomed_far_out_joins_the_last_focused_island() {
         let (space, id) = space_with_one_at(0., 0.);
@@ -1140,7 +971,6 @@ mod spawn_tests {
         assert_eq!(spawn_target(&space, &ctx), SpawnTarget::Join(id));
     }
 
-    /// The rule that matters most: a dialog must never detach from its parent.
     #[test]
     fn a_transient_follows_its_parent_even_when_zoomed_out() {
         let mut space: IslandSpace<u32> = IslandSpace::new();
@@ -1156,8 +986,6 @@ mod spawn_tests {
         ));
 
         let ctx = SpawnContext {
-            // Every other rule points somewhere else: zoomed out, focus elsewhere, looking
-            // at empty canvas.
             zoom: 0.2,
             viewport_center: Point::from((9000., 9000.)),
             last_focused: Some(other),
@@ -1176,7 +1004,6 @@ mod spawn_tests {
         let (space, id) = space_with_one_at(0., 0.);
         let gone = IslandId::next();
 
-        // Parent island no longer exists: fall through to the remaining rules.
         let ctx = SpawnContext {
             viewport_center: Point::from((200., 150.)),
             parent_island: Some(gone),
@@ -1184,7 +1011,6 @@ mod spawn_tests {
         };
         assert_eq!(spawn_target(&space, &ctx), SpawnTarget::Join(id));
 
-        // Stale focus while zoomed out: fall through rather than joining nothing.
         let ctx = SpawnContext {
             zoom: 0.2,
             viewport_center: Point::from((9000., 9000.)),
@@ -1201,7 +1027,6 @@ mod spawn_tests {
         assert_eq!(free_spot_near(&space, p, Size::from((400., 300.)), 48.), p);
     }
 
-    /// Three windows opened without moving must not stack perfectly on each other.
     #[test]
     fn exact_overlap_is_nudged_away() {
         let mut space: IslandSpace<u32> = IslandSpace::new();
@@ -1225,7 +1050,6 @@ mod spawn_tests {
             }
         }
 
-        // And they should stay near where you were looking, not fly off.
         for p in placed {
             assert!((p.x - preferred.x).abs() < 500.);
             assert!((p.y - preferred.y).abs() < 500.);

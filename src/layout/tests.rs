@@ -30,7 +30,6 @@ struct TestWindowInner {
     bbox: Cell<Rectangle<i32, Logical>>,
     initial_bbox: Rectangle<i32, Logical>,
     requested_size: Cell<Option<Size<i32, Logical>>>,
-    // Emulates the window ignoring the compositor-provided size.
     forced_size: Cell<Option<Size<i32, Logical>>>,
     min_size: Size<i32, Logical>,
     max_size: Size<i32, Logical>,
@@ -303,7 +302,6 @@ fn arbitrary_size_change() -> impl Strategy<Value = SizeChange> {
         (0f64..).prop_map(SizeChange::SetProportion),
         any::<i32>().prop_map(SizeChange::AdjustFixed),
         any::<f64>().prop_map(SizeChange::AdjustProportion),
-        // Interactive resize can have negative values here.
         Just(SizeChange::SetFixed(-100)),
     ]
 }
@@ -1443,7 +1441,6 @@ impl Op {
                         }
 
                         if update {
-                            // FIXME: serial.
                             layout.update_window(&id, None);
                         }
                         return;
@@ -1480,7 +1477,6 @@ impl Op {
                 }
 
                 if update {
-                    // FIXME: serial.
                     layout.update_window(&id, None);
                 }
             }
@@ -1755,8 +1751,6 @@ fn operations_dont_panic() {
     for third in &every_op {
         for second in &every_op {
             for first in &every_op {
-                // eprintln!("{first:?}, {second:?}, {third:?}");
-
                 let mut layout = Layout::default();
                 first.clone().apply(&mut layout);
                 layout.verify_invariants();
@@ -1776,9 +1770,6 @@ fn operations_from_starting_state_dont_panic() {
         return;
     }
 
-    // Running every op from an empty state doesn't get us to all the interesting states. So,
-    // also run it from a manually-created starting state with more things going on to exercise
-    // more code paths.
     let setup_ops = [
         Op::AddOutput(1),
         Op::AddWindow {
@@ -1934,8 +1925,6 @@ fn operations_from_starting_state_dont_panic() {
     for third in &every_op {
         for second in &every_op {
             for first in &every_op {
-                // eprintln!("{first:?}, {second:?}, {third:?}");
-
                 let mut layout = Layout::default();
                 for op in &setup_ops {
                     op.clone().apply(&mut layout);
@@ -2005,8 +1994,6 @@ fn removing_output_must_keep_empty_focus_on_primary() {
         unreachable!()
     };
 
-    // The workspace from the removed output was inserted at position 0, so the active workspace
-    // must change to 1 to keep the focus on the empty workspace.
     assert_eq!(monitors[0].active_workspace_idx, 1);
 }
 
@@ -2070,12 +2057,9 @@ fn named_workspaces_dont_update_original_output_on_adding_window() {
         Op::AddOutput(2),
         Op::RemoveOutput(1),
         Op::FocusWorkspaceUp,
-        // Adding a window updates the original output for unnamed workspaces.
         Op::AddWindow {
             params: TestWindowParams::new(1),
         },
-        // Connecting the previous output should move the named workspace back since its
-        // original output wasn't updated.
         Op::AddOutput(1),
     ];
 
@@ -2084,7 +2068,7 @@ fn named_workspaces_dont_update_original_output_on_adding_window() {
         .workspaces()
         .find(|(_, _, ws)| ws.name().is_some())
         .unwrap();
-    assert!(ws.name().is_some()); // Sanity check.
+    assert!(ws.name().is_some());
     let mon = mon.unwrap();
     assert_eq!(mon.output_name(), "output1");
 }
@@ -2109,7 +2093,7 @@ fn workspaces_update_original_output_on_moving_to_same_output() {
         .workspaces()
         .find(|(_, _, ws)| ws.name().is_some())
         .unwrap();
-    assert!(ws.name().is_some()); // Sanity check.
+    assert!(ws.name().is_some());
     let mon = mon.unwrap();
     assert_eq!(mon.output_name(), "output2");
 }
@@ -2137,7 +2121,7 @@ fn workspaces_update_original_output_on_moving_to_same_monitor() {
         .workspaces()
         .find(|(_, _, ws)| ws.name().is_some())
         .unwrap();
-    assert!(ws.name().is_some()); // Sanity check.
+    assert!(ws.name().is_some());
     let mon = mon.unwrap();
     assert_eq!(mon.output_name(), "output2");
 }
@@ -2316,7 +2300,6 @@ fn open_right_of_on_different_workspace() {
 }
 
 #[test]
-// empty_workspace_above_first = true
 fn open_right_of_on_different_workspace_ewaf() {
     let ops = [
         Op::AddOutput(1),
@@ -2430,7 +2413,6 @@ fn preset_height_change_removes_preset() {
         op.apply(&mut layout);
     }
 
-    // Leave only one.
     config.layout.preset_window_heights = vec![PresetSize::Fixed(1)];
 
     layout.update_config(&config);
@@ -2743,7 +2725,6 @@ fn named_workspace_to_output() {
 }
 
 #[test]
-// empty_workspace_above_first = true
 fn named_workspace_to_output_ewaf() {
     let ops = [
         Op::AddNamedWorkspace {
@@ -2937,8 +2918,6 @@ fn add_window_next_to_only_interactively_moved_without_outputs() {
             py: 0.0,
         },
         Op::RemoveOutput(1),
-        // We have no outputs, and the only existing window is interactively moved, meaning there
-        // are no workspaces either.
         Op::AddWindowNextTo {
             params: TestWindowParams::new(3),
             next_to_id: 2,
@@ -3009,7 +2988,6 @@ fn interactive_move_from_workspace_with_layout_config() {
             px: 0.0,
             py: 0.0,
         },
-        // Now remove and add the output. It will have the same workspace.
         Op::RemoveOutput(1),
         Op::AddOutput(1),
         Op::InteractiveMoveUpdate {
@@ -3020,7 +2998,6 @@ fn interactive_move_from_workspace_with_layout_config() {
             px: 0.0,
             py: 0.0,
         },
-        // Now move onto a different workspace.
         Op::FocusWorkspaceDown,
         Op::CompleteAnimations,
         Op::InteractiveMoveUpdate {
@@ -3361,7 +3338,6 @@ fn preset_column_width_fixed_correct_with_border() {
     let win = layout.windows().next().unwrap().1;
     assert_eq!(win.requested_size().unwrap().w, 500);
 
-    // Add border.
     let options = Options {
         layout: zen_config::Layout {
             preset_column_widths: vec![PresetSize::Fixed(500)],
@@ -3376,11 +3352,9 @@ fn preset_column_width_fixed_correct_with_border() {
     };
     layout.update_options(options);
 
-    // With border, the window gets less size.
     let win = layout.windows().next().unwrap().1;
     assert_eq!(win.requested_size().unwrap().w, 490);
 
-    // However, preset fixed width will still work correctly.
     layout.toggle_width(true);
     let win = layout.windows().next().unwrap().1;
     assert_eq!(win.requested_size().unwrap().w, 500);
@@ -3530,26 +3504,21 @@ fn restore_to_floating_persists_across_fullscreen_maximize() {
             params: TestWindowParams::new(1),
         },
         Op::ToggleWindowFloating { id: None },
-        // Maximize then fullscreen.
         Op::MaximizeWindowToEdges { id: None },
         Op::FullscreenWindow(1),
-        // Unfullscreen.
         Op::FullscreenWindow(1),
     ];
 
     let mut layout = check_ops(ops);
 
-    // Unfullscreening should return the window to the maximized state.
     let scrolling = layout.active_workspace().unwrap().scrolling();
     assert!(scrolling.tiles().next().is_some());
 
     let ops = [
-        // Unmaximize.
         Op::MaximizeWindowToEdges { id: None },
     ];
     check_ops_on_layout(&mut layout, ops);
 
-    // Unmaximize should return the window back to floating.
     let scrolling = layout.active_workspace().unwrap().scrolling();
     assert!(scrolling.tiles().next().is_none());
 }
@@ -3562,26 +3531,21 @@ fn unmaximize_during_fullscreen_does_not_float() {
             params: TestWindowParams::new(1),
         },
         Op::ToggleWindowFloating { id: None },
-        // Maximize then fullscreen.
         Op::MaximizeWindowToEdges { id: None },
         Op::FullscreenWindow(1),
-        // Unmaximize.
         Op::MaximizeWindowToEdges { id: None },
     ];
 
     let mut layout = check_ops(ops);
 
-    // Unmaximize shouldn't have changed the window state since it's fullscreen.
     let scrolling = layout.active_workspace().unwrap().scrolling();
     assert!(scrolling.tiles().next().is_some());
 
     let ops = [
-        // Unfullscreen.
         Op::FullscreenWindow(1),
     ];
     check_ops_on_layout(&mut layout, ops);
 
-    // Unfullscreen should return the window back to floating.
     let scrolling = layout.active_workspace().unwrap().scrolling();
     assert!(scrolling.tiles().next().is_none());
 }
@@ -3602,7 +3566,6 @@ fn move_column_to_workspace_maximize_and_fullscreen() {
     let layout = check_ops(ops);
     let (_, win) = layout.windows().next().unwrap();
 
-    // Unfullscreening should return to maximized because the window was maximized before.
     assert_eq!(win.pending_sizing_mode(), SizingMode::Maximized);
 }
 
@@ -3622,12 +3585,6 @@ fn move_window_to_workspace_maximize_and_fullscreen() {
     let layout = check_ops(ops);
     let (_, win) = layout.windows().next().unwrap();
 
-    // Unfullscreening should return to maximized because the window was maximized before.
-    //
-    // FIXME: it currently doesn't because windows themselves can only be either fullscreen or
-    // maximized. So when a window is fullscreen, whether it is also maximized or not is stored in
-    // the column. MoveWindowToWorkspace removes the window from the column and this information is
-    // forgotten.
     assert_eq!(win.pending_sizing_mode(), SizingMode::Normal);
 }
 
@@ -3679,18 +3636,11 @@ fn expel_pending_left_from_fullscreen_tabbed_column() {
         },
         Op::FullscreenWindow(1),
         Op::Communicate(1),
-        // 1 is now fullscreen, view_offset_to_restore is set.
         Op::ToggleColumnTabbedDisplay,
         Op::AddWindow {
             params: TestWindowParams::new(2),
         },
         Op::ConsumeOrExpelWindowLeft { id: Some(2) },
-        // 2 is consumed into a fullscreen column, fullscreen is requested but not applied.
-        //
-        // Now, get it back out while keeping it focused.
-        //
-        // Importantly, we expel it *left*, which results in adding a new column with the exact
-        // same active_column_idx.
         Op::FocusWindow(2),
         Op::ConsumeOrExpelWindowLeft { id: None },
     ];
@@ -3744,38 +3694,26 @@ fn parent_id_causes_loop(layout: &Layout<TestWindow>, id: usize, mut parent_id: 
                 match win.0.parent_id.get() {
                     Some(new_parent_id) => {
                         if new_parent_id == id {
-                            // Found a loop.
                             return true;
                         }
 
                         parent_id = new_parent_id;
                         continue 'outer;
                     }
-                    // Reached window with no parent.
                     None => return false,
                 }
             }
         }
 
-        // Parent is not in the layout.
         return false;
     }
 }
 
 fn arbitrary_spacing() -> impl Strategy<Value = f64> {
-    // Give equal weight to:
-    // - 0: the element is disabled
-    // - 4: some reasonable value
-    // - random value, likely unreasonably big
     prop_oneof![Just(0.), Just(4.), ((1.)..=65535.)]
 }
 
 fn arbitrary_spacing_neg() -> impl Strategy<Value = f64> {
-    // Give equal weight to:
-    // - 0: the element is disabled
-    // - 4: some reasonable value
-    // - -4: some reasonable negative value
-    // - random value, likely unreasonably big
     prop_oneof![Just(0.), Just(4.), Just(-4.), ((1.)..=65535.)]
 }
 
@@ -3921,7 +3859,6 @@ proptest! {
         ops: Vec<Op>,
         layout_config in arbitrary_layout_part(),
     ) {
-        // eprintln!("{ops:?}");
         let options = Options {
             layout: zen_config::Layout::from_part(&layout_config),
             ..Default::default()

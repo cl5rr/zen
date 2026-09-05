@@ -46,7 +46,6 @@ impl FrameClock {
 
     pub fn presented(&mut self, presentation_time: Duration) {
         if presentation_time.is_zero() {
-            // Not interested in these.
             return;
         }
 
@@ -66,12 +65,10 @@ impl FrameClock {
         let refresh_interval_ns = refresh_interval_ns.get();
 
         if now <= last_presentation_time {
-            // Got an early VBlank.
             let orig_now = now;
             now += Duration::from_nanos(refresh_interval_ns);
 
             if now < last_presentation_time {
-                // Not sure when this can happen.
                 error!(
                     now = ?orig_now,
                     ?last_presentation_time,
@@ -87,8 +84,6 @@ impl FrameClock {
             since_last.as_secs() * 1_000_000_000 + u64::from(since_last.subsec_nanos());
         let to_next_ns = (since_last_ns / refresh_interval_ns + 1) * refresh_interval_ns;
 
-        // If VRR is enabled and more than one frame passed since last presentation, assume that we
-        // can present immediately.
         if self.vrr && to_next_ns > refresh_interval_ns {
             now
         } else {

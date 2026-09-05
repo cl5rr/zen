@@ -71,7 +71,6 @@ pub struct Stream {
 
 #[derive(Clone)]
 enum StreamTarget {
-    // FIXME: update on scale changes and whatnot.
     Output(zen_ipc::Output),
     Window { id: u64 },
 }
@@ -85,9 +84,7 @@ pub enum StreamTargetId {
 #[derive(Debug, SerializeDict, Type, Value)]
 #[zvariant(signature = "dict")]
 struct StreamParameters {
-    /// Position of the stream in logical coordinates.
     position: (i32, i32),
-    /// Size of the stream in logical coordinates.
     size: (i32, i32),
 }
 
@@ -162,7 +159,6 @@ impl Session {
         debug!("stop");
 
         if self.stopped.swap(true, Ordering::SeqCst) {
-            // Already stopped.
             return;
         }
 
@@ -295,7 +291,6 @@ impl Stream {
                 }
             }
             StreamTarget::Window { .. } => {
-                // Does any consumer need this?
                 StreamParameters {
                     position: (0, 0),
                     size: (1, 1),

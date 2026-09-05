@@ -48,7 +48,6 @@ fn main() -> glib::ExitCode {
 }
 
 fn on_startup(_app: &adw::Application) {
-    // Load our CSS.
     let provider = gtk::CssProvider::new();
     provider.load_from_string(include_str!("../resources/style.css"));
     if let Some(display) = gdk::Display::default() {

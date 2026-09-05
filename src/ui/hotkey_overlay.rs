@@ -21,7 +21,6 @@ use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
 use crate::utils::{output_size, to_physical_precise_round};
 
 const PADDING: i32 = 8;
-// const MARGIN: i32 = PADDING * 2;
 const FONT: &str = "sans 14px";
 const BORDER: i32 = 4;
 const LINE_INTERVAL: i32 = 2;
@@ -90,7 +89,6 @@ impl HotkeyOverlay {
         let mut buffers = self.buffers.borrow_mut();
         buffers.retain(|output, _| output.is_alive());
 
-        // FIXME: should probably use the working area rather than view size.
         let weak = output.downgrade();
         if let Some(rendered) = buffers.get(&weak) {
             if let Some(buffer) = &rendered.buffer {
@@ -197,11 +195,8 @@ fn format_bind(binds: &[Bind], action: &Action) -> Option<(Option<Key>, String)>
 fn collect_actions(config: &Config) -> Vec<&Action> {
     let binds = &config.binds.0;
 
-    // Collect actions that we want to show.
     let mut actions = vec![&Action::ShowHotkeyOverlay];
 
-    // Prefer Quit(false) if found, otherwise try Quit(true), and if there's neither, fall back to
-    // Quit(false).
     if binds.iter().any(|bind| bind.action == Action::Quit(false)) {
         actions.push(&Action::Quit(false));
     } else if binds.iter().any(|bind| bind.action == Action::Quit(true)) {
@@ -220,7 +215,6 @@ fn collect_actions(config: &Config) -> Vec<&Action> {
         &Action::FocusWorkspaceUp,
     ]);
 
-    // Prefer move-column-to-workspace-down, but fall back to move-window-to-workspace-down.
     if let Some(bind) = binds
         .iter()
         .find(|bind| matches!(bind.action, Action::MoveColumnToWorkspaceDown(_)))
@@ -235,7 +229,6 @@ fn collect_actions(config: &Config) -> Vec<&Action> {
         actions.push(&Action::MoveColumnToWorkspaceDown(true));
     }
 
-    // Same for -up.
     if let Some(bind) = binds
         .iter()
         .find(|bind| matches!(bind.action, Action::MoveColumnToWorkspaceUp(_)))
@@ -260,7 +253,6 @@ fn collect_actions(config: &Config) -> Vec<&Action> {
         &Action::ToggleOverview,
     ]);
 
-    // Screenshot is not as important, can omit if not bound.
     if let Some(bind) = binds
         .iter()
         .find(|bind| matches!(bind.action, Action::Screenshot(_, _)))
@@ -268,35 +260,28 @@ fn collect_actions(config: &Config) -> Vec<&Action> {
         actions.push(&bind.action);
     }
 
-    // Add actions with a custom hotkey-overlay-title.
     for bind in binds {
         if matches!(bind.hotkey_overlay_title, Some(Some(_))) {
-            // Avoid duplicate actions.
             if !actions.contains(&&bind.action) {
                 actions.push(&bind.action);
             }
         }
     }
 
-    // Add the spawn actions.
     for bind in binds.iter().filter(|bind| {
         matches!(bind.action, Action::Spawn(_) | Action::SpawnSh(_))
-            // Only show binds with Mod or Super to filter out stuff like volume up/down.
             && (bind.key.modifiers.contains(Modifiers::COMPOSITOR)
                 || bind.key.modifiers.contains(Modifiers::SUPER))
-            // Also filter out wheel and touchpad scroll binds.
             && matches!(bind.key.trigger, Trigger::Keysym(_))
     }) {
         let action = &bind.action;
 
-        // We only show one bind for each action, so we need to deduplicate the Spawn actions.
         if !actions.contains(&action) {
             actions.push(action);
         }
     }
 
     if config.hotkey_overlay.hide_not_bound {
-        // Only keep actions that have been bound
         actions.retain(|&action| binds.iter().any(|bind| bind.action == *action))
     }
 
@@ -311,15 +296,8 @@ fn render(
 ) -> anyhow::Result<RenderedOverlay> {
     let _span = tracy_client::span!("hotkey_overlay::render");
 
-    // let margin = MARGIN * scale;
     let padding: i32 = to_physical_precise_round(scale, PADDING);
     let line_interval: i32 = to_physical_precise_round(scale, LINE_INTERVAL);
-
-    // FIXME: if it doesn't fit, try splitting in two columns or something.
-    // let mut target_size = output_size;
-    // target_size.w -= margin * 2;
-    // target_size.h -= margin * 2;
-    // anyhow::ensure!(target_size.w > 0 && target_size.h > 0);
 
     let strings = collect_actions(config)
         .into_iter()
@@ -433,7 +411,6 @@ fn render(
     cr.line_to(0., height.into());
     cr.line_to(0., 0.);
     cr.set_source_rgb(0.5, 0.8, 1.0);
-    // Keep the border width even to avoid blurry edges.
     cr.set_line_width((f64::from(BORDER) / 2. * scale).round() * 2.);
     cr.stroke()?;
     drop(cr);
@@ -486,7 +463,6 @@ fn action_name(action: &Action) -> String {
         ),
         Action::SpawnSh(command) => format!(
             "Spawn <span face='monospace' bgcolor='#000000'>{}</span>",
-            // Fairly crude but should get the job done in most cases.
             command.split_ascii_whitespace().next().unwrap_or("")
         ),
         _ => String::from("FIXME: Unknown"),
@@ -498,7 +474,6 @@ fn key_name(screen_reader: bool, mod_key: ModKey, key: &Key) -> String {
 
     let has_comp_mod = key.modifiers.contains(Modifiers::COMPOSITOR);
 
-    // Compositor mod goes first.
     if has_comp_mod {
         match mod_key {
             ModKey::Super => {
@@ -630,10 +605,8 @@ mod tests {
 
     #[test]
     fn test_format_bind() {
-        // Not bound.
         assert_snapshot!(check("", Action::Screenshot(true, None)), @" (not bound) : Take a Screenshot");
 
-        // Bound with a default title.
         assert_snapshot!(
             check(
                 r#"binds {
@@ -644,7 +617,6 @@ mod tests {
             @" Super + P : Take a Screenshot"
         );
 
-        // Custom title.
         assert_snapshot!(
             check(
                 r#"binds {
@@ -655,7 +627,6 @@ mod tests {
             @" Super + P : Hello"
         );
 
-        // Prefer first bind.
         assert_snapshot!(
             check(
                 r#"binds {
@@ -667,7 +638,6 @@ mod tests {
             @" Super + P : Take a Screenshot"
         );
 
-        // Prefer bind with custom title.
         assert_snapshot!(
             check(
                 r#"binds {
@@ -679,7 +649,6 @@ mod tests {
             @" PrtSc : My Cool Bind"
         );
 
-        // Prefer first bind with custom title.
         assert_snapshot!(
             check(
                 r#"binds {
@@ -691,7 +660,6 @@ mod tests {
             @" Super + P : First"
         );
 
-        // Any bind with null title hides it.
         assert_snapshot!(
             check(
                 r#"binds {
@@ -703,7 +671,6 @@ mod tests {
             @"None"
         );
 
-        // Custom title takes preference over null.
         assert_snapshot!(
             check(
                 r#"binds {

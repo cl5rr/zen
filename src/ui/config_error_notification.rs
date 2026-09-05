@@ -28,8 +28,6 @@ pub struct ConfigErrorNotification {
     state: State,
     buffers: RefCell<HashMap<NotNan<f64>, Option<TextureBuffer<GlesTexture>>>>,
 
-    // If set, this is a "Created config at {path}" notification. If unset, this is a config error
-    // notification.
     created_path: Option<PathBuf>,
 
     clock: Clock,
@@ -85,7 +83,6 @@ impl ConfigErrorNotification {
             self.buffers.borrow_mut().clear();
         }
 
-        // Show from scratch even if already showing to bring attention.
         self.state = State::Showing(self.animation(0., 1.));
     }
 
@@ -103,9 +100,6 @@ impl ConfigErrorNotification {
             State::Showing(anim) => {
                 if anim.is_done() {
                     let duration = if self.created_path.is_some() {
-                        // Make this quite a bit longer because it comes with a monitor modeset
-                        // (can take a while) and an important hotkeys popup diverting the
-                        // attention.
                         Duration::from_secs(8)
                     } else {
                         Duration::from_secs(4)
@@ -227,7 +221,6 @@ fn render(
     cr.line_to(0., height.into());
     cr.line_to(0., 0.);
     cr.set_source_rgb(border_color.0, border_color.1, border_color.2);
-    // Keep the border width even to avoid blurry edges.
     cr.set_line_width((f64::from(BORDER) / 2. * scale).round() * 2.);
     cr.stroke()?;
     drop(cr);

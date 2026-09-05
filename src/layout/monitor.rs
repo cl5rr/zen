@@ -37,7 +37,6 @@ use crate::utils::{
     output_size, round_logical_in_physical, round_logical_in_physical_max1, ResizeEdge,
 };
 
-/// Amount of touchpad movement to scroll the height of one workspace.
 const WORKSPACE_GESTURE_MOVEMENT: f64 = 300.;
 
 const WORKSPACE_GESTURE_RUBBER_BAND: RubberBand = RubberBand {
@@ -45,68 +44,31 @@ const WORKSPACE_GESTURE_RUBBER_BAND: RubberBand = RubberBand {
     limit: 0.05,
 };
 
-/// Amount of DnD edge scrolling to scroll the height of one workspace.
-///
-/// This constant is tied to the default dnd-edge-workspace-switch max-speed setting.
 const WORKSPACE_DND_EDGE_SCROLL_MOVEMENT: f64 = 1500.;
 
 #[derive(Debug)]
 pub struct Monitor<W: LayoutElement> {
-    /// Output for this monitor.
     pub(super) output: Output,
-    /// Cached name of the output.
     output_name: String,
-    /// Latest known scale for this output.
     scale: smithay::output::Scale,
-    /// Latest known size for this output.
     view_size: Size<f64, Logical>,
-    /// Latest known working area for this output.
-    ///
-    /// Not rounded to physical pixels.
-    // FIXME: since this is used for things like DnD scrolling edges in the overview, ideally this
-    // should only consider overlay and top layer-shell surfaces. However, Smithay doesn't easily
-    // let you do this at the moment.
     working_area: Rectangle<f64, Logical>,
-    // Must always contain at least one.
     pub(super) workspaces: Vec<Workspace<W>>,
-    /// Index of the currently active workspace.
     pub(super) active_workspace_idx: usize,
-    /// ID of the previously active workspace.
     pub(super) previous_workspace_id: Option<WorkspaceId>,
-    /// In-progress switch between workspaces.
     pub(super) workspace_switch: Option<WorkspaceSwitch>,
-    /// Indication where an interactively-moved window is about to be placed.
     pub(super) insert_hint: Option<InsertHint>,
-    /// Insert hint element for rendering.
     insert_hint_element: InsertHintElement,
-    /// Location to render the insert hint element.
     insert_hint_render_loc: Option<InsertHintRenderLoc>,
-    /// Whether the overview is open.
     pub(super) overview_open: bool,
-    /// Progress of the overview zoom animation, 1 is fully in overview.
     overview_progress: Option<OverviewProgress>,
-    /// Window the camera is framing, and the rect it was last framed at.
-    ///
-    /// Kept so the camera *follows* a window that moves or resizes rather than drifting off it.
-    /// Cleared the moment the user pans or zooms by hand: snapping back to a window you just
-    /// deliberately looked away from is the single easiest way to make this feel broken.
     camera_focus: Option<(W::Id, Rectangle<f64, Logical>)>,
 
-    /// Clock drawn onto the canvas for this output.
     canvas_clock: CanvasClock,
-    /// This output's camera.
-    ///
-    /// Composes with the overview: the effective zoom is the overview's contribution times the
-    /// camera's. That keeps the (still global) overview animation working untouched while the
-    /// camera is genuinely per-output, which is what ZEN needs and zen never had.
     pub(super) camera: Camera,
-    /// Clock for driving animations.
     pub(super) clock: Clock,
-    /// Configurable properties of the layout as received from the parent layout.
     pub(super) base_options: Rc<Options>,
-    /// Configurable properties of the layout.
     pub(super) options: Rc<Options>,
-    /// Layout config overrides for this monitor.
     layout_config: Option<zen_config::LayoutPart>,
 }
 
@@ -118,31 +80,15 @@ pub enum WorkspaceSwitch {
 
 #[derive(Debug)]
 pub struct WorkspaceSwitchGesture {
-    /// Index of the workspace where the gesture was started.
     center_idx: usize,
-    /// Fractional workspace index where the gesture was started.
-    ///
-    /// Can differ from center_idx when starting a gesture in the middle between workspaces, for
-    /// example by "catching" an animation.
     start_idx: f64,
-    /// Current, fractional workspace index.
     pub(super) current_idx: f64,
-    /// Animation for the extra offset to the current position.
-    ///
-    /// For example, if there's a workspace switch during a DnD scroll.
     animation: Option<Animation>,
     tracker: SwipeTracker,
-    /// Whether the gesture is controlled by the touchpad.
     is_touchpad: bool,
-    /// Whether the gesture is clamped to +-1 workspace around the center.
     is_clamped: bool,
 
-    // If this gesture is for drag-and-drop scrolling, this is the last event's unadjusted
-    // timestamp.
     dnd_last_event_time: Option<Duration>,
-    // Time when the drag-and-drop scroll delta became non-zero, used for debouncing.
-    //
-    // If `None` then the scroll delta is currently zero.
     dnd_nonzero_start_time: Option<Duration>,
 }
 
@@ -178,22 +124,15 @@ pub(super) enum OverviewProgress {
     Value(f64),
 }
 
-/// Where to put a newly added window.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub enum MonitorAddWindowTarget<'a, W: LayoutElement> {
-    /// No particular preference.
     #[default]
     Auto,
-    /// On this workspace.
     Workspace {
-        /// Id of the target workspace.
         id: WorkspaceId,
-        /// Override where the window will open as a new column.
         column_idx: Option<usize>,
     },
-    /// Next to this existing window.
     NextTo(&'a W::Id),
-    /// Into this island.
     Island(IslandId),
 }
 
@@ -311,16 +250,8 @@ impl From<&super::OverviewProgress> for OverviewProgress {
     }
 }
 
-/// Breathing room around a camera-framed window, in view pixels.
-///
-/// Deliberately non-zero: a sliver of surrounding canvas is what tells you where you are, and
-/// it is why the aspect mismatch against the output is a feature rather than a crop.
 pub const CAMERA_FOCUS_PADDING: f64 = 24.;
 
-/// Quantizes camera zoom into a scale factor to request from clients.
-///
-/// Only ever asks for *more* resolution than the output scale: dropping below 1.0 would leave
-/// windows blurry the instant you zoomed back in, and the memory saved is not worth that.
 pub(crate) fn quantize_camera_scale(zoom: f64) -> f64 {
     let zoom = zoom.max(1.0);
     (zoom * 4.).round() / 4.
@@ -342,7 +273,6 @@ impl<W: LayoutElement> Monitor<W> {
         let view_size = output_size(&output);
         let working_area = compute_working_area(&output);
 
-        // Prepare the workspaces: set output, empty first, empty last.
         let mut active_workspace_idx = 0;
 
         for (idx, ws) in workspaces.iter_mut().enumerate() {
@@ -493,7 +423,6 @@ impl<W: LayoutElement> Monitor<W> {
         idx: usize,
         config: Option<zen_config::Animation>,
     ) {
-        // FIXME: also compute and use current velocity.
         let current_idx = self.workspace_render_idx();
 
         if self.active_workspace_idx != idx {
@@ -506,11 +435,9 @@ impl<W: LayoutElement> Monitor<W> {
         let config = config.unwrap_or(self.options.animations.workspace_switch.0);
 
         match &mut self.workspace_switch {
-            // During a DnD scroll, we want to visually animate even if idx matches the active idx.
             Some(WorkspaceSwitch::Gesture(gesture)) if gesture.dnd_last_event_time.is_some() => {
                 gesture.center_idx = idx;
 
-                // Adjust start_idx to make current_idx point at idx.
                 let current_pos = gesture.current_idx - gesture.start_idx;
                 gesture.start_idx = idx as f64 - current_pos;
                 let prev_current_idx = gesture.current_idx;
@@ -520,7 +447,6 @@ impl<W: LayoutElement> Monitor<W> {
                 gesture.animate_from(-current_idx_delta, self.clock.clone(), config);
             }
             _ => {
-                // Don't animate if nothing changed.
                 if prev_active_idx == idx {
                     return;
                 }
@@ -562,9 +488,6 @@ impl<W: LayoutElement> Monitor<W> {
                 (idx, WorkspaceAddWindowTarget::NextTo(win_id))
             }
             MonitorAddWindowTarget::Island(island) => {
-                // A stale island id falls back to the active workspace rather than panicking:
-                // an island can disappear between the spawn decision and the window mapping,
-                // and losing the window over it would be far worse than misplacing it.
                 match self.workspaces.iter().position(|ws| ws.has_island(island)) {
                     Some(idx) => (idx, WorkspaceAddWindowTarget::Island(island)),
                     None => (self.active_workspace_idx, WorkspaceAddWindowTarget::Auto),
@@ -582,12 +505,8 @@ impl<W: LayoutElement> Monitor<W> {
         is_full_width: bool,
         is_floating: bool,
     ) {
-        // The camera may have moved since the last frame, and a window opening where the view
-        // used to be is exactly the kind of thing that makes an infinite canvas feel broken.
         self.sync_spawn_center();
 
-        // Currently, everything a workspace sets on a Tile is the same across all workspaces of a
-        // monitor. So we can use any workspace, not necessarily the exact target workspace.
         let tile = self.workspaces[0].make_tile(window);
 
         self.add_tile(
@@ -613,7 +532,6 @@ impl<W: LayoutElement> Monitor<W> {
 
         workspace.add_column(column, activate, anim);
 
-        // After adding a new window, workspace becomes this output's own.
         if workspace.name().is_none() {
             workspace.original_output = OutputId::new(&self.output);
         }
@@ -637,7 +555,6 @@ impl<W: LayoutElement> Monitor<W> {
         tile: Tile<W>,
         target: MonitorAddWindowTarget<W>,
         activate: ActivateWindow,
-        // FIXME: Refactor ActivateWindow enum to make this better.
         allow_to_activate_workspace: bool,
         width: ColumnWidth,
         is_full_width: bool,
@@ -658,13 +575,11 @@ impl<W: LayoutElement> Monitor<W> {
             anim,
         );
 
-        // After adding a new window, workspace becomes this output's own.
         if workspace.name().is_none() {
             workspace.original_output = OutputId::new(&self.output);
         }
 
         if workspace_idx == self.workspaces.len() - 1 {
-            // Insert a new empty workspace.
             self.add_workspace_bottom();
         }
 
@@ -685,20 +600,15 @@ impl<W: LayoutElement> Monitor<W> {
         tile_idx: Option<usize>,
         tile: Tile<W>,
         activate: bool,
-        // FIXME: Refactor ActivateWindow enum to make this better.
         allow_to_activate_workspace: bool,
     ) {
         let workspace = &mut self.workspaces[workspace_idx];
 
         workspace.add_tile_to_column(column_idx, tile_idx, tile, activate);
 
-        // After adding a new window, workspace becomes this output's own.
         if workspace.name().is_none() {
             workspace.original_output = OutputId::new(&self.output);
         }
-
-        // Since we're adding window to an existing column, the workspace isn't empty, and
-        // therefore cannot be the last one, so we never need to insert a new empty workspace.
 
         if allow_to_activate_workspace && activate {
             self.activate_workspace(workspace_idx);
@@ -726,8 +636,6 @@ impl<W: LayoutElement> Monitor<W> {
             }
         }
 
-        // Special case handling when empty_workspace_above_first is set and all workspaces
-        // are empty.
         if self.options.layout.empty_workspace_above_first && self.workspaces.len() == 2 {
             assert!(!self.workspaces[0].has_windows_or_name());
             assert!(!self.workspaces[1].has_windows_or_name());
@@ -763,9 +671,6 @@ impl<W: LayoutElement> Monitor<W> {
         let mut ws = self.workspaces.remove(idx);
         ws.set_output(None);
 
-        // For monitor current workspace removal, we focus previous rather than next (<= rather
-        // than <). This is different from columns and tiles, but it lets move-workspace-to-monitor
-        // back and forth to preserve position.
         if idx <= self.active_workspace_idx && self.active_workspace_idx > 0 {
             self.active_workspace_idx -= 1;
         }
@@ -780,12 +685,10 @@ impl<W: LayoutElement> Monitor<W> {
         ws.set_output(Some(self.output.clone()));
         ws.update_config(self.options.clone());
 
-        // Don't insert past the last empty workspace.
         if idx == self.workspaces.len() {
             idx -= 1;
         }
         if idx == 0 && self.options.layout.empty_workspace_above_first {
-            // Insert a new empty workspace on top to prepare for insertion of new workspace.
             self.add_workspace_top();
             idx += 1;
         }
@@ -817,27 +720,20 @@ impl<W: LayoutElement> Monitor<W> {
 
         let empty_was_focused = self.active_workspace_idx == self.workspaces.len() - 1;
 
-        // Push the workspaces from the removed monitor in the end, right before the
-        // last, empty, workspace.
         let empty = self.workspaces.remove(self.workspaces.len() - 1);
         self.workspaces.extend(workspaces);
         self.workspaces.push(empty);
 
-        // If empty_workspace_above_first is set and the first workspace is now no longer empty,
-        // add a new empty workspace on top.
         if self.options.layout.empty_workspace_above_first
             && self.workspaces[0].has_windows_or_name()
         {
             self.add_workspace_top();
         }
 
-        // If the empty workspace was focused on the primary monitor, keep it focused.
         if empty_was_focused {
             self.active_workspace_idx = self.workspaces.len() - 1;
         }
 
-        // FIXME: if we're adding workspaces to currently invisible positions
-        // (outside the workspace switch), we don't need to cancel it.
         self.workspace_switch = None;
         self.clean_up_workspaces();
     }
@@ -916,7 +812,6 @@ impl<W: LayoutElement> Monitor<W> {
         let transaction = Transaction::new();
         let removed = workspace.remove_tile(&window, transaction);
 
-        // If the view is following the tile, match the animation.
         let config = if activate {
             self.options.animations.workspace_switch.0
         } else {
@@ -947,11 +842,6 @@ impl<W: LayoutElement> Monitor<W> {
 
         let new_idx = self.idx_of_ws(new_id).unwrap();
 
-        // Animate vertical movement between workspaces.
-        //
-        // Recompute the source idx in case some workspace was removed during clean-up. If the
-        // source workspace itself was removed, don't bother animating this since the removal is
-        // instant anyway.
         if let Some(source_workspace_idx) = self.idx_of_ws(source_id) {
             old_render_pos.y +=
                 self.workspace_size_with_gap(1.).h * (source_workspace_idx as f64 - new_idx as f64);
@@ -1005,11 +895,9 @@ impl<W: LayoutElement> Monitor<W> {
 
         let column = workspace.remove_active_column().unwrap();
 
-        // Animate vertical movement between workspaces.
         old_render_pos.y +=
             self.workspace_size_with_gap(1.).h * (source_workspace_idx as f64 - new_idx as f64);
 
-        // If the view is following the column, match the animation.
         let config = if activate {
             self.options.animations.workspace_switch.0
         } else {
@@ -1031,7 +919,6 @@ impl<W: LayoutElement> Monitor<W> {
 
     pub fn switch_workspace_up(&mut self) {
         let new_idx = match &self.workspace_switch {
-            // During a DnD scroll, select the prev apparent workspace.
             Some(WorkspaceSwitch::Gesture(gesture)) if gesture.dnd_last_event_time.is_some() => {
                 let current = gesture.current_idx;
                 let new = current.ceil() - 1.;
@@ -1045,7 +932,6 @@ impl<W: LayoutElement> Monitor<W> {
 
     pub fn switch_workspace_down(&mut self) {
         let new_idx = match &self.workspace_switch {
-            // During a DnD scroll, select the next apparent workspace.
             Some(WorkspaceSwitch::Gesture(gesture)) if gesture.dnd_last_event_time.is_some() => {
                 let current = gesture.current_idx;
                 let new = current.floor() + 1.;
@@ -1089,7 +975,6 @@ impl<W: LayoutElement> Monitor<W> {
     }
 
     pub fn advance_animations(&mut self) {
-        // Retarget before sampling, so a re-frame lands in this tick rather than the next.
         self.sync_camera_focus(self.options.animations.overview_open_close.0);
         self.camera.advance_animations();
         self.sync_camera_scale();
@@ -1102,19 +987,11 @@ impl<W: LayoutElement> Monitor<W> {
                 }
             }
             Some(WorkspaceSwitch::Gesture(gesture)) => {
-                // Make sure the last event time doesn't go too much out of date (for
-                // monitors not under cursor), causing sudden jumps.
-                //
-                // This happens after any dnd_scroll_gesture_scroll() calls (in
-                // Layout::advance_animations()), so it doesn't mess up the time delta there.
                 if let Some(last_time) = &mut gesture.dnd_last_event_time {
                     let now = self.clock.now_unadjusted();
                     if *last_time != now {
                         *last_time = now;
 
-                        // If last_time was already == now, then dnd_scroll_gesture_scroll() must've
-                        // updated the gesture already. Therefore, when this code runs, the pointer
-                        // must be outside the DnD scrolling zone.
                         gesture.dnd_nonzero_start_time = None;
                     }
                 }
@@ -1179,7 +1056,6 @@ impl<W: LayoutElement> Monitor<W> {
                             let scale = ws.scale().fractional_scale();
                             let view_size = ws.view_size();
 
-                            // Make sure the hint is at least partially visible.
                             if matches!(hint.position, InsertPosition::NewColumn(_)) {
                                 let zoom = self.overview_zoom();
                                 let geo = insert_hint_ws_geo.unwrap();
@@ -1190,7 +1066,6 @@ impl<W: LayoutElement> Monitor<W> {
                                     area.loc.x.min(geo.loc.x + geo.size.w - area.size.w / 2.);
                             }
 
-                            // Round to physical pixels.
                             area = area.to_physical_precise_round(scale).to_logical(scale);
 
                             let view_rect = Rectangle::new(area.loc.upscale(-1.), view_size);
@@ -1226,12 +1101,6 @@ impl<W: LayoutElement> Monitor<W> {
                     let hint_loc = next_ws_geo.loc - hint_loc_diff;
                     let hint_size = Size::from((hint_width, hint_height));
 
-                    // Sometimes the hint ends up 1 px wider than necessary and/or 1 px
-                    // narrower than necessary. The values here seem correct. Might have to do with
-                    // how zooming out currently doesn't round to output scale properly.
-
-                    // Compute view rect as if we're above the next workspace (rather than below
-                    // the previous one).
                     let view_rect = Rectangle::new(hint_loc_diff, next_ws_geo.size);
 
                     self.insert_hint_element.update_render_elements(
@@ -1320,7 +1189,6 @@ impl<W: LayoutElement> Monitor<W> {
         self.workspaces.swap(self.active_workspace_idx, new_idx);
 
         if new_idx == self.workspaces.len() - 1 {
-            // Insert a new empty workspace.
             self.add_workspace_bottom();
         }
 
@@ -1346,7 +1214,6 @@ impl<W: LayoutElement> Monitor<W> {
         self.workspaces.swap(self.active_workspace_idx, new_idx);
 
         if self.active_workspace_idx == self.workspaces.len() - 1 {
-            // Insert a new empty workspace.
             self.add_workspace_bottom();
         }
 
@@ -1378,7 +1245,6 @@ impl<W: LayoutElement> Monitor<W> {
 
         if new_idx > old_idx {
             if new_idx == self.workspaces.len() - 1 {
-                // Insert a new empty workspace.
                 self.add_workspace_bottom();
             }
 
@@ -1388,7 +1254,6 @@ impl<W: LayoutElement> Monitor<W> {
             }
         } else {
             if old_idx == self.workspaces.len() - 1 {
-                // Insert a new empty workspace.
                 self.add_workspace_bottom();
             }
 
@@ -1398,11 +1263,8 @@ impl<W: LayoutElement> Monitor<W> {
             }
         }
 
-        // Only refocus the workspace if it was already focused
         if self.active_workspace_idx == old_idx {
             self.active_workspace_idx = new_idx;
-        // If the workspace order was switched so that the current workspace moved down the
-        // workspace stack, focus correctly
         } else if new_idx <= self.active_workspace_idx && old_idx > self.active_workspace_idx {
             self.active_workspace_idx += 1;
         } else if new_idx >= self.active_workspace_idx && old_idx < self.active_workspace_idx {
@@ -1414,9 +1276,6 @@ impl<W: LayoutElement> Monitor<W> {
         self.clean_up_workspaces();
     }
 
-    /// Returns the geometry of the active window relative to and clamped to the output.
-    ///
-    /// During animations, assumes the final view position.
     pub fn active_window_visual_rectangle(&self) -> Option<Rectangle<f64, Logical>> {
         if self.overview_open {
             return None;
@@ -1431,15 +1290,6 @@ impl<W: LayoutElement> Monitor<W> {
         ws_size.to_physical_precise_ceil(scale).to_logical(scale)
     }
 
-    /// Frames `rect` (workspace-local) in the viewport, accounting for the workspace grid.
-    ///
-    /// `Camera::frame` alone is not enough here. It solves `view = content * zoom + pan`, but
-    /// `workspaces_render_geo` inserts its own centring term -- `(view_size - workspace_size)
-    /// / 2` -- between the two, and that term itself depends on zoom. So the fit is computed
-    /// here, where the grid's offset is known, and handed to the camera as a plain target.
-    ///
-    /// This is the clearest sign that framing wants to belong to the camera outright. It will,
-    /// once islands replace the workspace grid and there is no competing centring left.
     pub fn fit_camera_to(
         &mut self,
         rect: Rectangle<f64, Logical>,
@@ -1455,7 +1305,6 @@ impl<W: LayoutElement> Monitor<W> {
         let zoom = (avail_w / rect.size.w).min(avail_h / rect.size.h);
         let zoom = zoom.clamp(self.options.camera.min_zoom, self.options.camera.max_zoom);
 
-        // The grid's own centring, evaluated at the zoom we are about to settle on.
         let ws_size = self.workspace_size(zoom);
         let static_offset = (self.view_size.to_point() - ws_size.to_point()).downscale(2.);
 
@@ -1467,7 +1316,6 @@ impl<W: LayoutElement> Monitor<W> {
         self.camera.animate_pan_to(pan, config);
     }
 
-    /// Frames `window` and keeps following it until the user takes the camera back.
     pub fn set_camera_focus(&mut self, config: zen_config::Animation) -> bool {
         let Some(rect) = self.active_window_visual_rectangle() else {
             return false;
@@ -1481,22 +1329,15 @@ impl<W: LayoutElement> Monitor<W> {
         true
     }
 
-    /// Stops following, leaving the camera exactly where it is.
-    ///
-    /// No spring back to anywhere: the whole promise of camera-maximize is that you can pan
-    /// away and the world stays put.
     pub fn clear_camera_focus(&mut self) {
         self.camera_focus = None;
     }
 
-    /// Re-frames if the followed window has moved or resized under us.
     fn sync_camera_focus(&mut self, config: zen_config::Animation) {
         let Some((id, last_rect)) = self.camera_focus.clone() else {
             return;
         };
 
-        // Only follow while it is still the active window. If focus moved elsewhere, keep the
-        // framing we have rather than yanking the view after the new focus.
         let still_active = self
             .active_workspace_ref()
             .active_window()
@@ -1506,7 +1347,6 @@ impl<W: LayoutElement> Monitor<W> {
         }
 
         let Some(rect) = self.active_window_visual_rectangle() else {
-            // The window went away.
             self.camera_focus = None;
             return;
         };
@@ -1517,21 +1357,6 @@ impl<W: LayoutElement> Monitor<W> {
         }
     }
 
-    /// Asks clients for more pixels when the camera is magnifying them.
-    ///
-    /// Without this, camera-maximize is a magnified 1x buffer -- the window gets bigger and
-    /// blurrier, which is what would make the whole feature feel cheap. The window's *logical*
-    /// size never changes; only the density it renders at does.
-    ///
-    /// Two rules keep it from becoming a configure-storm: only while the camera is at rest, so
-    /// a zoom gesture produces one change at the end rather than one per frame; and quantized
-    /// to quarter steps, so small drifts do not churn.
-    /// Where the viewport centre lands on the canvas.
-    ///
-    /// The inverse of what `fit_camera_to` computes. That solves for the pan that puts a content
-    /// point in the middle of the view; this solves the same equation the other way, for the
-    /// content point given the pan we actually have. Both have to undo the workspace grid's own
-    /// centring term, which is a third thing Phase 4 gets to delete when the grid goes.
     pub fn viewport_center_on_canvas(&self) -> Point<f64, Canvas> {
         let zoom = self.overview_zoom();
         let ws_size = self.workspace_size(zoom);
@@ -1543,21 +1368,12 @@ impl<W: LayoutElement> Monitor<W> {
         Point::from((p.x, p.y))
     }
 
-    /// Tells each workspace where the camera is looking, so new windows open there.
-    ///
-    /// Called when a window is about to be added rather than once a frame: the answer must be
-    /// the camera's position *now*, and a frame of staleness during a pan is a window opening
-    /// visibly off-centre.
     fn sync_spawn_center(&mut self) {
         let zoom = self.overview_zoom();
         let center = self.viewport_center_on_canvas();
         let view_center = Point::from((self.view_size.w / 2., self.view_size.h / 2.));
 
         for ws in &mut self.workspaces {
-            // Offset by where the working area sits inside the view, so a top bar still pushes
-            // new windows down exactly as it did before the camera existed. At zoom 1 with no
-            // pan this reduces to the working area's centre, which is the rule floating
-            // placement has always used.
             let wa = ws.working_area();
             let wa_center = wa.loc + Point::from((wa.size.w / 2., wa.size.h / 2.));
             let delta = (wa_center - view_center).downscale(zoom);
@@ -1566,10 +1382,6 @@ impl<W: LayoutElement> Monitor<W> {
         }
     }
 
-    /// Where a new window should go, given what the camera is looking at.
-    ///
-    /// `parent` is the island holding a transient's parent, which outranks everything else --
-    /// see `island::spawn_target`.
     pub fn spawn_island_target(&self, parent: Option<IslandId>) -> Option<IslandId> {
         let ws = self.active_workspace_ref();
         let ctx = SpawnContext {
@@ -1577,8 +1389,6 @@ impl<W: LayoutElement> Monitor<W> {
             viewport_center: self.viewport_center_on_canvas(),
             last_focused: ws.active_island(),
             parent_island: parent,
-            // Only an island the camera is deliberately holding counts as one you are looking
-            // at. See `SpawnContext::camera_is_framing`.
             camera_is_framing: self.camera_focus.is_some(),
             ..Default::default()
         };
@@ -1611,22 +1421,11 @@ impl<W: LayoutElement> Monitor<W> {
         self.workspace_size(zoom) + Size::from((0., gap))
     }
 
-    /// The effective view scale for this output.
-    ///
-    /// Two contributions multiply: the overview's (still global, driven by `overview_progress`)
-    /// and this output's camera. Composing rather than replacing lets the camera be per-output
-    /// today without rewriting the overview's animation and gesture machinery, which Phase 4
-    /// will replace wholesale anyway when islands supersede workspaces.
     pub fn overview_zoom(&self) -> f64 {
         let progress = self.overview_progress.as_ref().map(|p| p.value());
         compute_overview_zoom(&self.options, progress) * self.camera.zoom()
     }
 
-    /// Whether the view is scaled away from 1:1, and so needs the scaled input and render paths.
-    ///
-    /// This replaces `overview_progress.is_some()` as the gate. The real question was never
-    /// "is the overview open" but "is the view transformed", and those stopped being the same
-    /// thing the moment the camera could zoom on its own.
     pub fn is_view_transformed(&self) -> bool {
         (self.overview_zoom() - 1.).abs() > 1e-9
     }
@@ -1636,12 +1435,8 @@ impl<W: LayoutElement> Monitor<W> {
         self.overview_progress = progress.map(OverviewProgress::from);
         let new_render_idx = self.workspace_render_idx();
 
-        // If the view jumped (can happen when going from corrected to uncorrected render_idx, for
-        // example when toggling the overview in the middle of an overview animation), then restart
-        // the workspace switch to avoid jumps.
         if prev_render_idx != new_render_idx {
             if let Some(WorkspaceSwitch::Animation(anim)) = &mut self.workspace_switch {
-                // FIXME: maintain velocity.
                 *anim = anim.restarted(prev_render_idx, anim.to(), 0.);
             }
         }
@@ -1653,8 +1448,6 @@ impl<W: LayoutElement> Monitor<W> {
     }
 
     pub fn workspace_render_idx(&self) -> f64 {
-        // If workspace switch and overview progress are matching animations, then compute a
-        // correction term to make the movement appear monotonic.
         if let (
             Some(WorkspaceSwitch::Animation(switch_anim)),
             Some(OverviewProgress::Animation(progress_anim)),
@@ -1666,46 +1459,6 @@ impl<W: LayoutElement> Monitor<W> {
                     <= 0.001
             {
                 #[rustfmt::skip]
-                // How this was derived:
-                //
-                // - Assume we're animating a zoom + switch. Consider switch "from" and "to".
-                //   These are render_idx values, so first workspace to second would have switch
-                //   from = 0. and to = 1. regardless of the zoom level.
-                //
-                // - At the start, the point at "from" is at Y = 0. We're moving the point at "to"
-                //   to Y = 0. We want this to be a monotonic motion in apparent coordinates (after
-                //   zoom).
-                //
-                // - Height at the start:
-                //   from_height = (size.h + gap) * from_zoom.
-                //
-                // - Current height:
-                //   current_height = (size.h + gap) * zoom.
-                //
-                // - We're moving the "to" point to Y = 0:
-                //   to_y = 0.
-                //
-                // - The initial position of the point we're moving:
-                //   from_y = (to - from) * from_height.
-                //
-                // - We want this point to travel monotonically in apparent coordinates:
-                //   current_y = from_y + (to_y - from_y) * progress,
-                //   where progress is from 0 to 1, equals to the animation progress (switch and
-                //   zoom are the same since they are synchronized).
-                //
-                // - Derive the Y of the first workspace from this:
-                //   first_y = current_y - to * current_height.
-                //
-                // Now, let's substitute and rearrange the terms.
-                //
-                // - current_y = from_y + (0 - (to - from) * from_height) * progress
-                // - progress = (switch_anim.value() - from) / (to - from)
-                // - current_y = from_y - (to - from) * from_height * (switch_anim.value() - from) / (to - from)
-                // - current_y = from_y - from_height * (switch_anim.value() - from)
-                // - first_y = from_y - from_height * (switch_anim.value() - from) - to * current_height
-                // - first_y = (to - from) * from_height - from_height * (switch_anim.value() - from) - to * current_height
-                // - first_y = to * from_height - switch_anim.value() * from_height - to * current_height
-                // - first_y = -switch_anim.value() * from_height + to * (from_height - current_height)
                 let from = progress_anim.from();
                 let from_zoom = compute_overview_zoom(&self.options, Some(from));
                 let from_ws_height_with_gap = self.workspace_size_with_gap(from_zoom).h;
@@ -1735,9 +1488,6 @@ impl<W: LayoutElement> Monitor<W> {
         let gap = self.workspace_gap(zoom);
         let ws_height_with_gap = ws_size.h + gap;
 
-        // The camera's pan enters here, as one extra term on the workspace's position. This is
-        // the single place render geometry is computed, so applying it here keeps rendering and
-        // hit-testing consistent by construction rather than by remembering to update both.
         let static_offset = (self.view_size.to_point() - ws_size.to_point()).downscale(2.)
             + self.camera.pan_offset_view();
         let static_offset = static_offset
@@ -1747,32 +1497,20 @@ impl<W: LayoutElement> Monitor<W> {
         let first_ws_y = -self.workspace_render_idx() * ws_height_with_gap;
         let first_ws_y = round_logical_in_physical(scale, first_ws_y);
 
-        // A workspace's rect is viewport-sized, but on an unbounded canvas its floating tiles
-        // can sit far outside that. The rect is what culling, cropping and hit-testing all key
-        // off, so grow it to cover the content it actually holds -- otherwise a window panned
-        // off-canvas is neither drawn nor clickable. Note the grid *stride* still comes from
-        // ws_height_with_gap, so workspace spacing is unchanged.
         let content_extent: Vec<Option<Rectangle<f64, Logical>>> = self
             .workspaces
             .iter()
             .map(|ws| ws.floating_tiles_bbox())
             .collect();
 
-        // Return position for one-past-last workspace too.
         (0..=self.workspaces.len()).map(move |idx| {
             let y = first_ws_y + idx as f64 * ws_height_with_gap;
             let loc = Point::from((0., y)) + static_offset;
 
-            // Even though all components that go into loc are rounded to physical pixels, the
-            // floating point addition may lose precision. This can result for example in the
-            // current workspace having y = 0.0000000000002 and thus missing pointer hits at the
-            // monitor edge with y = 0. So, post-round the location too.
             let loc = loc.to_physical_precise_round(scale).to_logical(scale);
 
             let mut size = ws_size;
             if let Some(Some(bbox)) = content_extent.get(idx) {
-                // The bbox is in content coordinates; the rect is in view coordinates relative
-                // to `loc`, so scale it before taking the union.
                 let far_x = (bbox.loc.x + bbox.size.w) * zoom;
                 let far_y = (bbox.loc.y + bbox.size.h) * zoom;
                 size = Size::from((size.w.max(far_x), size.h.max(far_y)));
@@ -1782,21 +1520,6 @@ impl<W: LayoutElement> Monitor<W> {
         })
     }
 
-    /// The area a workspace actually covers on screen, for deciding whether to draw it.
-    ///
-    /// This is deliberately not the same rectangle as `workspaces_render_geo` returns. That
-    /// one's `loc` is the *content origin*: everything a workspace draws is positioned relative
-    /// to it, so it cannot move without dragging every window with it. Its `size` can therefore
-    /// only ever extend right and down.
-    ///
-    /// On an unbounded canvas that is not enough. A window dragged left of or above the origin
-    /// sits at negative coordinates, outside a rectangle that has no way to express them, so the
-    /// cull below decided the whole workspace was off-screen and stopped drawing anything at
-    /// all. Panning far enough in any direction made every window vanish at once.
-    ///
-    /// So coverage is computed separately: same origin, but grown in *both* directions to
-    /// enclose the content. Only the visibility test uses it. Rendering and hit-testing keep the
-    /// original rect and are unaffected.
     fn cull_coverage(
         geo: Rectangle<f64, Logical>,
         content: Option<Rectangle<f64, Logical>>,
@@ -1806,7 +1529,6 @@ impl<W: LayoutElement> Monitor<W> {
             return geo;
         };
 
-        // Content is in workspace-local coordinates; the rect is in view coordinates.
         let near_x = (content.loc.x * zoom).min(0.);
         let near_y = (content.loc.y * zoom).min(0.);
         let far_x = ((content.loc.x + content.size.w) * zoom).max(geo.size.w);
@@ -1818,7 +1540,6 @@ impl<W: LayoutElement> Monitor<W> {
         )
     }
 
-    /// Per-workspace content extents, index-aligned with `workspaces`.
     fn content_extents(&self) -> Vec<Option<Rectangle<f64, Logical>>> {
         self.workspaces
             .iter()
@@ -1836,7 +1557,6 @@ impl<W: LayoutElement> Monitor<W> {
 
         let geo = self.workspaces_render_geo();
         zip(self.workspaces.iter().enumerate(), geo)
-            // Cull out workspaces that cover nothing on this output.
             .filter(move |((idx, _ws), geo)| {
                 !cull
                     || Self::cull_coverage(*geo, extents[*idx], zoom)
@@ -1861,7 +1581,6 @@ impl<W: LayoutElement> Monitor<W> {
 
         let geo = self.workspaces_render_geo();
         zip(self.workspaces.iter().enumerate(), geo)
-            // Cull out workspaces that cover nothing on this output.
             .filter(move |((idx, _ws), geo)| {
                 Self::cull_coverage(*geo, extents[*idx], zoom)
                     .intersection(output_geo)
@@ -1879,7 +1598,6 @@ impl<W: LayoutElement> Monitor<W> {
 
         let geo = self.workspaces_render_geo();
         zip(self.workspaces.iter_mut().enumerate(), geo)
-            // Cull out workspaces that cover nothing on this output.
             .filter(move |((idx, _ws), geo)| {
                 !cull
                     || Self::cull_coverage(*geo, extents[*idx], zoom)
@@ -1894,7 +1612,6 @@ impl<W: LayoutElement> Monitor<W> {
         pos_within_output: Point<f64, Logical>,
     ) -> Option<(&Workspace<W>, Rectangle<f64, Logical>)> {
         let found = self.workspaces_with_render_geo().find_map(|(ws, geo)| {
-            // Extend width to entire output.
             let loc = Point::from((0., geo.loc.y));
             let size = Size::from((self.view_size.w, geo.size.h));
             let bounds = Rectangle::new(loc, size);
@@ -1905,14 +1622,6 @@ impl<W: LayoutElement> Monitor<W> {
             return Some((ws, geo));
         }
 
-        // The camera can pan or zoom the workspace strip until no workspace rect covers the
-        // pointer at all -- FitAllWindows on a window far out on the canvas does exactly that.
-        // Reporting "nothing under the cursor" there would make windows unclickable precisely
-        // when you have just gone to the trouble of framing them, so fall back to the workspace
-        // nearest vertically, which is the one actually filling the view.
-        //
-        // This is a symptom of the workspace rect being viewport-sized in content space while
-        // the canvas is unbounded. Islands remove the mismatch in Phase 4.
         let dist_y = |geo: &Rectangle<f64, Logical>| {
             let top = geo.loc.y;
             let bottom = geo.loc.y + geo.size.h;
@@ -1943,9 +1652,6 @@ impl<W: LayoutElement> Monitor<W> {
             let zoom = self.overview_zoom();
             let pos_within_workspace = (pos_within_output - geo.loc).downscale(zoom);
             let (win, hit) = ws.window_under(pos_within_workspace)?;
-            // Scale first, then translate. The hit comes back in the workspace's own unscaled
-            // coordinate space, while geo.loc is already in output coordinates -- scaling after
-            // translating would wrongly scale the workspace offset too.
             Some((win, hit.scaled_by(zoom).offset_win_pos(geo.loc)))
         } else {
             let (win, hit) = ws.window_under(pos_within_output - geo.loc)?;
@@ -1971,10 +1677,8 @@ impl<W: LayoutElement> Monitor<W> {
 
         let dummy = Rectangle::default();
 
-        // Monitors always have at least one workspace.
         let ((idx, ws), geo) = iter.next().unwrap();
 
-        // Check if above first.
         if pos_within_output.y < geo.loc.y {
             return (InsertWorkspace::NewAt(idx), dummy);
         }
@@ -1983,7 +1687,6 @@ impl<W: LayoutElement> Monitor<W> {
             geo.loc.y <= pos_within_output.y && pos_within_output.y < geo.loc.y + geo.size.h
         };
 
-        // Check first.
         if contains(geo) {
             return (InsertWorkspace::Existing(ws.id()), geo);
         }
@@ -1991,7 +1694,6 @@ impl<W: LayoutElement> Monitor<W> {
         let mut last_geo = geo;
         let mut last_idx = idx;
         for ((idx, ws), geo) in iter {
-            // Check gap above.
             let gap_loc = Point::from((last_geo.loc.x, last_geo.loc.y + last_geo.size.h));
             let gap_size = Size::from((geo.size.w, geo.loc.y - gap_loc.y));
             let gap_geo = Rectangle::new(gap_loc, gap_size);
@@ -1999,7 +1701,6 @@ impl<W: LayoutElement> Monitor<W> {
                 return (InsertWorkspace::NewAt(idx), dummy);
             }
 
-            // Check workspace itself.
             if contains(geo) {
                 return (InsertWorkspace::Existing(ws.id()), geo);
             }
@@ -2008,12 +1709,10 @@ impl<W: LayoutElement> Monitor<W> {
             last_idx = idx;
         }
 
-        // Anything below.
         (InsertWorkspace::NewAt(last_idx + 1), dummy)
     }
 
     pub fn render_above_top_layer(&self) -> bool {
-        // Render above the top layer only if the view is stationary.
         if self.workspace_switch.is_some() || self.overview_progress.is_some() {
             return false;
         }
@@ -2056,7 +1755,6 @@ impl<W: LayoutElement> Monitor<W> {
         let _span = tracy_client::span!("Monitor::render_workspaces");
 
         let scale = self.scale.fractional_scale();
-        // Ceil the height in physical pixels.
         let height = (self.view_size.h * scale).ceil() as i32;
 
         let zoom = self.overview_zoom();
@@ -2069,40 +1767,14 @@ impl<W: LayoutElement> Monitor<W> {
             let elem = RescaleRenderElement::from_element(elem, Point::from((0, 0)), zoom);
             RelocateRenderElement::from_element(
                 elem,
-                // The offset we get from workspaces_with_render_geo() is already
-                // rounded to physical pixels, but it's in the logical coordinate
-                // space, so we need to convert it to physical.
                 geo.loc.to_physical_precise_round(scale),
                 Relocate::Relative,
             )
         };
 
-        // Draw in passes for correct Z ordering during window movement between workspaces:
-        // - floating windows moving between workspaces
-        // - normal floating windows
-        // - scrolling windows moving between workspaces
-        // - normal scrolling windows
         for pass in 0..4 {
-            // Don't cull when drawing windows moving between workspaces so that windows moving to
-            // workspaces off-screen will still render.
             let cull = matches!(pass, 1 | 3);
 
-            // Crop the elements to prevent them overflowing, currently visible during a workspace
-            // switch.
-            //
-            // HACK: crop to infinite bounds at least horizontally where we
-            // know there's no workspace joining or monitor bounds, otherwise
-            // it will cut pixel shaders and mess up the coordinate space.
-            // There's also a damage tracking bug which causes glitched
-            // rendering for maximized GTK windows.
-            //
-            // FIXME: use proper bounds after fixing the Crop element.
-            //
-            // Also, check cull here to avoid cropping windows moving between workspaces.
-            //
-            // FIXME: for cull=true, it might be better visually to crop to a workspace-high region
-            // anchored to the window/column as it moves between workspaces, to prevent overflowing
-            // windows from appearing and disappearing.
             let crop_bounds =
                 if cull && (self.workspace_switch.is_some() || self.overview_progress.is_some()) {
                     Rectangle::new(
@@ -2117,7 +1789,6 @@ impl<W: LayoutElement> Monitor<W> {
                 };
 
             for (ws, geo) in self.workspaces_with_render_geo_cull(cull) {
-                // Macro instead of closure because ws and insert hint have different elem types.
                 macro_rules! push {
                     () => {{
                         &mut |elem| {
@@ -2183,18 +1854,6 @@ impl<W: LayoutElement> Monitor<W> {
             }
         }
 
-        // The canvas clock, drawn last so it sits behind the windows: a widget should read as an
-        // inhabitant of the space, not as chrome floating over your work.
-        //
-        // It goes through the same scale_relocate as everything else, so it pans and zooms with
-        // the canvas for free. The texture is rasterised at the output scale times the camera
-        // zoom, so the text stays crisp when magnified instead of turning into a scaled bitmap.
-        // The canvas clock, drawn last so it sits behind the windows: a widget should read as
-        // an inhabitant of the space, not as chrome floating over your work.
-        //
-        // It goes through the same scale_relocate as everything else, so it pans and zooms with
-        // the canvas for free. The texture is rasterised at output scale times camera zoom, so
-        // the text stays crisp when magnified rather than becoming a scaled bitmap.
         if self.canvas_clock.is_enabled() {
             if let Some((_, geo)) = self.workspaces_with_render_geo().next() {
                 if let Some(elem) = self.canvas_clock.render(ctx.renderer, scale * zoom) {
@@ -2202,7 +1861,6 @@ impl<W: LayoutElement> Monitor<W> {
                 }
             }
         }
-
     }
 
     pub fn render_workspace_shadows<R: ZenRenderer>(
@@ -2259,12 +1917,10 @@ impl<W: LayoutElement> Monitor<W> {
             ..
         })) = &self.workspace_switch
         {
-            // Already active.
             return;
         }
 
         if !self.overview_open {
-            // This gesture is only for the overview.
             return;
         }
 
@@ -2310,7 +1966,6 @@ impl<W: LayoutElement> Monitor<W> {
             return None;
         };
 
-        // Reduce the effect of zoom on the touchpad somewhat.
         let delta_scale = if gesture.is_touchpad {
             (zoom - 1.) / 2.5 + 1.
         } else {
@@ -2345,19 +2000,15 @@ impl<W: LayoutElement> Monitor<W> {
         };
 
         let Some(last_time) = gesture.dnd_last_event_time else {
-            // Not a DnD scroll.
             return false;
         };
 
         let config = &self.options.gestures.dnd_edge_workspace_switch;
         let trigger_height = config.trigger_height;
 
-        // Restrict the scrolling horizontally to the strip of workspaces to avoid unwanted trigger
-        // after using the hot corner or during horizontal scroll.
         let width = self.view_size.w * zoom;
         let x = pos.x - (self.view_size.w - width) / 2.;
 
-        // Consider the working area so layer-shell docks and such don't prevent scrolling.
         let y = pos.y - self.working_area.loc.y;
         let height = self.working_area.size.h;
 
@@ -2365,7 +2016,6 @@ impl<W: LayoutElement> Monitor<W> {
         let trigger_height = trigger_height.clamp(0., height / 2.);
 
         let delta = if x < 0. || width <= x {
-            // Outside the bounds horizontally.
             0.
         } else if y < trigger_height {
             -(trigger_height - y)
@@ -2376,10 +2026,8 @@ impl<W: LayoutElement> Monitor<W> {
         };
 
         let delta = if trigger_height < 0.01 {
-            // Sanity check for trigger-height 0 or small window sizes.
             0.
         } else {
-            // Normalize to [0, 1].
             delta / trigger_height
         };
         let delta = delta * speed;
@@ -2388,15 +2036,12 @@ impl<W: LayoutElement> Monitor<W> {
         gesture.dnd_last_event_time = Some(now);
 
         if delta == 0. {
-            // We're outside the scrolling zone.
             gesture.dnd_nonzero_start_time = None;
             return false;
         }
 
         let nonzero_start = *gesture.dnd_nonzero_start_time.get_or_insert(now);
 
-        // Delay starting the gesture a bit to avoid unwanted movement when dragging across
-        // monitors.
         let delay = Duration::from_millis(u64::from(config.delay_ms));
         if now.saturating_sub(nonzero_start) < delay {
             return true;
@@ -2415,7 +2060,6 @@ impl<W: LayoutElement> Monitor<W> {
         let (min, max) = gesture.min_max(self.workspaces.len());
         let clamped = unclamped.clamp(min, max);
 
-        // Make sure that DnD scrolling too much outside the min/max does not "build up".
         gesture.start_idx += clamped - unclamped;
         gesture.current_idx = clamped;
 
@@ -2444,7 +2088,6 @@ impl<W: LayoutElement> Monitor<W> {
             return false;
         };
 
-        // Take into account any idle time between the last event and now.
         let now = self.clock.now_unadjusted();
         gesture.tracker.push(0., now);
 
@@ -2487,7 +2130,6 @@ impl<W: LayoutElement> Monitor<W> {
                 ..
             }))
         ) {
-            // Not a DnD scroll.
             return;
         };
 
@@ -2561,9 +2203,6 @@ impl<W: LayoutElement> Monitor<W> {
             )
         }
 
-        // If there's no workspace switch in progress, there can't be any non-last non-active
-        // empty workspaces. If empty_workspace_above_first is set then the first workspace
-        // will be empty too.
         let pre_skip = if self.options.layout.empty_workspace_above_first {
             1
         } else {
@@ -2576,7 +2215,6 @@ impl<W: LayoutElement> Monitor<W> {
                 .enumerate()
                 .skip(pre_skip)
                 .rev()
-                // skip last
                 .skip(1)
             {
                 if idx != self.active_workspace_idx {
@@ -2614,7 +2252,6 @@ impl<W: LayoutElement> Monitor<W> {
             let pos = ws_geo.loc;
             let rounded_pos = pos.to_physical_precise_round(scale).to_logical(scale);
 
-            // Workspace positions must be rounded to physical pixels.
             assert_abs_diff_eq!(pos.x, rounded_pos.x, epsilon = 1e-5);
             assert_abs_diff_eq!(pos.y, rounded_pos.y, epsilon = 1e-5);
         }

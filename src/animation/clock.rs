@@ -4,10 +4,6 @@ use std::time::Duration;
 
 use crate::utils::get_monotonic_time;
 
-/// Shareable lazy clock that can change rate.
-///
-/// The clock will fetch the time once and then retain it until explicitly cleared with
-/// [`Clock::clear`].
 #[derive(Debug, Default, Clone)]
 pub struct Clock {
     inner: Rc<RefCell<AdjustableClock>>,
@@ -18,7 +14,6 @@ struct LazyClock {
     time: Option<Duration>,
 }
 
-/// Clock that can adjust its rate.
 #[derive(Debug)]
 struct AdjustableClock {
     inner: LazyClock,
@@ -29,7 +24,6 @@ struct AdjustableClock {
 }
 
 impl Clock {
-    /// Creates a new clock with the given time.
     pub fn with_time(time: Duration) -> Self {
         let clock = AdjustableClock::new(LazyClock::with_time(time));
         Self {
@@ -37,42 +31,34 @@ impl Clock {
         }
     }
 
-    /// Returns the current time.
     pub fn now(&self) -> Duration {
         self.inner.borrow_mut().now()
     }
 
-    /// Returns the underlying time not adjusted for rate change.
     pub fn now_unadjusted(&self) -> Duration {
         self.inner.borrow_mut().inner.now()
     }
 
-    /// Sets the unadjusted clock time.
     pub fn set_unadjusted(&mut self, time: Duration) {
         self.inner.borrow_mut().inner.set(time);
     }
 
-    /// Clears the stored time so it's re-fetched again next.
     pub fn clear(&mut self) {
         self.inner.borrow_mut().inner.clear();
     }
 
-    /// Gets the clock rate.
     pub fn rate(&self) -> f64 {
         self.inner.borrow().rate()
     }
 
-    /// Sets the clock rate.
     pub fn set_rate(&mut self, rate: f64) {
         self.inner.borrow_mut().set_rate(rate);
     }
 
-    /// Returns whether animations should complete instantly.
     pub fn should_complete_instantly(&self) -> bool {
         self.inner.borrow().should_complete_instantly()
     }
 
-    /// Sets whether animations should complete instantly.
     pub fn set_complete_instantly(&mut self, value: bool) {
         self.inner.borrow_mut().set_complete_instantly(value);
     }

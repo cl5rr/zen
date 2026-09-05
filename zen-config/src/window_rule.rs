@@ -15,7 +15,6 @@ pub struct WindowRule {
     #[knuffel(children(name = "exclude"))]
     pub excludes: Vec<Match>,
 
-    // Rules applied at initial configure.
     #[knuffel(child)]
     pub default_column_width: Option<DefaultPresetSize>,
     #[knuffel(child)]
@@ -37,7 +36,6 @@ pub struct WindowRule {
     #[knuffel(child, unwrap(argument))]
     pub on_xdg_activate: Option<OnXdgActivate>,
 
-    // Rules applied dynamically.
     #[knuffel(child, unwrap(argument))]
     pub min_width: Option<u16>,
     #[knuffel(child, unwrap(argument))]
@@ -83,7 +81,6 @@ pub struct WindowRule {
     pub popups: PopupsRule,
 }
 
-/// Rules for popup surfaces.
 #[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
 pub struct PopupsRule {
     #[knuffel(child, unwrap(argument))]
@@ -94,16 +91,12 @@ pub struct PopupsRule {
     pub background_effect: BackgroundEffectRule,
 }
 
-/// Resolved popup-specific rules.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct ResolvedPopupsRules {
-    /// Extra opacity to draw popups with.
     pub opacity: Option<f32>,
 
-    /// Corner radius to assume the popups have.
     pub geometry_corner_radius: Option<CornerRadius>,
 
-    /// Background effect configuration for popups.
     pub background_effect: BackgroundEffect,
 }
 

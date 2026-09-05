@@ -97,7 +97,6 @@ impl Default for Keyboard {
     fn default() -> Self {
         Self {
             xkb: Default::default(),
-            // The defaults were chosen to match wlroots and sway.
             repeat_delay: 600,
             repeat_rate: 25,
             track_layout: Default::default(),
@@ -157,10 +156,8 @@ impl Xkb {
 
 #[derive(knuffel::DecodeScalar, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum TrackLayout {
-    /// The layout change is global.
     #[default]
     Global,
-    /// The layout change is window local.
     Window,
 }
 
@@ -526,7 +523,6 @@ mod tests {
 
     #[test]
     fn parse_scroll_factor_combined() {
-        // Test combined scroll-factor syntax
         let parsed = do_parse(
             r#"
             mouse {
@@ -568,7 +564,6 @@ mod tests {
 
     #[test]
     fn parse_scroll_factor_split() {
-        // Test split horizontal/vertical syntax
         let parsed = do_parse(
             r#"
             mouse {
@@ -618,7 +613,6 @@ mod tests {
 
     #[test]
     fn parse_scroll_factor_partial() {
-        // Test partial specification (only one axis)
         let parsed = do_parse(
             r#"
             mouse {
@@ -660,7 +654,6 @@ mod tests {
 
     #[test]
     fn parse_scroll_factor_mixed() {
-        // Test mixed base + override syntax
         let parsed = do_parse(
             r#"
             mouse {

@@ -22,111 +22,68 @@ pub use mapped::Mapped;
 pub mod unmapped;
 pub use unmapped::{InitialConfigureState, Unmapped};
 
-/// Reference to a mapped or unmapped window.
 #[derive(Debug, Clone, Copy)]
 pub enum WindowRef<'a> {
     Unmapped(&'a Unmapped),
     Mapped(&'a Mapped),
 }
 
-/// Rules fully resolved for a window.
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct ResolvedWindowRules {
-    /// Default width for this window.
-    ///
-    /// - `None`: unset (global default should be used).
-    /// - `Some(None)`: set to empty (window picks its own width).
-    /// - `Some(Some(width))`: set to a particular width.
     pub default_width: Option<Option<PresetSize>>,
 
-    /// Default height for this window.
-    ///
-    /// - `None`: unset (global default should be used).
-    /// - `Some(None)`: set to empty (window picks its own height).
-    /// - `Some(Some(height))`: set to a particular height.
     pub default_height: Option<Option<PresetSize>>,
 
-    /// Default column display for this window.
     pub default_column_display: Option<ColumnDisplay>,
 
-    /// Default floating position for this window.
     pub default_floating_position: Option<FloatingPosition>,
 
-    /// Output to open this window on.
     pub open_on_output: Option<String>,
 
-    /// Workspace to open this window on.
     pub open_on_workspace: Option<String>,
 
-    /// Whether the window should open full-width.
     pub open_maximized: Option<bool>,
 
-    /// Whether the window should open maximized to edges (true maximized).
     pub open_maximized_to_edges: Option<bool>,
 
-    /// Whether the window should open fullscreen.
     pub open_fullscreen: Option<bool>,
 
-    /// Whether the window should open floating.
     pub open_floating: Option<bool>,
 
-    /// Whether the window should open focused.
     pub open_focused: Option<bool>,
 
-    /// What to do on xdg-activation requests.
     pub on_xdg_activate: Option<OnXdgActivate>,
 
-    /// Extra bound on the minimum window width.
     pub min_width: Option<u16>,
-    /// Extra bound on the minimum window height.
     pub min_height: Option<u16>,
-    /// Extra bound on the maximum window width.
     pub max_width: Option<u16>,
-    /// Extra bound on the maximum window height.
     pub max_height: Option<u16>,
 
-    /// Focus ring overrides.
     pub focus_ring: BorderRule,
-    /// Window border overrides.
     pub border: BorderRule,
-    /// Shadow overrides.
     pub shadow: ShadowRule,
-    /// Tab indicator overrides.
     pub tab_indicator: TabIndicatorRule,
 
-    /// Whether or not to draw the border with a solid background.
-    ///
-    /// `None` means using the SSD heuristic.
     pub draw_border_with_background: Option<bool>,
 
-    /// Extra opacity to draw this window with.
     pub opacity: Option<f32>,
 
-    /// Corner radius to assume this window has.
     pub geometry_corner_radius: Option<CornerRadius>,
 
-    /// Whether to clip this window to its geometry, including the corner radius.
     pub clip_to_geometry: Option<bool>,
 
-    /// Whether to bob this window up and down.
     pub baba_is_float: Option<bool>,
 
-    /// Whether to block out this window from certain render targets.
     pub block_out_from: Option<BlockOutFrom>,
 
-    /// Whether to enable VRR on this window's primary output if it is on-demand.
     pub variable_refresh_rate: Option<bool>,
 
-    /// Multiplier for all scroll events sent to this window.
     pub scroll_factor: Option<f64>,
 
-    /// Override whether to set the Tiled xdg-toplevel state on the window.
     pub tiled_state: Option<bool>,
 
-    /// Background effect configuration.
     pub background_effect: BackgroundEffect,
 
-    /// Rules for this window's popups.
     pub popups: ResolvedPopupsRules,
 }
 
@@ -161,14 +118,6 @@ impl<'a> WindowRef<'a> {
 
     pub fn is_floating(self) -> bool {
         match self {
-            // FIXME: This means you cannot set initial configure rules based on is-floating. I'm
-            // not sure there's a good way to support it, since this matcher makes a cycle with the
-            // open-floating rule.
-            //
-            // That said, I don't think there are a lot of useful initial configure properties you
-            // may want to set through an is-floating matcher? Like, if you're configuring a
-            // specific window to open as floating, you can also set those properties in that same
-            // window rule, rather than relying on a different is-floating rule.
             WindowRef::Unmapped(_) => false,
             WindowRef::Mapped(mapped) => mapped.is_floating(),
         }
@@ -189,7 +138,6 @@ impl ResolvedWindowRules {
         let mut resolved = ResolvedWindowRules::default();
 
         with_toplevel_role(window.toplevel(), |role| {
-            // Ensure server_pending like in Smithay's with_pending_state().
             if role.server_pending.is_none() {
                 role.server_pending = Some(role.current_server_state().clone());
             }
@@ -368,17 +316,11 @@ impl ResolvedWindowRules {
         (min_size, max_size)
     }
 
-    /// Whether a window opens onto the canvas.
-    ///
-    /// `default_on_canvas` is `camera { open-on-canvas }`: ZEN's canvas is the default place for
-    /// a window to be, and the scrolling strip is the exception. A window rule still wins over
-    /// it in both directions, which is what makes "put this one in the strip" expressible.
     pub fn compute_open_floating(&self, toplevel: &ToplevelSurface, default_on_canvas: bool) -> bool {
         if let Some(res) = self.open_floating {
             return res;
         }
 
-        // Windows with a parent (usually dialogs) open as floating by default.
         if toplevel.parent().is_some() {
             return true;
         }
@@ -394,13 +336,11 @@ impl ResolvedWindowRules {
         });
         let (min_size, max_size) = self.apply_min_max_size(min_size, max_size);
 
-        // We open fixed-height windows as floating.
         min_size.h > 0 && min_size.h == max_size.h
     }
 }
 
 fn window_matches(window: WindowRef, role: &XdgToplevelSurfaceRoleAttributes, m: &Match) -> bool {
-    // Must be ensured by the caller.
     let server_pending = role.server_pending.as_ref().unwrap();
 
     if let Some(is_focused) = m.is_focused {
@@ -416,7 +356,6 @@ fn window_matches(window: WindowRef, role: &XdgToplevelSurfaceRoleAttributes, m:
     }
 
     if let Some(is_active) = m.is_active {
-        // Our "is-active" definition corresponds to the window having a pending Activated state.
         let pending_activated = server_pending
             .states
             .contains(xdg_toplevel::State::Activated);

@@ -18,7 +18,6 @@ use super::resources::Resources;
 use super::shaders::{ProgramType, Shaders};
 use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
 
-/// Renders a shader with optional texture input, on the primary GPU.
 #[derive(Debug, Clone)]
 pub struct ShaderRenderElement {
     program: ProgramType,
@@ -26,7 +25,6 @@ pub struct ShaderRenderElement {
     commit_counter: CommitCounter,
     area: Rectangle<f64, Logical>,
     opaque_regions: Vec<Rectangle<f64, Logical>>,
-    // Should only be used for visual improvements, i.e. corner radius anti-aliasing.
     scale: f32,
     alpha: f32,
     additional_uniforms: Rc<[Uniform<'static>]>,
@@ -69,7 +67,6 @@ unsafe fn compile_program(
     src: &str,
     additional_uniforms: &[UniformName<'_>],
     texture_uniforms: &[&str],
-    // destruction_callback_sender: Sender<CleanupResource>,
 ) -> Result<ShaderProgram, GlesError> {
     let shader = format!("#version 100\n{src}");
     let program = unsafe { link_program(gl, include_str!("shaders/texture.vert"), &shader)? };
@@ -183,7 +180,6 @@ impl ShaderRenderElement {
         program: ProgramType,
         size: Size<f64, Logical>,
         opaque_regions: Option<Vec<Rectangle<f64, Logical>>>,
-        // Should only be used for visual improvements, i.e. corner radius anti-aliasing.
         scale: f32,
         alpha: f32,
         additional_uniforms: Rc<[Uniform<'static>]>,
@@ -311,7 +307,6 @@ impl RenderElement<GlesRenderer> for ShaderRenderElement {
 
         let supports_instancing = frame.capabilities().contains(&Capability::Instancing);
 
-        // prepare the vertices
         resources.vertices.clear();
         if supports_instancing {
             resources.vertices.extend(damage.iter().flat_map(|rect| {
@@ -346,7 +341,6 @@ impl RenderElement<GlesRenderer> for ShaderRenderElement {
                 );
 
                 let rect = Rectangle::new(rect_constrained_loc, rect_clamped_size);
-                // Add the 4 f32s per damage rectangle for each of the 6 vertices.
                 (0..6).flat_map(move |_| {
                     [
                         rect.loc.x as f32,
@@ -362,7 +356,6 @@ impl RenderElement<GlesRenderer> for ShaderRenderElement {
             return Ok(());
         }
 
-        // dest position and scale
         let mut matrix = Mat3::from_translation(Vec2::new(dest.loc.x as f32, dest.loc.y as f32));
 
         let scale = src.size.to_f64() / dest.size.to_f64();
@@ -370,13 +363,11 @@ impl RenderElement<GlesRenderer> for ShaderRenderElement {
         let tex_matrix =
             Mat3::from_translation(Vec2::new(src.loc.x as f32, src.loc.y as f32)) * tex_matrix;
 
-        //apply output transformation
         matrix = Mat3::from_cols_array(frame.projection()) * matrix;
 
         let has_debug = !frame.debug_flags().is_empty();
         let has_tint = frame.debug_flags().contains(DebugFlags::TINT);
 
-        // render
         let span_loc = smithay::gpu_span_location!("draw shader");
         frame.with_profiled_context(span_loc, move |gl| -> Result<(), GlesError> {
             let program = if has_debug {
@@ -452,7 +443,6 @@ impl RenderElement<GlesRenderer> for ShaderRenderElement {
                     std::ptr::null(),
                 );
 
-                // vert_position
                 gl.EnableVertexAttribArray(program.attrib_vert_position as u32);
                 gl.BindBuffer(ffi::ARRAY_BUFFER, resources.vbos[1]);
                 gl.BufferData(
@@ -478,11 +468,9 @@ impl RenderElement<GlesRenderer> for ShaderRenderElement {
                     gl.VertexAttribDivisor(program.attrib_vert_position as u32, 1);
                     gl.DrawArraysInstanced(ffi::TRIANGLE_STRIP, 0, 4, damage_len);
                 } else {
-                    // When we have more than 10 rectangles, draw them in batches of 10.
                     for i in 0..(damage_len - 1) / 10 {
                         gl.DrawArrays(ffi::TRIANGLES, 0, 6);
 
-                        // Set damage pointer to the next 10 rectangles.
                         let offset =
                             (i + 1) as usize * 6 * 4 * std::mem::size_of::<ffi::types::GLfloat>();
                         gl.VertexAttribPointer(
@@ -495,7 +483,6 @@ impl RenderElement<GlesRenderer> for ShaderRenderElement {
                         );
                     }
 
-                    // Draw the up to 10 remaining rectangles.
                     let count = ((damage_len - 1) % 10 + 1) * 6;
                     gl.DrawArrays(ffi::TRIANGLES, 0, count);
                 }
@@ -515,8 +502,6 @@ impl RenderElement<GlesRenderer> for ShaderRenderElement {
     }
 
     fn underlying_storage(&self, _renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
-        // If scanout for things other than Wayland buffers is implemented, this will need to take
-        // the target GPU into account.
         None
     }
 }
@@ -542,8 +527,6 @@ impl<'render> RenderElement<TtyRenderer<'render>> for ShaderRenderElement {
         &self,
         _renderer: &mut TtyRenderer<'render>,
     ) -> Option<UnderlyingStorage<'_>> {
-        // If scanout for things other than Wayland buffers is implemented, this will need to take
-        // the target GPU into account.
         None
     }
 }

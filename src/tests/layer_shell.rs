@@ -64,7 +64,6 @@ fn margin_overflow() {
     let layer = f.client(id).layer(&surface);
     assert_snapshot!(layer.format_recent_configures(), @"size: 0 × 0");
 
-    // Add a second one for good measure.
     let layer = f.client(id).create_layer(None, Layer::Top, "");
     let surface = layer.surface.clone();
     layer.set_configure_props(LayerConfigureProps {
@@ -116,19 +115,15 @@ fn unmap_through_null_buffer() {
     f.double_roundtrip(id);
 
     let layer = f.client(id).layer(&surface);
-    // No new configure since nothing changed.
     assert_snapshot!(layer.format_recent_configures(), @"");
 
-    // Unmap by attaching a null buffer. This moves the surface back to pre-initial-commit stage.
     layer.attach_null();
     layer.commit();
     f.double_roundtrip(id);
 
     let layer = f.client(id).layer(&surface);
-    // Configures must be empty because we haven't done an initial commit yet.
     assert_snapshot!(layer.format_recent_configures(), @"");
 
-    // Do the initial commit again.
     layer.set_configure_props(LayerConfigureProps {
         anchor: Some(Anchor::Left | Anchor::Right | Anchor::Top),
         size: Some((0, 100)),
@@ -138,7 +133,6 @@ fn unmap_through_null_buffer() {
     f.double_roundtrip(id);
 
     let layer = f.client(id).layer(&surface);
-    // This is the new initial configure.
     assert_snapshot!(layer.format_recent_configures(), @"size: 1920 × 100");
 
     layer.attach_new_buffer();
@@ -169,7 +163,6 @@ fn multiple_commits_before_mapping() {
     let layer = f.client(id).layer(&surface);
     assert_snapshot!(layer.format_recent_configures(), @"size: 1920 × 50");
 
-    // Change something that won't cause a configure.
     layer.set_configure_props(LayerConfigureProps {
         anchor: Some(Anchor::Left | Anchor::Right | Anchor::Top),
         size: Some((0, 50)),
@@ -180,10 +173,8 @@ fn multiple_commits_before_mapping() {
     f.double_roundtrip(id);
 
     let layer = f.client(id).layer(&surface);
-    // No new configure since the size hasn't changed.
     assert_snapshot!(layer.format_recent_configures(), @"");
 
-    // Change something that will cause a configure.
     layer.set_configure_props(LayerConfigureProps {
         anchor: Some(Anchor::Left | Anchor::Right | Anchor::Top),
         size: Some((0, 100)),
@@ -193,30 +184,23 @@ fn multiple_commits_before_mapping() {
     f.double_roundtrip(id);
 
     let layer = f.client(id).layer(&surface);
-    // Configure with new size.
     assert_snapshot!(layer.format_recent_configures(), @"size: 1920 × 100");
 
-    // Map.
     layer.attach_new_buffer();
     layer.set_size(100, 100);
     layer.ack_last_and_commit();
     f.double_roundtrip(id);
 
     let layer = f.client(id).layer(&surface);
-    // No new configure since nothing changed.
     assert_snapshot!(layer.format_recent_configures(), @"");
 
-    // Unmap by attaching a null buffer. This moves the surface back to pre-initial-commit stage.
     layer.attach_null();
     layer.commit();
     f.double_roundtrip(id);
 
     let layer = f.client(id).layer(&surface);
-    // Configures must be empty because we haven't done an initial commit yet.
     assert_snapshot!(layer.format_recent_configures(), @"");
 
-    // Same configure props as before, but since we unmapped, we should get a new initial
-    // configure (that will happen to match the previous configure we had got while mapped).
     let surface = layer.surface.clone();
     layer.set_configure_props(LayerConfigureProps {
         anchor: Some(Anchor::Left | Anchor::Right | Anchor::Top),
@@ -229,7 +213,6 @@ fn multiple_commits_before_mapping() {
     let layer = f.client(id).layer(&surface);
     assert_snapshot!(layer.format_recent_configures(), @"size: 1920 × 100");
 
-    // Change something that won't cause a configure.
     layer.set_configure_props(LayerConfigureProps {
         anchor: Some(Anchor::Left | Anchor::Right | Anchor::Top),
         size: Some((0, 100)),
@@ -240,10 +223,8 @@ fn multiple_commits_before_mapping() {
     f.double_roundtrip(id);
 
     let layer = f.client(id).layer(&surface);
-    // No new configure since the size hasn't changed.
     assert_snapshot!(layer.format_recent_configures(), @"");
 
-    // Change something that will cause a configure.
     layer.set_configure_props(LayerConfigureProps {
         anchor: Some(Anchor::Left | Anchor::Right | Anchor::Top),
         size: Some((0, 50)),
@@ -253,6 +234,5 @@ fn multiple_commits_before_mapping() {
     f.double_roundtrip(id);
 
     let layer = f.client(id).layer(&surface);
-    // Configure with new size.
     assert_snapshot!(layer.format_recent_configures(), @"size: 1920 × 50");
 }

@@ -45,7 +45,6 @@ struct Inner {
     framebuffer: Option<GlesTexture>,
     blur: Option<Blur>,
     intermediate: Option<GlesTexture>,
-    /// Reusable storage for subregion-filtered damage rects.
     subregion_damage: Vec<Rectangle<i32, Physical>>,
 }
 
@@ -104,11 +103,9 @@ impl FramebufferEffectElement {
         let crop_size = Vec2::new(crop.size.w as f32, crop.size.h as f32);
         let clip_size = Vec2::new(self.clip_geo.size.w as f32, self.clip_geo.size.h as f32);
 
-        // Our v_coords are [0, 1] inside crop. We want them to be [0, 1] inside clip_geo.
         let input_to_clip_geo =
             Mat3::from_scale(crop_size / clip_size) * Mat3::from_translation(offset / crop_size);
 
-        // Revert the effect of the texture transform.
         let transform_mat = Mat3::from_translation(Vec2::new(0.5, 0.5))
             * transform.matrix()
             * Mat3::from_translation(Vec2::new(-0.5, -0.5));
@@ -138,7 +135,6 @@ impl Element for FramebufferEffectElement {
     }
 
     fn src(&self) -> Rectangle<f64, Buffer> {
-        // We don't use src for drawing but we can use it to figure out how we were cropped.
         let size = self.geometry.size.to_buffer(1., Transform::Normal);
         Rectangle::from_size(size)
     }
@@ -175,10 +171,6 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
 
             inner.intermediate = None;
 
-            // We want clamp-to-edge behavior for out-of-bounds pixels. However, glBlitFramebuffer
-            // seems to skip out-of-bounds pixels, even though my reading of the docs suggests
-            // otherwise (we use GL_LINEAR filter). So, clamp dst to the framebuffer bounds
-            // ourselves.
             let clamped_dst = match dst.intersection(output_rect) {
                 Some(clamped) => clamped,
                 None => return Ok(()),
@@ -187,24 +179,6 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
 
             let dst = transform.transform_rect_in(clamped_dst, &output_rect.size);
 
-            // Compute size from our geometry and scale.
-            //
-            // The "correct" size is always dst.size since that's the pixel region we're actually
-            // blitting. However, using dst.size causes two undesirable things when zooming out for
-            // the overview:
-            // 1. dst.size shrinks every frame, causing a texture realloaction for every fb effect
-            //    element every frame.
-            // 2. The underlying blur visually expands. This is technically correct, since the
-            //    underlying contents shrink, but it's not what you visually expect: you expect the
-            //    blur to also shrink as the windows zoom out, to give the zooming out effect.
-            //
-            // Using size computed from geometry and scale solves both of those problems (even
-            // though there's a bit of a cost in that zoomed-out elements still blur the entire
-            // unzoomed texture size, and even though the blur ends up slightly wrong as there's two
-            // layers of texture resampling, up and back down).
-            //
-            // Here we use src.size rather than geometry directly because src takes into account
-            // cropping.
             let size = src
                 .size
                 .to_logical(1., Transform::Normal)
@@ -214,7 +188,6 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
 
             let size = size.to_logical(1).to_buffer(1, Transform::Normal);
 
-            // Recreate framebuffer if needed.
             if inner
                 .framebuffer
                 .as_ref()
@@ -231,7 +204,6 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
                 inner.framebuffer.insert(texture)
             };
 
-            // Prepare blur textures.
             let mut blur = Option::zip(inner.blur.as_mut(), self.blur_options);
             if let Some((b, options)) = &mut blur {
                 let renderer = guard.as_mut();
@@ -245,18 +217,14 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
                 }
             }
 
-            // We can't use renderer.with_context() as that will reset the GlesFrame binding that we
-            // want to blit from.
             drop(guard);
 
-            // Blit the framebuffer contents.
             frame.with_context(|gl| unsafe {
                 while gl.GetError() != ffi::NO_ERROR {}
 
                 let mut current_fbo = 0i32;
                 gl.GetIntegerv(ffi::DRAW_FRAMEBUFFER_BINDING, &mut current_fbo as *mut _);
 
-                // BlitFramebuffer is affected by the scissor test, we don't want that.
                 gl.Disable(ffi::SCISSOR_TEST);
 
                 let mut fbo = 0;
@@ -284,7 +252,6 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
                     ffi::LINEAR,
                 );
 
-                // Restore state set by GlesFrame that we just modified.
                 gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, current_fbo as u32);
                 gl.Enable(ffi::SCISSOR_TEST);
 
@@ -297,7 +264,6 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
                 }
             })??;
 
-            // If blur is off, use the unblurred texture.
             if self.blur_options.is_none() {
                 inner.intermediate = Some(framebuffer.clone());
                 return Ok(());
@@ -340,7 +306,6 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
             return Ok(());
         };
 
-        // Clamp the same way as in capture_framebuffer().
         let output_rect = Rectangle::from_size(frame.output_size());
         let clamped_dst = match dst.intersection(output_rect) {
             Some(clamped) => clamped,
@@ -348,12 +313,10 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
         };
         let clamp_offset = clamped_dst.loc - dst.loc;
 
-        // Filter damage by subregion, reusing the stored Vec to avoid allocation.
         let filtered = &mut inner.subregion_damage;
         filtered.clear();
 
         if let Some(subregion) = &self.subregion {
-            // Convert to subregion coordinates.
             let mut crop = src.to_logical(1., Transform::Normal, &src.size);
             crop.loc += self.geometry.loc;
             subregion.filter_damage(crop, dst, damage, filtered);
@@ -361,7 +324,6 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
             filtered.extend(damage.iter());
         };
 
-        // Adjust for clamped dst.
         if clamped_dst != dst {
             let r = Rectangle::new(clamp_offset, clamped_dst.size);
             filtered.retain_mut(|d| {
@@ -380,7 +342,6 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
         }
         let damage = &filtered[..];
 
-        // Adjust src proportionally to the dst clamping.
         let src_loc = src.loc.to_logical(1., Transform::Normal, &src.size);
         let dst_to_src = src.size / dst.size.to_f64();
         let crop = Rectangle::new(
@@ -400,7 +361,6 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
             clamped_dst,
             damage,
             &[],
-            // The intermediate texture has the same transform as the frame.
             frame.transformation().invert(),
             1.,
             program.as_ref(),

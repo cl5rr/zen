@@ -8,7 +8,6 @@ use super::renderer::AsGlesFrame;
 use super::texture::TextureRenderElement;
 use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
 
-/// Wrapper for a texture from the primary GPU for rendering with the primary GPU.
 #[derive(Debug, Clone)]
 pub struct PrimaryGpuTextureRenderElement(pub TextureRenderElement<GlesTexture>);
 
@@ -78,8 +77,6 @@ impl RenderElement<GlesRenderer> for PrimaryGpuTextureRenderElement {
     }
 
     fn underlying_storage(&self, _renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
-        // If scanout for things other than Wayland buffers is implemented, this will need to take
-        // the target GPU into account.
         None
     }
 }
@@ -111,8 +108,6 @@ impl<'render> RenderElement<TtyRenderer<'render>> for PrimaryGpuTextureRenderEle
         &self,
         _renderer: &mut TtyRenderer<'render>,
     ) -> Option<UnderlyingStorage<'_>> {
-        // If scanout for things other than Wayland buffers is implemented, this will need to take
-        // the target GPU into account.
         None
     }
 }

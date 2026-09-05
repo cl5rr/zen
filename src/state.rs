@@ -189,19 +189,11 @@ use crate::window::{InitialConfigureState, Mapped, ResolvedWindowRules, Unmapped
 
 const CLEAR_COLOR_LOCKED: [f32; 4] = [0.3, 0.1, 0.1, 1.];
 
-// We'll try to send frame callbacks at least once a second. We'll make a timer that fires once a
-// second, so with the worst timing the maximum interval between two frame callbacks for a surface
-// should be ~1.995 seconds.
 const FRAME_CALLBACK_THROTTLE: Option<Duration> = Some(Duration::from_millis(995));
 
 pub struct Zen {
     pub config: Rc<RefCell<Config>>,
 
-    /// Output config from the config file.
-    ///
-    /// This does not include transient output config changes done via IPC. It is only used when
-    /// reloading the config from disk to determine if the output configuration should be reloaded
-    /// (and transient changes dropped).
     pub config_file_output_config: zen_config::Outputs,
 
     pub config_file_watcher: Option<Watcher>,
@@ -211,69 +203,45 @@ pub struct Zen {
     pub stop_signal: LoopSignal,
     pub display_handle: DisplayHandle,
 
-    /// Whether zen was run with `--session`
     pub is_session_instance: bool,
 
-    /// Name of the Wayland socket.
-    ///
-    /// This is `None` when creating `Zen` without a Wayland socket.
     pub socket_name: Option<OsString>,
 
     pub start_time: Instant,
 
-    /// Whether the at-startup=true window rules are active.
     pub is_at_startup: bool,
 
-    /// Clock for driving animations.
     pub clock: Clock,
 
-    // Each workspace corresponds to a Space. Each workspace generally has one Output mapped to it,
-    // however it may have none (when there are no outputs connected) or multiple (when mirroring).
     pub layout: Layout<Mapped>,
 
-    // This space does not actually contain any windows, but all outputs are mapped into it
-    // according to their global position.
     pub global_space: Space<Window>,
 
-    /// Mapped outputs, sorted by their name and position.
     pub sorted_outputs: Vec<Output>,
 
-    // Windows which don't have a buffer attached yet.
     pub unmapped_windows: HashMap<WlSurface, Unmapped>,
 
-    /// Layer surfaces which don't have a buffer attached yet.
     pub unmapped_layer_surfaces: HashSet<WlSurface>,
 
-    /// Extra data for mapped layer surfaces.
     pub mapped_layer_surfaces: HashMap<LayerSurface, MappedLayer>,
 
-    // Cached root surface for every surface, so that we can access it in destroyed() where the
-    // normal get_parent() is cleared out.
     pub root_surface: HashMap<WlSurface, WlSurface>,
 
-    // Dmabuf readiness pre-commit hook for a surface.
     pub dmabuf_pre_commit_hook: HashMap<WlSurface, HookId>,
 
-    /// Clients to notify about their blockers being cleared.
     pub blocker_cleared_tx: Sender<Client>,
     pub blocker_cleared_rx: Receiver<Client>,
 
     pub output_state: HashMap<Output, OutputState>,
 
-    // When false, we're idling with monitors powered off.
     pub monitors_active: bool,
 
-    /// Whether the laptop lid is closed.
-    ///
-    /// Libinput guarantees that the lid switch starts in open state, and if it was closed during
-    /// startup, libinput will immediately send a closed event.
     pub is_lid_closed: bool,
 
     pub devices: HashSet<input::Device>,
     pub tablets: HashMap<input::Device, TabletData>,
     pub touch: HashSet<input::Device>,
 
-    // Smithay state.
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
     pub xdg_decoration_state: XdgDecorationState,
@@ -315,19 +283,11 @@ pub struct Zen {
     pub activation_state: XdgActivationState,
     pub mutter_x11_interop_state: MutterX11InteropManagerState,
 
-    // This will not work as is outside of tests, so it is gated with #[cfg(test)] for now. In
-    // particular, shaders will need to learn about the single pixel buffer. Also, it must be
-    // verified that a black single-pixel-buffer background lets the foreground surface to be
-    // unredirected.
-    //
-    // upstream issue #619
     #[cfg(test)]
     pub single_pixel_buffer_state: SinglePixelBufferState,
 
     pub seat: Seat<State>,
-    /// Scancodes of the keys to suppress.
     pub suppressed_keys: HashSet<Keycode>,
-    /// Button codes of the mouse buttons to suppress.
     pub suppressed_buttons: HashSet<u32>,
     pub bind_cooldown_timers: HashMap<Key, RegistrationToken>,
     pub bind_repeat_timer: Option<RegistrationToken>,
@@ -337,38 +297,16 @@ pub struct Zen {
     pub is_fdo_idle_inhibited: Arc<AtomicBool>,
     pub keyboard_shortcuts_inhibiting_surfaces: HashMap<WlSurface, KeyboardShortcutsInhibitor>,
 
-    /// Most recent XKB settings from org.freedesktop.locale1.
     pub xkb_from_locale1: Option<Xkb>,
 
     pub cursor_manager: CursorManager,
     pub cursor_texture_cache: CursorTextureCache,
     pub cursor_shape_manager_state: CursorShapeManagerState,
     pub dnd_icon: Option<DndIcon>,
-    /// Contents under pointer.
-    ///
-    /// Periodically updated: on motion and other events and in the loop callback. If you require
-    /// the real up-to-date contents somewhere, it's better to recompute on the spot.
-    ///
-    /// This is not pointer focus. I.e. during a click grab, the pointer focus remains on the
-    /// client with the grab, but this field will keep updating to the latest contents as if no
-    /// grab was active.
-    ///
-    /// This is primarily useful for emitting pointer motion events for surfaces that move
-    /// underneath the cursor on their own (i.e. when the tiling layout moves). In this case, not
-    /// taking grabs into account is expected, because we pass the information to pointer.motion()
-    /// which passes it down through grabs, which decide what to do with it as they see fit.
     pub pointer_contents: PointContents,
     pub pointer_visibility: PointerVisibility,
     pub pointer_inactivity_timer: Option<RegistrationToken>,
-    /// Whether the pointer inactivity timer got reset this event loop iteration.
-    ///
-    /// Used for limiting the reset to once per iteration, so that it's not spammed with high
-    /// resolution mice.
     pub pointer_inactivity_timer_got_reset: bool,
-    /// Whether the (idle notifier) activity was notified this event loop iteration.
-    ///
-    /// Used for limiting the notify to once per iteration, so that it's not spammed with high
-    /// resolution mice.
     pub notified_activity_this_iteration: bool,
     pub pointer_inside_hot_corner: bool,
     pub pointer_constraint_position_hint: Option<Point<f64, Logical>>,
@@ -386,26 +324,13 @@ pub struct Zen {
 
     pub lock_state: LockState,
 
-    // State that we last sent to the logind LockedHint.
     pub locked_hint: Option<bool>,
 
     pub screenshot_ui: ScreenshotUi,
     pub config_error_notification: ConfigErrorNotification,
     pub hotkey_overlay: HotkeyOverlay,
-    /// The startup reveal, dropped once it has played.
-    ///
-    /// Shared across outputs rather than per-output: it is one moment, not one per monitor, and
-    /// they should uncover together.
     pub welcome: Option<Welcome>,
-    /// Whether the modifier is currently held alone, with nothing pressed since.
-    ///
-    /// Releasing it in this state fires the `ModTap` bind. Any other key, pointer button or
-    /// scroll clears it, so `Mod+T` never leaks into a tap.
     pub mod_tap_armed: bool,
-    /// Set when a modifier tap completed; consumed after the keyboard callback returns.
-    ///
-    /// The action cannot run inside the callback -- Smithay holds a borrow of the seat there,
-    /// and spawning or focusing would re-enter it.
     pub pending_mod_tap: bool,
     pub exit_confirm_dialog: ExitConfirmDialog,
 
@@ -440,17 +365,8 @@ smithay::delegate_dispatch2!(State);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PointerVisibility {
-    /// The pointer is visible.
     Visible,
-    /// The pointer is invisible, but retains its focus.
-    ///
-    /// This state is set temporarily after auto-hiding the pointer to keep tooltips open and grabs
-    /// ongoing.
     Hidden,
-    /// The pointer is invisible and cannot focus.
-    ///
-    /// Corresponds to a fully disabled pointer, for example after a touchscreen input, or after
-    /// the pointer contents changed in a Hidden state.
     Disabled,
 }
 
@@ -471,55 +387,26 @@ pub struct OutputState {
     pub frame_clock: FrameClock,
     pub redraw_state: RedrawState,
     pub on_demand_vrr_enabled: bool,
-    // After the last redraw, some ongoing animations still remain.
     pub unfinished_animations_remain: bool,
-    /// Last sequence received in a vblank event.
     pub last_drm_sequence: Option<u32>,
     pub vblank_throttle: VBlankThrottle,
-    /// Sequence for frame callback throttling.
-    ///
-    /// We want to send frame callbacks for each surface at most once per monitor refresh cycle.
-    ///
-    /// Even if a surface commit resulted in empty damage to the monitor, we want to delay the next
-    /// frame callback until roughly when a VBlank would occur, had the monitor been damaged. This
-    /// is necessary to prevent clients busy-looping with frame callbacks that result in empty
-    /// damage.
-    ///
-    /// This counter wrapping-increments by 1 every time we move into the next refresh cycle, as
-    /// far as frame callback throttling is concerned. Specifically, it happens:
-    ///
-    /// 1. Upon a successful DRM frame submission. Notably, we don't wait for the VBlank here,
-    ///    because the client buffers are already "latched" at the point of submission. Even if a
-    ///    client submits a new buffer right away, we will wait for a VBlank to draw it, which
-    ///    means that busy looping is avoided.
-    /// 2. If a frame resulted in empty damage, a timer is queued to fire roughly when a VBlank
-    ///    would occur, based on the last presentation time and output refresh interval. Sequence
-    ///    is incremented in that timer, before attempting a redraw or sending frame callbacks.
     pub frame_callback_sequence: u32,
-    /// Solid color buffer for the backdrop that we use instead of clearing to avoid damage
-    /// tracking issues and make screenshots easier.
     pub backdrop_buffer: SolidColorBuffer,
     pub xray: Xray,
     pub lock_render_state: LockRenderState,
     pub lock_surface: Option<LockSurface>,
     pub lock_color_buffer: SolidColorBuffer,
     screen_transition: Option<ScreenTransition>,
-    /// Damage tracker used for the debug damage visualization.
     pub debug_damage_tracker: OutputDamageTracker,
 }
 
 #[derive(Debug, Default)]
 pub enum RedrawState {
-    /// The compositor is idle.
     #[default]
     Idle,
-    /// A redraw is queued.
     Queued,
-    /// We submitted a frame to the KMS and waiting for it to be presented.
     WaitingForVBlank { redraw_needed: bool },
-    /// We did not submit anything to KMS and made a timer to fire at the estimated VBlank.
     WaitingForEstimatedVBlank(RegistrationToken),
-    /// A redraw is queued on top of the above.
     WaitingForEstimatedVBlankAndQueued(RegistrationToken),
 }
 
@@ -529,12 +416,8 @@ pub struct PopupGrabState {
     pub has_keyboard_grab: bool,
 }
 
-// The surfaces here are always toplevel surfaces focused as far as zen's logic is concerned, even
-// when popup grabs are active (which means the real keyboard focus is on a popup descending from
-// that toplevel surface).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyboardFocus {
-    // Layout is focused by default if there's nothing else to focus.
     Layout { surface: Option<WlSurface> },
     LayerShell { surface: WlSurface },
     LockScreen { surface: Option<WlSurface> },
@@ -546,18 +429,10 @@ pub enum KeyboardFocus {
 
 #[derive(Default, Clone, PartialEq)]
 pub struct PointContents {
-    // Output under point.
     pub output: Option<Output>,
-    // Surface under point and its location in the global coordinate space.
-    //
-    // Can be `None` even when `window` is set, for example when the pointer is over the zen
-    // border around the window.
     pub surface: Option<(WlSurface, Point<f64, Logical>)>,
-    // If surface belongs to a window, this is that window.
     pub window: Option<(Window, HitType)>,
-    // If surface belongs to a layer surface, this is that layer surface.
     pub layer: Option<LayerSurface>,
-    // Pointer is over a hot corner.
     pub hot_corner: bool,
 }
 
@@ -575,34 +450,25 @@ pub enum LockState {
 
 #[derive(PartialEq, Eq)]
 pub enum LockRenderState {
-    /// The output displays a normal session frame.
     Unlocked,
-    /// The output displays a locked frame.
     Locked,
 }
 
-// Not related to the one in Smithay.
-//
-// This state keeps track of when a surface last received a frame callback.
 struct SurfaceFrameThrottlingState {
-    /// Output and sequence that the frame callback was last sent at.
     last_sent_at: RefCell<Option<(Output, u32)>>,
 }
 
 pub enum CenterCoords {
     Separately,
     Both,
-    // Force centering even if the cursor is already in the rectangle.
     BothAlways,
 }
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum CastTarget {
-    // Dynamic cast before selecting anything.
     Nothing,
     Output {
         output: WeakOutput,
-        /// Cached name of the output.
         name: String,
     },
     Window {
@@ -644,7 +510,6 @@ impl CastTarget {
     }
 }
 
-/// Pending update to a window's focus timestamp.
 #[derive(Debug)]
 pub struct PendingMruCommit {
     id: MappedId,
@@ -660,12 +525,10 @@ impl RedrawState {
                 RedrawState::WaitingForEstimatedVBlankAndQueued(token)
             }
 
-            // A redraw is already queued.
             value @ (RedrawState::Queued | RedrawState::WaitingForEstimatedVBlankAndQueued(_)) => {
                 value
             }
 
-            // We're waiting for VBlank, request a redraw afterwards.
             RedrawState::WaitingForVBlank { .. } => RedrawState::WaitingForVBlank {
                 redraw_needed: true,
             },
@@ -763,11 +626,8 @@ impl State {
 
         let mut state = Self { backend, zen };
 
-        // Load the xkb_file config option if set by the user.
         state.load_xkb_file();
-        // Initialize some IPC server state.
         state.ipc_keyboard_layouts_changed();
-        // Focus the default monitor if set by the user.
         state.focus_default_monitor();
 
         Ok(state)
@@ -778,10 +638,6 @@ impl State {
 
         self.refresh();
 
-        // Advance animations to the current time (not target render time) before rendering outputs
-        // in order to clear completed animations and render elements. Even if we're not rendering,
-        // it's good to advance every now and then so the workspace clean-up and animations don't
-        // build up (the 1 second frame callback timer will call this line).
         self.zen.advance_animations();
 
         self.zen.redraw_queued_outputs(&mut self.backend);
@@ -794,14 +650,11 @@ impl State {
         #[cfg(feature = "dbus")]
         self.zen.update_locked_hint();
 
-        // Clear the time so it's fetched afresh next iteration.
         self.zen.clock.clear();
         self.zen.pointer_inactivity_timer_got_reset = false;
         self.zen.notified_activity_this_iteration = false;
     }
 
-    // We monitor both libinput and logind: libinput is always there (including without DBus), but
-    // it misses some switch events (e.g. after unsuspend) on some systems.
     pub fn set_lid_closed(&mut self, is_closed: bool) {
         if self.zen.is_lid_closed == is_closed {
             return;
@@ -815,20 +668,14 @@ impl State {
     fn refresh(&mut self) {
         let _span = tracy_client::span!("State::refresh");
 
-        // Handle commits for surfaces whose blockers cleared this cycle. This should happen before
-        // layout.refresh() since this is where these surfaces handle commits.
         self.notify_blocker_cleared();
 
-        // These should be called periodically, before flushing the clients.
         self.zen.popups.cleanup();
         self.refresh_popup_grab();
         self.update_keyboard_focus();
 
-        // Should be called before refresh_layout() because that one will refresh other window
-        // states and then send a pending configure.
         self.zen.refresh_window_states();
 
-        // Needs to be called after updating the keyboard focus.
         self.zen.refresh_layout();
 
         self.zen.cursor_manager.check_cursor_image_surface_alive();
@@ -841,8 +688,6 @@ impl State {
 
         #[cfg(feature = "xdp-gnome-screencast")]
         self.zen.refresh_mapped_cast_outputs();
-        // Should happen before refresh_window_rules(), but after anything that can start or stop
-        // screencasts.
         #[cfg(feature = "xdp-gnome-screencast")]
         self.zen.refresh_mapped_cast_window_rules();
         self.ipc_refresh_casts();
@@ -852,7 +697,6 @@ impl State {
         self.ipc_refresh_layout();
         self.ipc_refresh_keyboard_layout_index();
 
-        // Needs to be called after updating the keyboard focus.
         #[cfg(feature = "dbus")]
         self.zen.refresh_a11y();
     }
@@ -872,13 +716,9 @@ impl State {
             _ => self.zen.contents_under(location),
         };
 
-        // Disable the hidden pointer if the contents underneath have changed.
         if !self.zen.pointer_visibility.is_visible() && self.zen.pointer_contents != under {
             self.zen.pointer_visibility = PointerVisibility::Disabled;
 
-            // When setting PointerVisibility::Hidden together with pointer contents changing,
-            // we can change straight to nothing to avoid one frame of hover. Notably, this can
-            // be triggered through warp-mouse-to-focus combined with hide-when-typing.
             under = PointContents::default();
         }
 
@@ -898,13 +738,9 @@ impl State {
 
         self.zen.maybe_activate_pointer_constraint();
 
-        // We do not show the pointer on programmatic or keyboard movement.
-
-        // FIXME: granular
         self.zen.queue_redraw_all();
     }
 
-    /// Moves cursor within the specified rectangle, only adjusting coordinates if needed.
     fn move_cursor_to_rect(&mut self, rect: Rectangle<f64, Logical>, mode: CenterCoords) -> bool {
         let pointer = &self.zen.seat.get_pointer().unwrap();
         let cur_loc = pointer.current_location();
@@ -916,13 +752,10 @@ impl State {
                 if x_in_bound && y_in_bound {
                     return false;
                 } else if y_in_bound {
-                    // adjust x
                     Point::from((rect.loc.x + rect.size.w / 2.0, cur_loc.y))
                 } else if x_in_bound {
-                    // adjust y
                     Point::from((cur_loc.x, rect.loc.y + rect.size.h / 2.0))
                 } else {
-                    // adjust x and y
                     center_f64(rect)
                 }
             }
@@ -930,7 +763,6 @@ impl State {
                 if x_in_bound && y_in_bound {
                     return false;
                 } else {
-                    // adjust x and y
                     center_f64(rect)
                 }
             }
@@ -969,9 +801,7 @@ impl State {
     }
 
     pub fn focus_default_monitor(&mut self) {
-        // Our default target is the first output in sorted order.
         let Some(mut target) = self.zen.sorted_outputs.first().cloned() else {
-            // No outputs are connected.
             return;
         };
 
@@ -991,8 +821,6 @@ impl State {
         self.move_cursor_to_output(&target);
     }
 
-    /// Focus a specific window, taking care of a potential active output change and cursor
-    /// warp.
     pub fn focus_window(&mut self, window: &Window) {
         let active_output = self.zen.layout.active_output().cloned();
 
@@ -1007,16 +835,11 @@ impl State {
             self.maybe_warp_cursor_to_focus();
         }
 
-        // FIXME: granular
         self.zen.queue_redraw_all();
     }
 
     pub fn confirm_mru(&mut self) {
         if let Some(window) = self.zen.close_mru(MruCloseRequest::Confirm) {
-            // focus_window() will warp the cursor to the window only when the keyboard focus is on
-            // the layout. However, right now the keyboard focus is still on the MRU (that we had
-            // just closed) since it's only updated at the end of the event loop cycle. Force-update
-            // the keyboard focus here to make cursor warping work.
             self.update_keyboard_focus();
 
             self.focus_window(&window);
@@ -1048,8 +871,6 @@ impl State {
     }
 
     pub fn refresh_pointer_contents(&mut self) {
-        // Don't move the mouse pointer while the user is interacting with the tablet, as it causes
-        // unwanted jumps for the client.
         if self.zen.tablet_cursor_location.is_some() {
             return;
         }
@@ -1063,7 +884,6 @@ impl State {
             && !self.zen.is_locked()
             && !self.zen.screenshot_ui.is_open()
         {
-            // Don't refresh cursor focus during transitions.
             if let Some((output, _)) = self.zen.output_under(location) {
                 let monitor = self.zen.layout.monitor_for_output(output).unwrap();
                 if monitor.are_transitions_ongoing() {
@@ -1078,10 +898,6 @@ impl State {
 
         pointer.frame(self);
 
-        // Pointer motion from a surface to nothing triggers a cursor change to default, which
-        // means we may need to redraw.
-
-        // FIXME: granular
         self.zen.queue_redraw_all();
     }
 
@@ -1095,19 +911,13 @@ impl State {
             _ => self.zen.contents_under(location),
         };
 
-        // We're not changing the global cursor location here, so if the contents did not change,
-        // then nothing changed.
         if self.zen.pointer_contents == under {
             return false;
         }
 
-        // Disable the hidden pointer if the contents underneath have changed.
         if !self.zen.pointer_visibility.is_visible() {
             self.zen.pointer_visibility = PointerVisibility::Disabled;
 
-            // When setting PointerVisibility::Hidden together with pointer contents changing,
-            // we can change straight to nothing to avoid one frame of hover. Notably, this can
-            // be triggered through warp-mouse-to-focus combined with hide-when-typing.
             under = PointContents::default();
             if self.zen.pointer_contents == under {
                 return false;
@@ -1145,20 +955,16 @@ impl State {
     }
 
     pub fn update_keyboard_focus(&mut self) {
-        // Clean up on-demand layer surface focus if necessary.
         if let Some(surface) = &self.zen.layer_shell_on_demand_focus {
-            // Still alive and has on-demand interactivity.
             let mut good = surface.alive()
                 && surface.cached_state().keyboard_interactivity
                     == wlr_layer::KeyboardInteractivity::OnDemand;
 
             if let Some(mapped) = self.zen.mapped_layer_surfaces.get(surface) {
-                // Check if it moved to the overview backdrop.
                 if mapped.place_within_backdrop() {
                     good = false;
                 }
             } else {
-                // The layer surface is alive but it got unmapped.
                 good = false;
             }
 
@@ -1167,7 +973,6 @@ impl State {
             }
         }
 
-        // Compute the current focus.
         let focus = if self.zen.exit_confirm_dialog.is_open() {
             KeyboardFocus::ExitConfirmDialog
         } else if self.zen.is_locked() {
@@ -1182,8 +987,6 @@ impl State {
             let mon = self.zen.layout.monitor_for_output(output).unwrap();
             let layers = layer_map_for_output(output);
 
-            // Explicitly check for layer-shell popup grabs here, our keyboard focus will stay on
-            // the root layer surface while it has grabs.
             let layer_grab = self.zen.popup_grab.as_ref().and_then(|g| {
                 layers
                     .layer_for_surface(&g.root, WindowSurfaceType::TOPLEVEL)
@@ -1233,16 +1036,12 @@ impl State {
                 })
             };
 
-            // Prefer exclusive focus on a layer, then check on-demand focus.
             let focus_on_layer =
                 |layer| excl_focus_on_layer(layer).or_else(|| on_d_focus_on_layer(layer));
 
             let is_overview_open = self.zen.layout.is_overview_open();
 
             let mut surface = grab_on_layer(Layer::Overlay);
-            // FIXME: we shouldn't prioritize the top layer grabs over regular overlay input or a
-            // fullscreen layout window. This will need tracking in grab() to avoid handing it out
-            // in the first place. Or a better way to structure this code.
             surface = surface.or_else(|| grab_on_layer(Layer::Top));
 
             if !is_overview_open {
@@ -1268,8 +1067,6 @@ impl State {
                 surface = surface.or_else(|| on_d_focus_on_layer(Layer::Background));
                 surface = surface.or_else(layout_focus);
 
-                // Bottom and background layers can only receive exclusive focus when there are no
-                // layout windows.
                 surface = surface.or_else(|| excl_focus_on_layer(Layer::Bottom));
                 surface = surface.or_else(|| excl_focus_on_layer(Layer::Background));
             }
@@ -1287,7 +1084,6 @@ impl State {
                 focus
             );
 
-            // Tell the windows their new focus state for window rule purposes.
             if let KeyboardFocus::Layout {
                 surface: Some(surface),
             } = &self.zen.keyboard_focus
@@ -1303,11 +1099,6 @@ impl State {
                 if let Some((mapped, _)) = self.zen.layout.find_window_and_output_mut(surface) {
                     mapped.set_is_focused(true);
 
-                    // If `mapped` does not have a focus timestamp, then the window is newly
-                    // created/mapped and a timestamp is unconditionally created.
-                    //
-                    // If `mapped` already has a timestamp only update it after the focus lock-in
-                    // period has gone by without the focus having elsewhere.
                     let stamp = get_monotonic_time();
 
                     let debounce = self.zen.config.borrow().recent_windows.debounce_ms;
@@ -1365,7 +1156,6 @@ impl State {
                 });
 
                 let mut new_layout = current_layout;
-                // Store the currently active layout for the surface.
                 if let Some(current_focus) = self.zen.keyboard_focus.surface() {
                     with_states(current_focus, |data| {
                         let cell = data
@@ -1378,8 +1168,6 @@ impl State {
                 if let Some(focus) = focus.surface() {
                     new_layout = with_states(focus, |data| {
                         let cell = data.data_map.get_or_insert::<Cell<KeyboardLayout>, _>(|| {
-                            // The default layout is effectively the first layout in the
-                            // keymap, so use it for new windows.
                             Cell::new(KeyboardLayout::default())
                         });
                         cell.get()
@@ -1396,12 +1184,10 @@ impl State {
             self.zen.keyboard_focus.clone_from(&focus);
             keyboard.set_focus(self, focus.into_surface(), SERIAL_COUNTER.next_serial());
 
-            // FIXME: can be more granular.
             self.zen.queue_redraw_all();
         }
     }
 
-    /// Loads the xkb keymap from a file config setting.
     fn set_xkb_file(&mut self, xkb_file: String) -> anyhow::Result<()> {
         let xkb_file = PathBuf::from(xkb_file);
         let xkb_file = expand_home(&xkb_file)
@@ -1417,7 +1203,6 @@ impl State {
             .set_keymap_from_string(self, keymap)
             .context("failed to set keymap")?;
 
-        // Restore num lock to its previous value.
         let mut mods_state = keyboard.modifier_state();
         if mods_state.num_lock != num_lock {
             mods_state.num_lock = num_lock;
@@ -1444,7 +1229,6 @@ impl State {
             return;
         }
 
-        // Restore num lock to its previous value.
         let mut mods_state = keyboard.modifier_state();
         if mods_state.num_lock != num_lock {
             mods_state.num_lock = num_lock;
@@ -1470,7 +1254,6 @@ impl State {
 
         self.zen.config_error_notification.hide();
 
-        // Find & orphan removed named workspaces.
         let mut removed_workspaces: Vec<String> = vec![];
         for ws in &self.zen.config.borrow().workspaces {
             if !config.workspaces.iter().any(|w| w.name == ws.name) {
@@ -1486,7 +1269,6 @@ impl State {
             mapped.update_config(&config);
         }
 
-        // Create new named workspaces.
         for ws_config in &config.workspaces {
             self.zen.layout.ensure_named_workspace(ws_config);
         }
@@ -1511,7 +1293,6 @@ impl State {
         let mut xwls_changed = false;
         let mut old_config = self.zen.config.borrow_mut();
 
-        // Reload the cursor.
         if config.cursor != old_config.cursor {
             self.zen
                 .cursor_manager
@@ -1519,12 +1300,10 @@ impl State {
             self.zen.cursor_texture_cache.clear();
         }
 
-        // We need &mut self to reload the xkb config, so just store it here.
         if config.input.keyboard.xkb != old_config.input.keyboard.xkb {
             reload_xkb = Some(config.input.keyboard.xkb.clone());
         }
 
-        // Reload the repeat info.
         if config.input.keyboard.repeat_rate != old_config.input.keyboard.repeat_rate
             || config.input.keyboard.repeat_delay != old_config.input.keyboard.repeat_delay
         {
@@ -1554,8 +1333,6 @@ impl State {
                 .config_file_output_config
                 .clone_from(&config.outputs);
         } else {
-            // Output config did not change from the last disk load, so we need to preserve the
-            // transient changes.
             preserved_output_config = Some(mem::take(&mut old_config.outputs));
         }
 
@@ -1625,7 +1402,6 @@ impl State {
             output_config_changed = true;
         }
 
-        // FIXME: move backdrop rendering into layout::Monitor, then this will become unnecessary.
         if config.overview.backdrop_color != old_config.overview.backdrop_color {
             output_config_changed = true;
         }
@@ -1647,26 +1423,20 @@ impl State {
             old_config.outputs = outputs;
         }
 
-        // Release the borrow.
         drop(old_config);
 
-        // Now with a &mut self we can reload the xkb config.
         if let Some(mut xkb) = reload_xkb {
             let mut set_xkb_config = true;
 
-            // It's fine to .take() the xkb file, as this is a
-            // clone and the file field is not used in the XkbConfig.
             if let Some(xkb_file) = xkb.file.take() {
                 if let Err(err) = self.set_xkb_file(xkb_file) {
                     warn!("error reloading xkb_file: {err:?}");
                 } else {
-                    // We successfully set xkb file so we don't need to fallback to XkbConfig.
                     set_xkb_config = false;
                 }
             }
 
             if set_xkb_config {
-                // If xkb is unset in the zen config, use settings from locale1.
                 if xkb == Xkb::default() {
                     trace!("using xkb from locale1");
                     xkb = self.zen.xkb_from_locale1.clone().unwrap_or_default();
@@ -1706,7 +1476,6 @@ impl State {
         }
 
         if cursor_inactivity_timeout_changed {
-            // Force reset due to timeout change.
             self.zen.pointer_inactivity_timer_got_reset = false;
             self.zen.reset_pointer_inactivity_timer();
         }
@@ -1720,11 +1489,8 @@ impl State {
         }
 
         if xwls_changed {
-            // If xwl-s was previously working and is now off, we don't try to kill it or stop
-            // watching the sockets, for simplicity's sake.
             let was_working = self.zen.satellite.is_some();
 
-            // Try to start, or restart in case the user corrected the path or something.
             xwayland::satellite::setup(self);
 
             let config = self.zen.config.borrow();
@@ -1739,14 +1505,8 @@ impl State {
                 }
             }
 
-            // This won't change the systemd environment, but oh well.
             *CHILD_DISPLAY.write().unwrap() = display_name;
         }
-
-        // Can't really update xdg-decoration settings since we have to hide the globals for CSD
-        // due to the SDL2 bug... I don't imagine clients are prepared for the xdg-decoration
-        // global suddenly appearing? Either way, right now it's live-reloaded in a sense that new
-        // clients will use the new xdg-decoration setting.
 
         self.zen.queue_redraw_all();
     }
@@ -1774,7 +1534,6 @@ impl State {
                 + config
                     .map(|c| ipc_transform_to_smithay(c.transform))
                     .unwrap_or(Transform::Normal);
-            // FIXME: fix winit damage on other transforms.
             if name.connector == "winit" {
                 transform = Transform::Flipped180;
             }
@@ -1812,7 +1571,6 @@ impl State {
                 }
 
                 let mut layout_config = config.and_then(|c| c.layout.clone());
-                // Support the deprecated non-layout background-color key.
                 if let Some(layout) = &mut layout_config {
                     if layout.background_color.is_none() {
                         layout.background_color = config.and_then(|c| c.background_color);
@@ -1820,7 +1578,6 @@ impl State {
                 }
 
                 if mon.update_layout_config(layout_config) {
-                    // Also redraw these; if anything, the background color could've changed.
                     recolored_outputs.push(output.clone());
                 }
                 break;
@@ -1851,9 +1608,6 @@ impl State {
     where
         F: FnOnce(&mut zen_config::Output),
     {
-        // Try hard to find the output config section corresponding to the output set by the
-        // user. Since if we add a new section and some existing section also matches the
-        // output, then our new section won't do anything.
         let temp;
         let match_name = if let Some(output) = self.zen.output_by_name_match(name) {
             output.user_data().get::<OutputName>().unwrap()
@@ -1865,7 +1619,6 @@ impl State {
             temp = output_name;
             &temp
         } else {
-            // Even if name is "make model serial", matching will work fine this way.
             temp = OutputName {
                 connector: name.to_owned(),
                 make: None,
@@ -1880,7 +1633,6 @@ impl State {
             config
         } else {
             config.outputs.0.push(zen_config::Output {
-                // Save name as set by the user.
                 name: String::from(name),
                 ..Default::default()
             });
@@ -1921,7 +1673,6 @@ impl State {
                 hsync_polarity,
                 vsync_polarity,
             } => {
-                // Do not reset config.mode to None since it's used as a fallback.
                 config.modeline = Some(zen_config::output::Modeline {
                     clock,
                     hdisplay,
@@ -2014,7 +1765,6 @@ impl State {
             return;
         };
 
-        // Now that we captured the screenshots, clear grabs like drag-and-drop, etc.
         let time = get_monotonic_time().as_millis() as u32;
         self.zen
             .seat
@@ -2025,7 +1775,6 @@ impl State {
             touch.unset_grab(self);
         }
 
-        // Can't unset_grab() from with_tools(), will deadlock on tablet seat mutex...
         let mut tools = Vec::new();
         self.zen.seat.tablet_seat().with_tools(|map| {
             tools = Vec::from_iter(map.values().cloned());
@@ -2089,8 +1838,6 @@ impl State {
     }
 
     pub fn store_unmap_snapshot(&mut self, window: &Window, output: Option<&Output>) {
-        // The unmapping tile may have an xray background, in which case we will render xray
-        // elements, so they need to be updated.
         self.zen.update_xray_render_elements(output);
 
         self.backend.with_primary_renderer(|renderer| {
@@ -2103,10 +1850,6 @@ impl State {
 
                 self.zen.fill_xray_elements(ctx.r(), output);
 
-                // If any background layer has block_out_from, also fill the Screencast xray
-                // buffer so the unmap snapshot can render a buffer with blocked-out background.
-                //
-                // This will be used in Tile::render_snapshot().
                 let has_blocked_out = self.zen.has_blocked_out_background_layers(output);
                 if has_blocked_out {
                     let screencast_ctx = RenderCtx {
@@ -2223,9 +1966,6 @@ impl State {
                     app_id: role
                         .app_id
                         .as_ref()
-                        // We don't do proper .desktop file tracking (it's quite involved), and
-                        // Wayland windows can set any app id they want. However, this seems to
-                        // work well enough in practice.
                         .map(|app_id| format!("{app_id}.desktop"))
                         .unwrap_or_default(),
                 }
@@ -2316,7 +2056,6 @@ impl Zen {
             });
         let kde_decoration_state = KdeDecorationState::new_with_filter::<State, _>(
             &display_handle,
-            // If we want CSD we will hide the global.
             KdeDecorationsMode::Server,
             |client| {
                 client
@@ -2512,7 +2251,6 @@ impl Zen {
         let display_source = Generic::new(display, Interest::READ, Mode::Level);
         event_loop
             .insert_source(display_source, |_, display, state| {
-                // SAFETY: we don't drop the display.
                 unsafe {
                     display.get_mut().dispatch_clients(state).unwrap();
                 }
@@ -2641,7 +2379,6 @@ impl Zen {
             mods_with_wheel_binds,
             mods_with_tablet_stylus_binds,
 
-            // 10 is copied from Clutter: DISCRETE_SCROLL_STEP.
             vertical_finger_scroll_tracker: ScrollTracker::new(10),
             horizontal_finger_scroll_tracker: ScrollTracker::new(10),
             mods_with_finger_scroll_binds,
@@ -2726,7 +2463,6 @@ impl Zen {
 
         let fd: zbus::zvariant::OwnedFd = message.body().deserialize()?;
 
-        // Don't leak the fd to child processes.
         if let Err(err) = fcntl_setfd(&fd, FdFlags::CLOEXEC) {
             warn!("error setting CLOEXEC on inhibit fd: {err:?}");
         };
@@ -2736,7 +2472,6 @@ impl Zen {
         Ok(())
     }
 
-    /// Repositions all outputs, optionally adding a new output.
     pub fn reposition_outputs(&mut self, new_output: Option<&Output>) {
         let _span = tracy_client::span!("Zen::reposition_outputs");
 
@@ -2768,15 +2503,8 @@ impl Zen {
             self.global_space.unmap_output(output);
         }
 
-        // Connectors can appear in udev in any order. If we sort by name then we get output
-        // positioning that does not depend on the order they appeared.
-        //
-        // This sorting first compares by make/model/serial so that it is stable regardless of the
-        // connector name. However, if make/model/serial is equal or unknown, then it does fall
-        // back to comparing the connector name, which should always be unique.
         outputs.sort_unstable_by(|a, b| a.name.compare(&b.name));
 
-        // Place all outputs with explicitly configured position first, then the unconfigured ones.
         outputs.sort_by_key(|d| d.config.is_none());
 
         trace!(
@@ -2802,7 +2530,6 @@ impl Zen {
             let new_position = config
                 .map(|pos| Point::from((pos.x, pos.y)))
                 .filter(|pos| {
-                    // Ensure that the requested position does not overlap any existing output.
                     let target_geom = Rectangle::new(*pos, size);
 
                     let overlap = self
@@ -2846,8 +2573,6 @@ impl Zen {
 
             self.global_space.map_output(&output, new_position);
 
-            // By passing new_output as an Option, rather than mapping it into a bogus location
-            // in global_space, we ensure that this branch always runs for it.
             if Some(new_position) != position {
                 debug!(
                     "putting output {} at x={} y={}",
@@ -2884,13 +2609,11 @@ impl Zen {
             .to_array_unpremul();
         backdrop_color[3] = 1.;
 
-        // FIXME: fix winit damage on other transforms.
         if name.connector == "winit" {
             transform = Transform::Flipped180;
         }
 
         let mut layout_config = c.and_then(|c| c.layout.clone());
-        // Support the deprecated non-layout background-color key.
         if let Some(layout) = &mut layout_config {
             if layout.background_color.is_none() {
                 layout.background_color = c.and_then(|c| c.background_color);
@@ -2898,7 +2621,6 @@ impl Zen {
         }
         drop(config);
 
-        // Set scale and transform before adding to the layout since that will read the output size.
         output.change_current_state(
             None,
             Some(transform),
@@ -2909,7 +2631,6 @@ impl Zen {
         self.layout.add_output(output.clone(), layout_config);
 
         let lock_render_state = if self.is_locked() {
-            // We haven't rendered anything yet so it's as good as locked.
             LockRenderState::Locked
         } else {
             LockRenderState::Unlocked
@@ -2936,7 +2657,6 @@ impl Zen {
         let rv = self.output_state.insert(output.clone(), state);
         assert!(rv.is_none(), "output was already tracked");
 
-        // Must be last since it will call queue_redraw(output) which needs things to be filled-in.
         self.reposition_outputs(Some(&output));
     }
 
@@ -2944,12 +2664,6 @@ impl Zen {
         self.output_state.contains_key(output)
     }
 
-    /// Converts a `WlOutput` to a corresponding `Output` if it exists.
-    ///
-    /// Compared to raw `Output::from_resource`, this method also verifies that the output still
-    /// exists in zen. Right after the output global is disabled, but before it is removed for
-    /// good, `Output::from_resource` will succeed, but since zen already forgot the output,
-    /// accessing it can cause logic bugs.
     pub fn output_from_resource(&self, wl_output: &WlOutput) -> Option<Output> {
         Output::from_resource(wl_output).filter(|output| self.output_exists(output))
     }
@@ -2977,8 +2691,6 @@ impl Zen {
         self.stop_casts_for_target(CastTarget::output(output));
         self.screencopy_state.remove_output(output);
 
-        // Disable the output global and remove some time later to give the clients some time to
-        // process it.
         let global = state.global;
         self.display_handle.disable_global::<State>(global.clone());
         self.event_loop
@@ -2996,7 +2708,6 @@ impl Zen {
 
         match mem::take(&mut self.lock_state) {
             LockState::Locking(confirmation) => {
-                // We're locking and an output was removed, check if the requirements are now met.
                 let all_locked = self
                     .output_state
                     .values()
@@ -3007,7 +2718,6 @@ impl Zen {
                     confirmation.lock();
                     self.lock_state = LockState::Locked(lock);
                 } else {
-                    // Still waiting.
                     self.lock_state = LockState::Locking(confirmation);
                 }
             }
@@ -3058,14 +2768,10 @@ impl Zen {
             }
         }
 
-        // If the output size changed with an open screenshot UI, close the screenshot UI.
         if let Some((old_size, old_scale, old_transform)) = self.screenshot_ui.output_size(output) {
             let output_mode = output.current_mode().unwrap();
             let size = transform.transform_size(output_mode.size);
             let scale = output.current_scale().fractional_scale();
-            // FIXME: scale changes and transform flips shouldn't matter but they currently do since
-            // I haven't quite figured out how to draw the screenshot textures in
-            // physical coordinates.
             if old_size != size || old_scale != scale || old_transform != transform {
                 self.screenshot_ui.close();
                 self.cursor_manager
@@ -3124,8 +2830,6 @@ impl Zen {
             return false;
         }
 
-        // Use size from the ceiled output geometry, since that's what we currently use for pointer
-        // motion clamping.
         let geom = self.global_space.output_geometry(output).unwrap();
         let size = geom.size.to_f64();
 
@@ -3143,7 +2847,6 @@ impl Zen {
             return true;
         }
 
-        // If the user didn't explicitly set any corners, we default to top-left.
         if (hot_corners.top_left
             || !(hot_corners.top_right || hot_corners.bottom_right || hot_corners.bottom_left))
             && contains(Point::new(0., 0.))
@@ -3159,10 +2862,6 @@ impl Zen {
         output: &Output,
         pos_within_output: Point<f64, Logical>,
     ) -> bool {
-        // The ordering here must be consistent with the ordering in render() so that input is
-        // consistent with the visuals.
-
-        // Check if some layer-shell surface is on top.
         let layers = layer_map_for_output(output);
         let layer_surface_under = |layer, popup| {
             layers
@@ -3217,7 +2916,6 @@ impl Zen {
             return false;
         }
 
-        // Check if some layer-shell surface is on top.
         let layers = layer_map_for_output(output);
         let layer_popup_under = |layer| {
             layers
@@ -3233,7 +2931,6 @@ impl Zen {
                         layers.layer_geometry(layer_surface).unwrap().loc.to_f64();
                     layer_pos_within_output += mapped.bob_offset();
 
-                    // Background and bottom layers move together with the workspaces.
                     let mon = self.layout.monitor_for_output(output)?;
                     let (_, geo) = mon.workspace_under(pos_within_output)?;
                     layer_pos_within_output += geo.loc;
@@ -3252,9 +2949,6 @@ impl Zen {
         false
     }
 
-    /// Returns the workspace under the position to be activated.
-    ///
-    /// The return value is an output and a workspace index on it.
     pub fn workspace_under(
         &self,
         extended_bounds: bool,
@@ -3288,10 +2982,6 @@ impl Zen {
         self.workspace_under(extended_bounds, pos)
     }
 
-    /// Returns the window under the position to be activated.
-    ///
-    /// The cursor may be inside the window's activation region, but not within the window's input
-    /// region.
     pub fn window_under(&self, pos: Point<f64, Logical>) -> Option<&Mapped> {
         if self.exit_confirm_dialog.is_open()
             || self.is_locked()
@@ -3322,21 +3012,11 @@ impl Zen {
         Some(window)
     }
 
-    /// Returns the window under the cursor to be activated.
-    ///
-    /// The cursor may be inside the window's activation region, but not within the window's input
-    /// region.
     pub fn window_under_cursor(&self) -> Option<&Mapped> {
         let pos = self.seat.get_pointer().unwrap().current_location();
         self.window_under(pos)
     }
 
-    /// Returns contents under the given point.
-    ///
-    /// We don't have a proper global space for all windows, so this function converts window
-    /// locations to global space according to where they are rendered.
-    ///
-    /// This function does not take pointer or touch grabs into account.
     pub fn contents_under(&self, pos: Point<f64, Logical>) -> PointContents {
         let mut rv = PointContents::default();
 
@@ -3345,9 +3025,6 @@ impl Zen {
         };
         rv.output = Some(output.clone());
         let output_pos_in_global_space = self.global_space.output_geometry(output).unwrap().loc;
-
-        // The ordering here must be consistent with the ordering in render() so that input is
-        // consistent with the visuals.
 
         if self.exit_confirm_dialog.is_open() {
             return rv;
@@ -3362,7 +3039,6 @@ impl Zen {
             rv.surface = under_from_surface_tree(
                 surface.wl_surface(),
                 pos_within_output,
-                // We put lock surfaces at (0, 0).
                 (0, 0),
                 WindowSurfaceType::ALL,
             )
@@ -3395,13 +3071,10 @@ impl Zen {
                         layers.layer_geometry(layer_surface).unwrap().loc.to_f64();
                     layer_pos_within_output += mapped.bob_offset();
 
-                    // Background and bottom layers move together with the workspaces.
                     if matches!(layer, Layer::Background | Layer::Bottom) {
                         let mon = self.layout.monitor_for_output(output)?;
                         let (_, geo) = mon.workspace_under(pos_within_output)?;
                         layer_pos_within_output += geo.loc;
-                        // Don't need to deal with zoom here because in the overview background and
-                        // bottom layers don't receive input.
                     }
 
                     let surface_type = if popup {
@@ -3428,16 +3101,10 @@ impl Zen {
         let mapped_hit_data = |(mapped, hit): (&Mapped, HitType)| {
             let window = &mapped.window;
             let surface_and_pos = if let HitType::Input { win_pos, scale } = hit {
-                // Hit-test in the window's own, unscaled coordinate space.
                 let pos_within_window = (pos_within_output - win_pos).downscale(scale);
                 window
                     .surface_under(pos_within_window, WindowSurfaceType::ALL)
                     .map(|(s, surface_offset)| {
-                        // Smithay delivers surface-local coordinates as `event.location - loc`,
-                        // a pure translation that cannot express a scale. So rather than the
-                        // surface's real position, hand it the origin for which that
-                        // subtraction yields the correct surface-local point. At scale 1.0
-                        // this reduces to `surface_offset + win_pos`, the old behaviour.
                         let surface_local = pos_within_window - surface_offset.to_f64();
                         (s, pos_within_output - surface_local)
                     })
@@ -3465,8 +3132,6 @@ impl Zen {
 
         let is_overview_open = self.layout.is_overview_open();
 
-        // When rendering above the top layer, we put the regular monitor elements first.
-        // Otherwise, we will render all layer-shell pop-ups and the top layer on top.
         if mon.render_above_top_layer() {
             under = under
                 .or_else(interactive_moved_window_under)
@@ -3689,14 +3354,12 @@ impl Zen {
     }
 
     pub fn output_for_root(&self, root: &WlSurface) -> Option<&Output> {
-        // Check the main layout.
         let win_out = self.layout.find_window_and_output(root);
         let layout_output = win_out.map(|(_, output)| output);
         if let Some(output) = layout_output {
             return output;
         }
 
-        // Check layer-shell.
         let has_layer_surface = |o: &&Output| {
             layer_map_for_output(o)
                 .layer_for_surface(root, WindowSurfaceType::TOPLEVEL)
@@ -3716,14 +3379,12 @@ impl Zen {
         state.lock_surface.as_ref().map(|s| s.wl_surface()).cloned()
     }
 
-    /// Schedules an immediate redraw on all outputs if one is not already scheduled.
     pub fn queue_redraw_all(&mut self) {
         for state in self.output_state.values_mut() {
             state.redraw_state = mem::take(&mut state.redraw_state).queue_redraw();
         }
     }
 
-    /// Schedules an immediate redraw if one is not already scheduled.
     pub fn queue_redraw(&mut self, output: &Output) {
         let state = self.output_state.get_mut(output).unwrap();
         state.redraw_state = mem::take(&mut state.redraw_state).queue_redraw();
@@ -3754,13 +3415,11 @@ impl Zen {
         let output_scale = output.current_scale();
         let output_pos = self.global_space.output_geometry(output).unwrap().loc;
 
-        // Check whether we need to draw the tablet cursor or the regular cursor.
         let pointer_pos = self
             .tablet_cursor_location
             .unwrap_or_else(|| self.seat.get_pointer().unwrap().current_location());
         let pointer_pos = pointer_pos - output_pos.to_f64();
 
-        // Get the render cursor to draw.
         let cursor_scale = output_scale.integer_scale();
         let render_cursor = self.cursor_manager.get_render_cursor(cursor_scale);
 
@@ -3825,42 +3484,22 @@ impl Zen {
         }
     }
 
-    /// Checks if the pointer should be included on a window cast or screenshot.
-    ///
-    /// Returns `(cursor_global_pos, win_pos)` if the pointer should be included, or `None`
-    /// otherwise.
     pub fn pointer_pos_for_window_cast(
         &self,
         mapped: &Mapped,
     ) -> Option<(Point<f64, Logical>, Point<f64, Logical>)> {
-        // Tablet cursor.
         if let Some(tablet_pos) = self.tablet_cursor_location {
             let contents = self.contents_under(tablet_pos);
             if let Some((w, HitType::Input { win_pos, .. })) = contents.window {
                 if w == mapped.window {
-                    // Tablet tools don't currently expose current focus, and don't currently
-                    // have grabs. When those are implemented, this branch should be adjusted
-                    // to look more similar to the branch below.
                     return Some((tablet_pos, win_pos));
                 }
             }
         }
-        // Regular cursor.
         else if let Some((w, HitType::Input { win_pos, .. })) = &self.pointer_contents.window {
             if w == &mapped.window {
-                // Grabs can modify the pointer focus, making it different from
-                // pointer_contents. Notably, gestures like Mod+MMB will remove the pointer
-                // focus, and ClickGrab will keep pointer focus on the clicked window even
-                // while it's moving over a different window.
-                //
-                // So, double-check that current_focus() (after grabs) also matches the pointer
-                // contents.
                 let pointer = self.seat.get_pointer().unwrap();
 
-                // The DnD grab is a bit special because it has its own focus (data device)
-                // while the pointer focus is cleared. That focus is not currently exposed from
-                // Smithay, and showing DnD icons on window screenshots seems useful, so let's
-                // just allow it during DnD grabs.
                 let is_dnd_grab = pointer
                     .with_grab(|_, grab| State::is_dnd_grab(grab.as_any()))
                     .unwrap_or(false);
@@ -3871,12 +3510,6 @@ impl Zen {
                         .map(|focused| self.find_root_shell_surface(&focused))
                         .is_some_and(|focused| mapped.is_wl_surface(&focused));
                 if current_focus_matches {
-                    // We don't check for pointer visibility because it can only be Visible or
-                    // Hidden, and never Disabled (then it wouldn't have focus). Even when the
-                    // pointer is Hidden, we want to render it, since the user explicitly
-                    // requested show_pointer = true, and otherwise there's no easy way to
-                    // screenshot a window with pointer with hide-when-typing because pressing
-                    // the screenshot bind will hide the pointer.
                     return Some((pointer.current_location(), *win_pos));
                 }
             }
@@ -3892,7 +3525,6 @@ impl Zen {
 
         let _span = tracy_client::span!("Zen::refresh_pointer_outputs");
 
-        // Check whether we need to draw the tablet cursor or the regular cursor.
         let pointer_pos = self
             .tablet_cursor_location
             .unwrap_or_else(|| self.seat.get_pointer().unwrap().current_location());
@@ -3918,8 +3550,6 @@ impl Zen {
                     .map(|icon| &icon.surface)
                     .map(|surface| (surface, bbox_from_surface_tree(surface, surface_pos)));
 
-                // FIXME we basically need to pick the largest scale factor across the overlapping
-                // outputs, this is how it's usually done in clients as well.
                 let mut cursor_scale = 1.;
                 let mut cursor_transform = Transform::Normal;
                 let mut dnd_scale = 1.;
@@ -3927,27 +3557,21 @@ impl Zen {
                 for output in self.global_space.outputs() {
                     let geo = self.global_space.output_geometry(output).unwrap();
 
-                    // Compute pointer surface overlap.
                     if let Some(mut overlap) = geo.intersection(bbox) {
                         overlap.loc -= surface_pos;
                         cursor_scale =
                             f64::max(cursor_scale, output.current_scale().fractional_scale());
-                        // FIXME: using the largest overlapping or "primary" output transform would
-                        // make more sense here.
                         cursor_transform = output.current_transform();
                         output_update(output, Some(overlap), surface);
                     } else {
                         output_update(output, None, surface);
                     }
 
-                    // Compute DnD icon surface overlap.
                     if let Some((surface, bbox)) = dnd {
                         if let Some(mut overlap) = geo.intersection(bbox) {
                             overlap.loc -= surface_pos;
                             dnd_scale =
                                 f64::max(dnd_scale, output.current_scale().fractional_scale());
-                            // FIXME: using the largest overlapping or "primary" output transform
-                            // would make more sense here.
                             dnd_transform = output.current_transform();
                             output_update(output, Some(overlap), surface);
                         } else {
@@ -3976,7 +3600,6 @@ impl Zen {
                 }
             }
             cursor_image => {
-                // There's no cursor surface, but there might be a DnD icon.
                 let Some(surface) = self.dnd_icon.as_ref().map(|icon| &icon.surface) else {
                     return;
                 };
@@ -3992,16 +3615,12 @@ impl Zen {
                 for output in self.global_space.outputs() {
                     let geo = self.global_space.output_geometry(output).unwrap();
 
-                    // The default cursor is rendered at the right scale for each output, which
-                    // means that it may have a different hotspot for each output.
                     let output_scale = output.current_scale().integer_scale();
                     let cursor = self
                         .cursor_manager
                         .get_cursor_with_name(icon, output_scale)
                         .unwrap_or_else(|| self.cursor_manager.get_default_cursor(output_scale));
 
-                    // For simplicity, we always use frame 0 for this computation. Let's hope the
-                    // hotspot doesn't change between frames.
                     let hotspot = XCursor::hotspot(&cursor.frames()[0]).to_logical(output_scale);
 
                     let surface_pos = pointer_pos.to_i32_round() - hotspot;
@@ -4010,8 +3629,6 @@ impl Zen {
                     if let Some(mut overlap) = geo.intersection(bbox) {
                         overlap.loc -= surface_pos;
                         dnd_scale = f64::max(dnd_scale, output.current_scale().fractional_scale());
-                        // FIXME: using the largest overlapping or "primary" output transform would
-                        // make more sense here.
                         dnd_transform = output.current_transform();
                         output_update(output, Some(overlap), surface);
                     } else {
@@ -4036,11 +3653,6 @@ impl Zen {
             KeyboardFocus::Layout { .. } => true,
             KeyboardFocus::LayerShell { .. } => false,
 
-            // Draw layout as active in these cases to reduce unnecessary window animations.
-            // There's no confusion because these are both fullscreen modes.
-            //
-            // FIXME: when going into the screenshot UI from a layer-shell focus, and then back to
-            // layer-shell, the layout will briefly draw as active, despite never having focus.
             KeyboardFocus::LockScreen { .. } => true,
             KeyboardFocus::ScreenshotUi => true,
             KeyboardFocus::ExitConfirmDialog => true,
@@ -4091,9 +3703,6 @@ impl Zen {
                     outputs.insert(output.clone());
                 }
 
-                // Since refresh_window_rules() is called after refresh_layout(), we need to update
-                // the tiled state right here, so that it's picked up by the following
-                // send_pending_configure().
                 mapped.update_tiled_state(config.prefer_no_csd);
             }
         });
@@ -4115,7 +3724,6 @@ impl Zen {
 
         self.layout.advance_animations();
 
-        // Drop the welcome reveal once it has played, so it costs nothing afterwards.
         if self.welcome.as_ref().is_some_and(|w| w.is_done()) {
             self.welcome = None;
         }
@@ -4162,7 +3770,6 @@ impl Zen {
         }
     }
 
-    // Updates only those render elements that go in the xray buffer.
     pub fn update_xray_render_elements(&mut self, output: Option<&Output>) {
         for (out, state) in self.output_state.iter_mut() {
             if output.is_none_or(|output| out == output) {
@@ -4246,7 +3853,6 @@ impl Zen {
 
         self.fill_xray_elements(ctx.as_gles(), output);
 
-        // Reborrow to shorten lifetime to be able to put in xray.
         let mut ctx = ctx.r();
         let state = self.output_state.get(output).unwrap();
         ctx.xray = Some(&state.xray);
@@ -4275,9 +3881,6 @@ impl Zen {
             push
         };
 
-        // The welcome reveal sits above absolutely everything, the pointer included: while it
-        // is on screen it *is* the screen, and a cursor floating over a splash reads as a bug.
-        // Rendered from a shared &self, so it draws what the last update computed.
         if let Some(welcome) = &self.welcome {
             if !welcome.is_done() {
                 welcome.render(
@@ -4289,28 +3892,23 @@ impl Zen {
             }
         }
 
-        // The pointer goes on the top.
         if include_pointer && self.pointer_visibility.is_visible() {
             self.render_pointer(ctx.renderer, output, &mut |elem| push(elem.into()));
         }
 
-        // Next, the screen transition texture.
         {
             if let Some(transition) = &state.screen_transition {
                 push(transition.render(ctx.target).into());
             }
         }
 
-        // Next, the exit confirm dialog.
         self.exit_confirm_dialog
             .render(ctx.renderer, output, &mut |elem| push(elem.into()));
 
-        // Next, the config error notification too.
         if let Some(element) = self.config_error_notification.render(ctx.renderer, output) {
             push(element.into());
         }
 
-        // If the session is locked, draw the lock surface.
         if self.is_locked() {
             if let Some(surface) = state.lock_surface.as_ref() {
                 push_elements_from_surface_tree(
@@ -4324,7 +3922,6 @@ impl Zen {
                 );
             }
 
-            // Draw the solid color background.
             push(
                 SolidColorRenderElement::from_buffer(
                     &state.lock_color_buffer,
@@ -4338,7 +3935,6 @@ impl Zen {
             return;
         }
 
-        // Prepare the background elements.
         let backdrop = SolidColorRenderElement::from_buffer(
             &state.backdrop_buffer,
             (0., 0.),
@@ -4347,39 +3943,29 @@ impl Zen {
         )
         .into();
 
-        // If the screenshot UI is open, draw it.
         if self.screenshot_ui.is_open() {
             self.screenshot_ui
                 .render_output(output, ctx.target, &mut |elem| push(elem.into()));
 
-            // Add the backdrop for outputs that were connected while the screenshot UI was open.
             push(backdrop);
 
             return;
         }
 
-        // Draw the hotkey overlay on top.
         if let Some(element) = self.hotkey_overlay.render(ctx.renderer, output) {
             push(element.into());
         }
 
-        // Then, the Alt-Tab switcher.
         self.window_mru_ui
             .render_output(self, output, ctx.r(), &mut |elem| push(elem.into()));
 
-        // Don't draw the focus ring on the workspaces while interactively moving above those
-        // workspaces, since the interactively-moved window already has a focus ring.
         let focus_ring = !self.layout.interactive_move_is_moving_above_output(output);
 
-        // Get monitor elements.
         let mon = self.layout.monitor_for_output(output).unwrap();
         let zoom = mon.overview_zoom();
 
-        // Get layer-shell elements.
         let layer_map = layer_map_for_output(output);
 
-        // We use macros instead of closures to avoid borrowing issues (renderer and push() go
-        // into different functions).
         macro_rules! push_popups_from_layer {
             ($layer:expr, $ns:expr, $xray_pos:expr, $backdrop:expr, $push:expr) => {{
                 self.render_layer_popups(
@@ -4433,12 +4019,9 @@ impl Zen {
             }};
         }
 
-        // The overlay layer elements go next.
         push_popups_from_layer!(Layer::Overlay);
         push_normal_from_layer!(Layer::Overlay);
 
-        // When rendering above the top layer, we put the regular monitor elements first.
-        // Otherwise, we will render all layer-shell pop-ups and the top layer on top.
         if mon.render_above_top_layer() {
             self.layout
                 .render_interactive_move_for_output(ctx.r(), output, &mut |elem| push(elem.into()));
@@ -4455,7 +4038,6 @@ impl Zen {
             push_normal_from_layer!(Layer::Bottom);
             push_normal_from_layer!(Layer::Background);
 
-            // We don't expect more than one workspace when render_above_top_layer().
             if let Some((ws, _geo)) = mon.workspaces_with_render_geo().next() {
                 push(ws.render_background().into());
             }
@@ -4468,7 +4050,6 @@ impl Zen {
 
             mon.render_insert_hint_between_workspaces(ctx.renderer, &mut |elem| push(elem.into()));
 
-            // Macro instead of closure to avoid borrowing push().
             macro_rules! process {
                 ($geo:expr) => {{
                     &mut |elem| {
@@ -4489,14 +4070,6 @@ impl Zen {
             mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
 
             for (ws, geo) in mon.workspaces_with_render_geo() {
-                // The render element namespace. This will be set to the workspace index for
-                // elements duplicated across workspaces (i.e. background and bottom layers) in
-                // order to have their non-xray framebuffer effects separated from each other.
-                //
-                // This doesn't have to correspond exactly to workspace id or idx, the only
-                // requirement is that there's only one framebuffer effect element with a given id +
-                // namespace on the frame at once. Id + namespace is used as the cache key in the
-                // damage tracker.
                 let ns = Some(ws.id().get() as usize);
                 let xray_pos = XrayPos::new(geo.loc, zoom);
                 push_normal_from_layer!(Layer::Bottom, ns, xray_pos, process!(geo));
@@ -4508,7 +4081,6 @@ impl Zen {
 
         mon.render_workspace_shadows(ctx.renderer, &mut |elem| push(elem.into()));
 
-        // Then the backdrop.
         push_popups_from_layer!(Layer::Background, true);
         push_normal_from_layer!(Layer::Background, true);
 
@@ -4518,24 +4090,11 @@ impl Zen {
     pub fn fill_xray_elements(&self, mut ctx: RenderCtx<GlesRenderer>, output: &Output) {
         let _span = tracy_client::span!("Zen::fill_xray_elements");
 
-        // Make sure the xrayed elements themselves cannot use xray by mistake.
         ctx.xray = None;
 
         let state = self.output_state.get(output).unwrap();
         let xray = &state.xray;
         let layer_map = layer_map_for_output(output);
-
-        // FIXME: it would be cool to call this code on-demand. It's even relatively simple to do:
-        // move this function to after the render_inner() call, check if
-        // Rc::strong_count(&xray.background) > 1, and only then construct the elements. This way,
-        // only if something referenced the xray buffer will the elements get constructed.
-        //
-        // Unfortunately, currently this runs into an important limitation: offscreens are rendered
-        // immediately deep inside render_inner(), and when they are, they already need the xray
-        // elements filled.
-        //
-        // Perhaps in the future when offscreen rendering becomes on-demand, this optimization will
-        // be possible.
 
         let mut buffer = xray.background[ctx.target as usize].borrow_mut();
         {
@@ -4550,7 +4109,6 @@ impl Zen {
                 false,
                 &mut |elem| elements.push(elem.into()),
             );
-            // Avoid unused capacity remaining forever.
             elements.shrink_to_fit();
         }
 
@@ -4567,7 +4125,6 @@ impl Zen {
                 true,
                 &mut |elem| elements.push(elem.into()),
             );
-            // Avoid unused capacity remaining forever.
             elements.shrink_to_fit();
         }
     }
@@ -4576,8 +4133,6 @@ impl Zen {
         let state = self.output_state.get(output).unwrap();
         let xray = &state.xray;
 
-        // Clear the xray elements for all render targets after all rendering that could use them
-        // did so.
         for buf in &xray.background {
             buf.borrow_mut().elements().clear();
         }
@@ -4586,7 +4141,6 @@ impl Zen {
         }
     }
 
-    /// Checks if any background layer surface has `block_out_from` set.
     pub fn has_blocked_out_background_layers(&self, output: &Output) -> bool {
         let layer_map = layer_map_for_output(output);
         for for_backdrop in [false, true] {
@@ -4607,7 +4161,6 @@ impl Zen {
         layer: Layer,
         for_backdrop: bool,
     ) -> impl Iterator<Item = (&'a MappedLayer, Rectangle<i32, Logical>)> {
-        // LayerMap returns layers in reverse stacking order.
         layer_map.layers_on(layer).rev().filter_map(move |surface| {
             let mapped = self.mapped_layer_surfaces.get(surface)?;
 
@@ -4659,7 +4212,6 @@ impl Zen {
     fn redraw(&mut self, backend: &mut Backend, output: &Output) {
         let _span = tracy_client::span!("Zen::redraw");
 
-        // Verify our invariant.
         let state = self.output_state.get_mut(output).unwrap();
         assert!(matches!(
             state.redraw_state,
@@ -4668,7 +4220,6 @@ impl Zen {
 
         let target_presentation_time = state.frame_clock.next_presentation_time();
 
-        // Freeze the clock at the target time.
         self.clock.set_unadjusted(target_presentation_time);
 
         self.update_render_elements(Some(output));
@@ -4688,12 +4239,10 @@ impl Zen {
                 .as_ref()
                 .is_some_and(|w| w.are_animations_ongoing());
 
-            // Also keep redrawing if the current cursor is animated.
             state.unfinished_animations_remain |= self
                 .cursor_manager
                 .is_current_cursor_animated(output.current_scale().integer_scale());
 
-            // Also check layer surfaces.
             if !state.unfinished_animations_remain {
                 state.unfinished_animations_remain |= layer_map_for_output(output)
                     .layers()
@@ -4701,7 +4250,6 @@ impl Zen {
                     .any(|mapped| mapped.are_animations_ongoing());
             }
 
-            // Render.
             res = backend.render(self, output, target_presentation_time);
         }
 
@@ -4709,7 +4257,6 @@ impl Zen {
         let state = self.output_state.get_mut(output).unwrap();
 
         if res == RenderResult::Skipped {
-            // Update the redraw state on failed render.
             state.redraw_state = if let RedrawState::WaitingForEstimatedVBlank(token)
             | RedrawState::WaitingForEstimatedVBlankAndQueued(token) =
                 state.redraw_state
@@ -4720,9 +4267,6 @@ impl Zen {
             };
         }
 
-        // Update the lock render state on successful render, or if monitors are inactive. When
-        // monitors are inactive on a TTY, they have no framebuffer attached, so no sensitive data
-        // from a last render will be visible.
         if res != RenderResult::Skipped || !self.monitors_active {
             state.lock_render_state = if is_locked {
                 LockRenderState::Locked
@@ -4731,26 +4275,21 @@ impl Zen {
             };
         }
 
-        // If we're in process of locking the session, check if the requirements were met.
         match mem::take(&mut self.lock_state) {
             LockState::Locking(confirmation) => {
                 if state.lock_render_state == LockRenderState::Unlocked {
-                    // We needed to render a locked frame on this output but failed.
                     self.unlock();
                 } else {
-                    // Check if all outputs are now locked.
                     let all_locked = self
                         .output_state
                         .values()
                         .all(|state| state.lock_render_state == LockRenderState::Locked);
 
                     if all_locked {
-                        // All outputs are locked, report success.
                         let lock = confirmation.ext_session_lock().clone();
                         confirmation.lock();
                         self.lock_state = LockState::Locked(lock);
                     } else {
-                        // Still waiting for other outputs.
                         self.lock_state = LockState::Locking(confirmation);
                     }
                 }
@@ -4760,28 +4299,12 @@ impl Zen {
 
         self.refresh_on_demand_vrr(backend, output);
 
-        // Send the frame callbacks.
-        //
-        // FIXME: The logic here could be a bit smarter. Currently, during an animation, the
-        // surfaces that are visible for the very last frame (e.g. because the camera is moving
-        // away) will receive frame callbacks, and the surfaces that are invisible but will become
-        // visible next frame will not receive frame callbacks (so they will show stale contents for
-        // one frame). We could advance the animations for the next frame and send frame callbacks
-        // according to the expected new positions.
-        //
-        // However, this should probably be restricted to sending frame callbacks to more surfaces,
-        // to err on the safe side.
         self.send_frame_callbacks(output);
         backend.with_primary_renderer(|renderer| {
             #[cfg(feature = "xdp-gnome-screencast")]
             {
-                // Render and send to PipeWire screencast streams.
                 self.render_for_screen_cast(renderer, output, target_presentation_time);
 
-                // FIXME: when a window is hidden, it should probably still receive frame callbacks
-                // and get rendered for screen cast. This is currently
-                // unimplemented, but happens to work by chance, since output
-                // redrawing is more eager than it should be.
                 self.render_windows_for_screen_cast(renderer, output, target_presentation_time);
             }
 
@@ -4825,12 +4348,6 @@ impl Zen {
         output: &Output,
         render_element_states: &RenderElementStates,
     ) {
-        // FIXME: potentially tweak the compare function. The default one currently always prefers a
-        // higher refresh-rate output, which is not always desirable (i.e. with a very small
-        // overlap).
-        //
-        // While we only have cursors and DnD icons crossing output boundaries though, it doesn't
-        // matter all that much.
         if let CursorImageStatus::Surface(surface) = &self.cursor_manager.cursor_image() {
             with_surface_tree_downward(
                 surface,
@@ -4869,12 +4386,6 @@ impl Zen {
             );
         }
 
-        // We're only updating the current output's windows and layer surfaces. This should be fine
-        // as in zen they can only be rendered on a single output at a time.
-        //
-        // The reason to do this at all is that it keeps track of whether the surface is visible or
-        // not in a unified way with the pointer surfaces, which makes the logic elsewhere simpler.
-
         for mapped in self.layout.windows_for_output(output) {
             let win = &mapped.window;
             let offscreen_data = mapped.offscreen_data();
@@ -4889,29 +4400,9 @@ impl Zen {
                 let mut id = Id::from_wayland_resource(surface);
 
                 if let Some(data) = offscreen_data {
-                    // We have offscreen data; it's likely that all surfaces are on it.
                     if data.states.element_was_presented(id.clone()) {
-                        // If the surface was presented to the offscreen, use the offscreen's id.
                         id = data.id.clone();
                     }
-
-                    // If we the surface wasn't presented to the offscreen it can mean:
-                    //
-                    // - The surface was invisible. For example, it's obscured by another surface on
-                    //   the offscreen, or simply isn't mapped.
-                    // - The surface is rendered separately from the offscreen, for example: popups
-                    //   during the window resize animation.
-                    //
-                    // In both of these cases, using the original surface element id and the
-                    // original states is the correct thing to do. We may find the surface in the
-                    // original states (in the second case). Either way, we definitely know it is
-                    // *not* in the offscreen, and we won't miss it.
-                    //
-                    // There's one edge case: if the surface is both in the offscreen and separate,
-                    // and the offscreen itself is invisible, while the separate surface is
-                    // visible. In this case we'll currently mark the surface as invisible. We
-                    // don't really use offscreens like that however, and if we start, it's easy
-                    // enough to fix (need an extra check).
                 }
 
                 primary_scanout_output.update_from_render_element_states(
@@ -4939,14 +4430,7 @@ impl Zen {
                 let mut primary_scanout_output = primary_scanout_output.lock().unwrap();
                 let mut id = Id::from_wayland_resource(surface);
 
-                // Background layers may be invisible normally but visible through an xray
-                // background effect. Try to find it and use the xray element's id in this case.
-                //
-                // FIXME: this won't work if there's another layer of offscreen (e.g. window with
-                // an xray background during its opening animation). But hopefully with the
-                // refactor to draw background effects outside offscreens it won't be a problem.
                 if is_background && !render_element_states.element_was_presented(id.clone()) {
-                    // A layer may be present either in background or backdrop, never in both.
                     if xray_bg
                         .render_element_states()
                         .is_some_and(|s| s.element_was_presented(id.clone()))
@@ -4965,12 +4449,10 @@ impl Zen {
                     output,
                     None,
                     render_element_states,
-                    // Layer surfaces are shown only on one output at a time.
                     |_, _, output, _| output,
                 );
             });
 
-            // Popups never go into xray buffers.
             for (popup, _) in PopupManager::popups_for_surface(surface) {
                 let surface = popup.wl_surface();
                 with_surfaces_surface_tree(surface, |surface, states| {
@@ -4980,7 +4462,6 @@ impl Zen {
                         states,
                         None,
                         render_element_states,
-                        // Layer surfaces are shown only on one output at a time.
                         |_, _, output, _| output,
                     );
                 });
@@ -5015,9 +4496,6 @@ impl Zen {
     ) {
         let _span = tracy_client::span!("Zen::send_dmabuf_feedbacks");
 
-        // We can unconditionally send the current output's feedback to regular and layer-shell
-        // surfaces, as they can only be displayed on a single output at a time. Even if a surface
-        // is currently invisible, this is the DMABUF feedback that it should know about.
         for mapped in self.layout.windows_for_output(output) {
             mapped.window.send_dmabuf_feedback(
                 output,
@@ -5104,15 +4582,11 @@ impl Zen {
         let sequence = state.frame_callback_sequence;
 
         let should_send = |surface: &WlSurface, states: &SurfaceData| {
-            // Do the standard primary scanout output check. For pointer surfaces it deduplicates
-            // the frame callbacks across potentially multiple outputs, and for regular windows and
-            // layer-shell surfaces it avoids sending frame callbacks to invisible surfaces.
             let current_primary_output = surface_primary_scanout_output(surface, states);
             if current_primary_output.as_ref() != Some(output) {
                 return None;
             }
 
-            // Next, check the throttling status.
             let frame_throttling_state = states
                 .data_map
                 .get_or_insert(SurfaceFrameThrottlingState::default);
@@ -5120,8 +4594,6 @@ impl Zen {
 
             let mut send = true;
 
-            // If we already sent a frame callback to this surface this output refresh
-            // cycle, don't send one again to prevent empty-damage commit busy loops.
             if let Some((last_output, last_sequence)) = &*last_sent_at {
                 if last_output == output && *last_sequence == sequence {
                     send = false;
@@ -5190,7 +4662,6 @@ impl Zen {
     pub fn send_frame_callbacks_on_fallback_timer(&mut self) {
         let _span = tracy_client::span!("Zen::send_frame_callbacks_on_fallback_timer");
 
-        // Make up a bogus output; we don't care about it here anyway, just the throttling timer.
         let output = Output::new(
             String::new(),
             PhysicalProperties {
@@ -5372,7 +4843,6 @@ impl Zen {
                         screencopy,
                     );
                     if let Some(damages) = damages {
-                        // Convert from Physical coordinates back to Buffer coordinates.
                         let transform = output.current_transform();
                         let physical_size = transform.transform_size(screencopy.buffer_size());
                         let damages = damages.iter().map(|dmg| {
@@ -5397,7 +4867,6 @@ impl Zen {
                                 queue.pop().submit_after_sync(false, sync, &self.event_loop);
                             }
                             Err(err) => {
-                                // Recreate damage tracker to report full damage next check.
                                 *damage_tracker =
                                     OutputDamageTracker::new((0, 0), 1.0, Transform::Normal);
                                 queue.pop();
@@ -5459,7 +4928,6 @@ impl Zen {
         let res = res.map(|sync| screencopy.submit_after_sync(false, sync, &self.event_loop));
 
         if res.is_err() {
-            // Recreate damage tracker to report full damage next check.
             *damage_tracker = OutputDamageTracker::new((0, 0), 1.0, Transform::Normal);
         }
 
@@ -5492,7 +4960,6 @@ impl Zen {
             *damage_tracker = OutputDamageTracker::new(size, scale, transform);
         }
 
-        // Just checked damage tracker has static mode
         damage_tracker.damage_output(1, elements).unwrap()
     }
 
@@ -5578,9 +5045,6 @@ impl Zen {
 
                 let mut pointer = Vec::new();
 
-                // We check the pointer visibility for Disabled (and not .is_visible()) in order to
-                // show the pointer even when it's hidden through cursor {} options. The user can
-                // then toggle it in the screenshot UI as needed.
                 if self.pointer_visibility != PointerVisibility::Disabled {
                     self.render_pointer(renderer, &output, &mut |elem| pointer.push(elem));
                 }
@@ -5678,11 +5142,8 @@ impl Zen {
 
         let mut elements: Vec<WindowScreenshotRenderElement<GlesRenderer>> = Vec::new();
 
-        // Add pointer if requested and it's over this window.
         if show_pointer {
             if let Some((_, win_pos)) = self.pointer_pos_for_window_cast(mapped) {
-                // Pointer elements are at output-local physical coords.
-                // Relocate by -win_pos to make them window-relative.
                 let pos = win_pos.to_physical_precise_round(scale).upscale(-1);
                 self.render_pointer(renderer, output, &mut |elem| {
                     let elem = RelocateRenderElement::from_element(elem, pos, Relocate::Relative);
@@ -5706,8 +5167,6 @@ impl Zen {
             &mut |elem| elements.push(elem.into()),
         );
 
-        // The pointer is not included in encompassing_geo because we don't want it to expand the
-        // screenshot size.
         let geo = encompassing_geo(scale, elements.iter().skip(pointer_count));
         let elements = elements.iter().rev().map(|elem| {
             RelocateRenderElement::from_element(elem, geo.loc.upscale(-1), Relocate::Relative)
@@ -5734,7 +5193,6 @@ impl Zen {
     ) -> anyhow::Result<()> {
         let path = write_to_disk
             .then(|| {
-                // When given an explicit path, don't try to strftime it or create parents.
                 path_arg.map(|p| (PathBuf::from(p), false)).or_else(|| {
                     match make_screenshot_path(&self.config.borrow()) {
                         Ok(path) => path.map(|p| (p, true)),
@@ -5747,8 +5205,6 @@ impl Zen {
             })
             .flatten();
 
-        // Prepare to set the encoded image as our clipboard selection. This must be done from the
-        // main thread.
         let (tx, rx) = calloop::channel::sync_channel::<Arc<[u8]>>(1);
         self.event_loop
             .insert_source(rx, move |event, _, state| match event {
@@ -5764,7 +5220,6 @@ impl Zen {
             })
             .unwrap();
 
-        // Prepare to send screenshot completion event back to main thread.
         let (event_tx, event_rx) = calloop::channel::sync_channel::<Option<String>>(1);
         self.event_loop
             .insert_source(event_rx, move |event, _, state| match event {
@@ -5775,7 +5230,6 @@ impl Zen {
             })
             .unwrap();
 
-        // Encode and save the image in a thread as it's slow.
         thread::spawn(move || {
             let mut buf = vec![];
 
@@ -5795,7 +5249,6 @@ impl Zen {
 
                 if create_parent {
                     if let Some(parent) = path.parent() {
-                        // Relative paths with one component, i.e. "test.png", have Some("") parent.
                         if !parent.as_os_str().is_empty() {
                             if let Err(err) = std::fs::create_dir_all(parent) {
                                 if err.kind() != std::io::ErrorKind::AlreadyExists {
@@ -5821,7 +5274,6 @@ impl Zen {
                 warn!("error showing screenshot notification: {err:?}");
             }
 
-            // Send screenshot completion event.
             let path_string = image_path
                 .as_ref()
                 .and_then(|p| p.to_str())
@@ -5845,7 +5297,6 @@ impl Zen {
 
         let outputs: Vec<_> = self.global_space.outputs().cloned().collect();
 
-        // FIXME: support multiple outputs, needs fixing multi-scale handling and cropping.
         anyhow::ensure!(outputs.len() == 1);
 
         let output = outputs.into_iter().next().unwrap();
@@ -5913,7 +5364,6 @@ impl Zen {
     }
 
     pub fn lock(&mut self, confirmation: SessionLocker) {
-        // Check if another client is in the process of locking.
         if matches!(
             self.lock_state,
             LockState::WaitingForSurfaces { .. } | LockState::Locking(_)
@@ -5922,18 +5372,14 @@ impl Zen {
             return;
         }
 
-        // Check if we're already locked with an active client.
         if let LockState::Locked(lock) = &self.lock_state {
             if lock.is_alive() {
                 info!("refusing lock as already locked with an active client");
                 return;
             }
 
-            // If the client had died, continue with the new lock.
             info!("locking session (replacing existing dead lock)");
 
-            // Since the session was already locked, we know that the outputs are blanked, and
-            // can lock right away.
             let lock = confirmation.ext_session_lock().clone();
             confirmation.lock();
             self.lock_state = LockState::Locked(lock);
@@ -5944,7 +5390,6 @@ impl Zen {
         info!("locking session");
 
         if self.output_state.is_empty() {
-            // There are no outputs, lock the session right away.
             self.screenshot_ui.close();
             self.cursor_manager
                 .set_cursor_image(CursorImageStatus::default_named());
@@ -5953,10 +5398,6 @@ impl Zen {
             confirmation.lock();
             self.lock_state = LockState::Locked(lock);
         } else {
-            // There are outputs which we need to redraw before locking. But before we do that,
-            // let's wait for the lock surfaces.
-            //
-            // Give them a second; swaylock can take its time to paint a big enough image.
             let timer = Timer::from_duration(Duration::from_millis(1000));
             let deadline_token = self
                 .event_loop
@@ -5976,14 +5417,11 @@ impl Zen {
 
     pub fn maybe_continue_to_locking(&mut self) {
         if !matches!(self.lock_state, LockState::WaitingForSurfaces { .. }) {
-            // Not waiting.
             return;
         }
 
-        // Check if there are any outputs whose lock surfaces had not had a commit yet.
         for state in self.output_state.values() {
             let Some(surface) = &state.lock_surface else {
-                // Surface not created yet.
                 return;
             };
 
@@ -5992,7 +5430,6 @@ impl Zen {
             }
         }
 
-        // All good.
         trace!("lock surfaces are ready, continuing");
         self.continue_to_locking();
     }
@@ -6011,12 +5448,10 @@ impl Zen {
                 self.cancel_mru();
 
                 if self.output_state.is_empty() {
-                    // There are no outputs, lock the session right away.
                     let lock = confirmation.ext_session_lock().clone();
                     confirmation.lock();
                     self.lock_state = LockState::Locked(lock);
                 } else {
-                    // There are outputs which we need to redraw before locking.
                     self.lock_state = LockState::Locking(confirmation);
                     self.queue_redraw_all();
                 }
@@ -6095,9 +5530,6 @@ impl Zen {
             Ok(())
         }
 
-        // Consider only the fully locked state here. When using the locked hint with sleep
-        // inhibitor tools, we want to allow sleep only after the screens are fully cleared with
-        // the lock screen, which corresponds to the Locked state.
         let locked = matches!(self.lock_state, LockState::Locked(_));
 
         if self.locked_hint.is_some_and(|h| h == locked) {
@@ -6150,9 +5582,6 @@ impl Zen {
         output_state.lock_surface = Some(surface);
     }
 
-    /// Activates the pointer constraint if necessary according to the current pointer contents.
-    ///
-    /// Make sure the pointer location and contents are up to date before calling this.
     pub fn maybe_activate_pointer_constraint(&self) {
         let Some((surface, surface_loc)) = &self.pointer_contents.surface else {
             return;
@@ -6170,7 +5599,6 @@ impl Zen {
                 return;
             }
 
-            // Constraint does not apply if not within region.
             if let Some(region) = constraint.region() {
                 let pointer_pos = pointer.current_location();
                 let pos_within_surface = pointer_pos - *surface_loc;
@@ -6191,7 +5619,6 @@ impl Zen {
                 if self.layer_shell_on_demand_focus.as_ref() != Some(&surface) {
                     self.layer_shell_on_demand_focus = Some(surface);
 
-                    // FIXME: granular.
                     self.queue_redraw_all();
                 }
 
@@ -6199,19 +5626,13 @@ impl Zen {
             }
         }
 
-        // Something else got clicked, clear on-demand layer-shell focus.
         if self.layer_shell_on_demand_focus.is_some() {
             self.layer_shell_on_demand_focus = None;
 
-            // FIXME: granular.
             self.queue_redraw_all();
         }
     }
 
-    /// Tries to find and return the root shell surface for a given surface.
-    ///
-    /// I.e. for popups, this function will try to find the parent toplevel or layer surface. For
-    /// regular subsurfaces, it will find the root surface.
     pub fn find_root_shell_surface(&self, surface: &WlSurface) -> WlSurface {
         let Some(root) = self.root_surface.get(surface) else {
             return surface.clone();
@@ -6276,7 +5697,6 @@ impl Zen {
             return;
         }
 
-        // Recompute the current pointer focus because we don't update it during animations.
         let current_focus = self.contents_under(pointer.current_location());
 
         if let Some(output) = &new_focus.output {
@@ -6289,7 +5709,6 @@ impl Zen {
             if !self.layout.is_overview_open() && current_focus.window.as_ref() != Some(window) {
                 let (window, hit) = window;
 
-                // Don't trigger focus-follows-mouse over the tab indicator.
                 if matches!(
                     hit,
                     HitType::Activate {
@@ -6376,7 +5795,7 @@ impl Zen {
                         texture,
                         scale,
                         transform,
-                        Vec::new(), // We want windows below to get frame callbacks.
+                        Vec::new(),
                     )
                 });
 
@@ -6396,9 +5815,6 @@ impl Zen {
                 self.clock.clone(),
             ));
         }
-
-        // We don't actually need to queue a redraw because the point is to freeze the screen for a
-        // bit, and even if the delay was zero, we're drawing the same contents anyway.
     }
 
     pub fn recompute_window_rules(&mut self) {
@@ -6432,7 +5848,6 @@ impl Zen {
         };
 
         if changed {
-            // FIXME: granular.
             self.queue_redraw_all();
         }
     }
@@ -6454,7 +5869,6 @@ impl Zen {
         }
 
         if changed {
-            // FIXME: granular.
             self.queue_redraw_all();
         }
     }
@@ -6481,8 +5895,6 @@ impl Zen {
             .insert_source(timer, move |_, _, state| {
                 state.zen.pointer_inactivity_timer = None;
 
-                // If the pointer is already invisible, don't reset it back to Hidden causing one
-                // frame of hover.
                 if state.zen.pointer_visibility.is_visible() {
                     state.zen.pointer_visibility = PointerVisibility::Hidden;
                     state.zen.queue_redraw_all();
@@ -6522,10 +5934,6 @@ impl Zen {
         self.close_mru(MruCloseRequest::Cancel);
     }
 
-    /// Apply a pending MRU commit immediately.
-    ///
-    /// Called for example on keyboard events that reach the active window, which immediately adds
-    /// it to the MRU.
     pub fn mru_apply_keyboard_commit(&mut self) {
         let Some(pending) = self.pending_mru_commit.take() else {
             return;
@@ -6559,9 +5967,7 @@ pub struct ClientState {
     pub compositor_state: CompositorClientState,
     pub can_view_decoration_globals: bool,
     pub primary_selection_disabled: bool,
-    /// Whether this client is denied from the restricted protocols such as security-context.
     pub restricted: bool,
-    /// We cannot retrieve this client's socket credentials.
     pub credentials_unknown: bool,
 }
 
@@ -6615,7 +6021,6 @@ zen_render_elements! {
         ExitConfirmDialog = ExitConfirmDialogRenderElement,
         Welcome = WelcomeRenderElement,
         Texture = PrimaryGpuTextureRenderElement,
-        // Used for the CPU-rendered panels.
         RelocatedMemoryBuffer = RelocateRenderElement<MemoryRenderBufferRenderElement<R>>,
     }
 }

@@ -94,7 +94,6 @@ impl FocusRing {
 
         self.use_border_shader = radius != CornerRadius::default() || gradient.is_some();
 
-        // Set the defaults for solid color + rounded corners.
         let gradient = gradient.unwrap_or_else(|| Gradient::from(color));
 
         let full_rect = Rectangle::new(Point::from((-width, -width)), self.full_size);
@@ -104,8 +103,6 @@ impl FocusRing {
         };
 
         let rounded_corner_border_width = if is_border {
-            // HACK: increase the border width used for the inner rounded corners a tiny bit to
-            // reduce background bleed.
             let extra = if self.thicken_corners { 0.5 } else { 0. };
             width as f32 + extra
         } else {
@@ -113,13 +110,6 @@ impl FocusRing {
         };
 
         let ceil = |logical: f64| (logical * scale).ceil() / scale;
-
-        // All of this stuff should end up aligned to physical pixels because:
-        // * Window size and border width are rounded to physical pixels before being passed to this
-        //   function.
-        // * We will ceil the corner radii below.
-        // * We do not divide anything, only add, subtract and multiply by integers.
-        // * At rendering time, tile positions are rounded to physical pixels.
 
         if is_border {
             let top_left = f64::max(width, ceil(f64::from(radius.top_left)));
@@ -139,39 +129,31 @@ impl FocusRing {
                 ),
             );
 
-            // Top edge.
             self.sizes[0] = Size::from((win_size.w + width * 2. - top_left - top_right, width));
             self.locations[0] = Point::from((-width + top_left, -width));
 
-            // Bottom edge.
             self.sizes[1] =
                 Size::from((win_size.w + width * 2. - bottom_left - bottom_right, width));
             self.locations[1] = Point::from((-width + bottom_left, win_size.h));
 
-            // Left edge.
             self.sizes[2] = Size::from((width, win_size.h + width * 2. - top_left - bottom_left));
             self.locations[2] = Point::from((-width, -width + top_left));
 
-            // Right edge.
             self.sizes[3] = Size::from((width, win_size.h + width * 2. - top_right - bottom_right));
             self.locations[3] = Point::from((win_size.w, -width + top_right));
 
-            // Top-left corner.
             self.sizes[4] = Size::from((top_left, top_left));
             self.locations[4] = Point::from((-width, -width));
 
-            // Top-right corner.
             self.sizes[5] = Size::from((top_right, top_right));
             self.locations[5] = Point::from((win_size.w + width - top_right, -width));
 
-            // Bottom-right corner.
             self.sizes[6] = Size::from((bottom_right, bottom_right));
             self.locations[6] = Point::from((
                 win_size.w + width - bottom_right,
                 win_size.h + width - bottom_right,
             ));
 
-            // Bottom-left corner.
             self.sizes[7] = Size::from((bottom_left, bottom_left));
             self.locations[7] = Point::from((-width, win_size.h + width - bottom_left));
 
@@ -227,7 +209,6 @@ impl FocusRing {
 
         let border_width = -self.locations[0].y;
 
-        // If drawing as a border with width = 0, then there's nothing to draw.
         if self.is_border && border_width == 0. {
             return;
         }

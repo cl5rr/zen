@@ -79,7 +79,6 @@ fn dont_ack_initial_configure() {
 
     let window = f.client(id).window(&surface);
     window.attach_new_buffer();
-    // Don't ack the configure.
     window.commit();
     f.double_roundtrip(id);
 }
@@ -165,25 +164,16 @@ impl fmt::Display for DefaultSize {
 fn target_output_and_workspaces() {
     store_and_increase_nofile_rlimit();
 
-    // Here we test a massive powerset of settings that can affect where a window opens:
-    //
-    // * open-on-workspace
-    // * open-on-output
-    // * has parent (windows will open next to their parent)
-    // * want fullscreen (windows can request the target fullscreen output)
-    // * open-fullscreen (can deny the fullscreen request)
-
     let open_on_workspace = [None, Some("1"), Some("2")];
     let open_on_output = [None, Some("1"), Some("2")];
     let open_fullscreen = [None, Some("false"), Some("true")];
     let want_fullscreen = [
         WantFullscreen::No,
-        WantFullscreen::UnsetBeforeInitial, // GTK 4
+        WantFullscreen::UnsetBeforeInitial,
         WantFullscreen::BeforeInitial(None),
         WantFullscreen::BeforeInitial(Some("1")),
         WantFullscreen::BeforeInitial(Some("2")),
         WantFullscreen::UnsetAfterInitial,
-        // mpv, osu!
         WantFullscreen::AfterInitial(None),
         WantFullscreen::AfterInitial(Some("1")),
         WantFullscreen::AfterInitial(Some("2")),
@@ -314,7 +304,6 @@ window-rule {{
 
     let id = f.add_client();
 
-    // To get output names.
     f.roundtrip(id);
 
     let mut parent = None;
@@ -370,7 +359,6 @@ window-rule {{
     window.ack_last_and_commit();
     f.double_roundtrip(id);
 
-    // Commit to the post-initial configures.
     let window = f.client(id).window(&surface);
     let new_serial = window.configures_received.last().unwrap().0;
     if new_serial != serial {
@@ -402,7 +390,6 @@ window-rule {{
     let window = f.client(id).window(&surface);
     let post_map = window.format_recent_configures();
 
-    // If the window ended up fullscreen, unfullscreen it and output the configure.
     let mut post_unfullscreen = String::new();
     if is_fullscreen {
         f.zen().layout.set_fullscreen(&win, false);
@@ -443,23 +430,12 @@ fn target_size() {
 
     store_and_increase_nofile_rlimit();
 
-    // Here we test a massive powerset of settings that can affect the window size:
-    //
-    // * want fullscreen
-    // * open-fullscreen
-    // * open-maximized
-    // * open-floating
-    // * default-column-width
-    // * border
-    // * default-column-display normal, tabbed
-
     let open_fullscreen = [None, Some("false"), Some("true")];
     let want_fullscreen = [
         WantFullscreen::No,
-        WantFullscreen::UnsetBeforeInitial, // GTK 4
+        WantFullscreen::UnsetBeforeInitial,
         WantFullscreen::BeforeInitial(None),
         WantFullscreen::UnsetAfterInitial,
-        // mpv, osu!
         WantFullscreen::AfterInitial(None),
     ];
     let open_maximized = [None, Some("true")];
@@ -609,7 +585,6 @@ layout {
 
     let id = f.add_client();
 
-    // To get output names.
     f.roundtrip(id);
 
     let client = f.client(id);
@@ -642,7 +617,6 @@ layout {
     window.ack_last_and_commit();
     f.double_roundtrip(id);
 
-    // Commit to the post-initial configures.
     let window = f.client(id).window(&surface);
     let new_serial = window.configures_received.last().unwrap().0;
     if new_serial != serial {
@@ -653,7 +627,6 @@ layout {
     let window = f.client(id).window(&surface);
     let post_map = window.format_recent_configures();
 
-    // If the window ended up fullscreen, unfullscreen it and output the configure.
     let mut post_unfullscreen = String::new();
     let mapped = f.zen().layout.windows().next().unwrap().1;
     let is_fullscreen = mapped.sizing_mode().is_fullscreen();
@@ -692,10 +665,9 @@ fn fullscreen_maximize() {
     let open_fullscreen = [None, Some("false"), Some("true")];
     let want_fullscreen = [
         WantFullscreen::No,
-        WantFullscreen::UnsetBeforeInitial, // GTK 4
+        WantFullscreen::UnsetBeforeInitial,
         WantFullscreen::BeforeInitial(None),
         WantFullscreen::UnsetAfterInitial,
-        // mpv, osu!
         WantFullscreen::AfterInitial(None),
     ];
     let open_maximized = [None, Some("false"), Some("true")];
@@ -780,7 +752,6 @@ window-rule {
 
     let id = f.add_client();
 
-    // To get output names.
     f.roundtrip(id);
 
     let client = f.client(id);
@@ -825,7 +796,6 @@ window-rule {
     window.ack_last_and_commit();
     f.double_roundtrip(id);
 
-    // Commit to the post-initial configures.
     let window = f.client(id).window(&surface);
     let new_serial = window.configures_received.last().unwrap().0;
     if new_serial != serial {
@@ -836,7 +806,6 @@ window-rule {
     let window = f.client(id).window(&surface);
     let post_map = window.format_recent_configures();
 
-    // If the window ended up fullscreen, unfullscreen it and output the configure.
     let mut post_unfullscreen = String::new();
     let mapped = f.zen().layout.windows().next().unwrap().1;
     let is_fullscreen = mapped.sizing_mode().is_fullscreen();
@@ -856,7 +825,6 @@ window-rule {
         );
     }
 
-    // If the window ended up maximized, unmaximize it and output the configure.
     let mut post_unmaximize = String::new();
     let mapped = f.zen().layout.windows().next().unwrap().1;
     let is_maximized = mapped.sizing_mode().is_maximized();

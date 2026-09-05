@@ -18,12 +18,6 @@ use super::shaders::{mat3_uniform, ProgramType, Shaders};
 use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
 use crate::render_helpers::renderer::AsGlesFrame as _;
 
-/// Renders a wide variety of borders and border parts.
-///
-/// This includes:
-/// * sub- or super-rect of an angled linear gradient like CSS linear-gradient(angle, a, b).
-/// * corner rounding.
-/// * as a background rectangle and as parts of a border line.
 #[derive(Debug, Clone)]
 pub struct BorderRenderElement {
     inner: ShaderRenderElement,
@@ -41,7 +35,6 @@ struct Parameters {
     geometry: Rectangle<f64, Logical>,
     border_width: f32,
     corner_radius: CornerRadius,
-    // Should only be used for visual improvements, i.e. corner radius anti-aliasing.
     scale: f32,
     alpha: f32,
 }

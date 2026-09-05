@@ -26,12 +26,10 @@ impl GradientFadeTextureRenderElement {
         let logical_w = texture.buffer().logical_size().w;
         let logical_src_w = texture.logical_src().size.w;
         let cutoff = if logical_src_w < logical_w {
-            // Texture is clipped, add a fade.
             let cutoff = 1. - f64::min(18. / logical_src_w, 1.);
             let full = logical_src_w / logical_w;
             ((cutoff * full) as f32, full as f32)
         } else {
-            // Texture is displayed full-size, no cutoff necessary.
             (1., 1.)
         };
         Self {
@@ -115,8 +113,6 @@ impl RenderElement<GlesRenderer> for GradientFadeTextureRenderElement {
     }
 
     fn underlying_storage(&self, _renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
-        // If scanout for things other than Wayland buffers is implemented, this will need to take
-        // the target GPU into account.
         None
     }
 }
@@ -148,8 +144,6 @@ impl<'render> RenderElement<TtyRenderer<'render>> for GradientFadeTextureRenderE
         &self,
         _renderer: &mut TtyRenderer<'render>,
     ) -> Option<UnderlyingStorage<'_>> {
-        // If scanout for things other than Wayland buffers is implemented, this will need to take
-        // the target GPU into account.
         None
     }
 }

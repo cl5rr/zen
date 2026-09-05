@@ -94,7 +94,7 @@ impl OutputManagementManagerState {
     }
 
     pub fn notify_changes(&mut self, new_state: HashMap<OutputId, zen_ipc::Output>) {
-        let mut changed = false; /* most likely to end up true */
+        let mut changed = false;
         for (output, conf) in new_state.iter() {
             if let Some(old) = self.current_state.get(output) {
                 if old.vrr_enabled != conf.vrr_enabled {
@@ -111,14 +111,11 @@ impl OutputManagementManagerState {
                     }
                 }
 
-                // Winit and virtual outputs can change modes; on a TTY custom modes can add/remove
-                // a mode.
                 let modes_changed = old.modes != conf.modes;
                 if modes_changed {
                     changed = true;
                     for client in self.clients.values_mut() {
                         if let Some((head, modes)) = client.heads.get_mut(output) {
-                            // Ends on the shortest iterator.
                             let zwlr_modes_with_modes = zip(modes.iter(), &conf.modes);
                             let least_modes_len = zwlr_modes_with_modes.len();
 
@@ -132,7 +129,6 @@ impl OutputManagementManagerState {
                             if let Some(client) = client.manager.client() {
                                 if conf.modes.len() > least_modes_len {
                                     for mode in &conf.modes[least_modes_len..] {
-                                        // One or more modes were added.
                                         let new_mode = client
                                             .create_resource::<ZwlrOutputModeV1, _, State>(
                                                 &self.display,
@@ -149,7 +145,6 @@ impl OutputManagementManagerState {
                                         modes.push(new_mode);
                                     }
                                 } else if modes.len() > least_modes_len {
-                                    // One or more modes were removed.
                                     for mode in modes.drain(least_modes_len..) {
                                         mode.finished();
                                     }
@@ -232,7 +227,6 @@ impl OutputManagementManagerState {
                         changed = true;
                         for client in self.clients.values() {
                             if let Some((head, _)) = client.heads.get(output) {
-                                // head enable in the mode diff check
                                 head.position(new_logical.x, new_logical.y);
                                 head.transform(
                                     ipc_transform_to_smithay(new_logical.transform).into(),
@@ -242,7 +236,6 @@ impl OutputManagementManagerState {
                         }
                     }
                     (Some(_), None) => {
-                        // heads disabled in the mode diff check
                     }
                     (None, None) => {}
                 }
@@ -509,7 +502,6 @@ where
                 }
 
                 state.apply_output_config(new_config.into_values().collect());
-                // FIXME: verify that it had been applied successfully (which may be difficult).
                 conf.succeeded();
             }
             zwlr_output_configuration_v1::Request::Test => {
@@ -538,7 +530,6 @@ where
                     return;
                 }
 
-                // FIXME: actually test the configuration with TTY.
                 conf.succeeded()
             }
             zwlr_output_configuration_v1::Request::Destroy => {
@@ -808,7 +799,6 @@ fn send_new_head<D>(
         .unwrap();
     client_data.manager.head(&new_head);
     new_head.name(conf.name.clone());
-    // Format matches what Output::new() does internally.
     new_head.description(format!("{} - {} - {}", conf.make, conf.model, conf.name));
     if let Some((width, height)) = conf.physical_size {
         if let (Ok(a), Ok(b)) = (width.try_into(), height.try_into()) {
@@ -857,6 +847,5 @@ fn send_new_head<D>(
             false => AdaptiveSyncState::Disabled,
         });
     }
-    // new_head.serial_number(output.serial);
     client_data.heads.insert(output, (new_head, new_modes));
 }

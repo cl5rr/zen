@@ -19,9 +19,6 @@ pub struct Animation {
     initial_velocity: f64,
     is_off: bool,
     duration: Duration,
-    /// Time until the animation first reaches `to`.
-    ///
-    /// Best effort; not always exactly precise.
     clamped_duration: Duration,
     start_time: Duration,
     clock: Clock,
@@ -57,7 +54,6 @@ impl Animation {
         initial_velocity: f64,
         config: zen_config::Animation,
     ) -> Self {
-        // Scale the velocity by rate to keep the touchpad gestures feeling right.
         let initial_velocity = initial_velocity / clock.rate().max(0.001);
 
         let mut rv = Self::ease(clock, from, to, initial_velocity, 0, Curve::EaseOutCubic);
@@ -107,13 +103,11 @@ impl Animation {
         self.start_time = start_time;
     }
 
-    /// Restarts the animation using the previous config.
     pub fn restarted(&self, from: f64, to: f64, initial_velocity: f64) -> Self {
         if self.is_off {
             return self.clone();
         }
 
-        // Scale the velocity by rate to keep the touchpad gestures feeling right.
         let initial_velocity = initial_velocity / self.clock.rate().max(0.001);
 
         match self.kind {
@@ -129,21 +123,15 @@ impl Animation {
                 let spring = Spring {
                     from,
                     to,
-                    // Must be the (rate-scaled) parameter, not self.initial_velocity. Using the
-                    // latter discarded the caller's velocity on every retarget, so an animation
-                    // interrupted mid-flight restarted from the velocity it had when it *first*
-                    // began -- visible as a hitch at the handoff.
                     initial_velocity,
                     params: spring.params,
                 };
                 Self::spring(self.clock.clone(), spring)
             }
-            // `deceleration_rate` only: destructuring `initial_velocity` here would shadow the
-            // parameter, which is the same bug as above.
             Kind::Deceleration {
                 deceleration_rate, ..
             } => {
-                let threshold = 0.001; // FIXME
+                let threshold = 0.001;
                 Self::decelerate(
                     self.clock.clone(),
                     from,
@@ -172,7 +160,6 @@ impl Animation {
             initial_velocity,
             is_off: false,
             duration,
-            // Our current curves never overshoot.
             clamped_duration: duration,
             start_time: clock.now(),
             clock,
@@ -253,9 +240,6 @@ impl Animation {
 
     pub fn value_at(&self, at: Duration) -> f64 {
         if at <= self.start_time {
-            // Return from when at == start_time so that when the animations are off, the behavior
-            // within a single event loop cycle (i.e. no time had passed since the start of an
-            // animation) matches the behavior when the animations are on.
             return self.from;
         } else if self.start_time + self.duration <= at {
             return self.to;
@@ -277,7 +261,6 @@ impl Animation {
             Kind::Spring(spring) => {
                 let value = spring.value_at(passed);
 
-                // Protect against numerical instability.
                 let range = (self.to - self.from) * 10.;
                 let a = self.from - range;
                 let b = self.to + range;
@@ -302,10 +285,6 @@ impl Animation {
         self.value_at(self.clock.now())
     }
 
-    /// Returns the animation's velocity at `at`, in units per second.
-    ///
-    /// Springs answer analytically; everything else uses a central difference, since easing
-    /// curves have no convenient closed-form derivative here.
     pub fn velocity_at(&self, at: Duration) -> f64 {
         if self.is_off || at <= self.start_time || at >= self.start_time + self.duration {
             return 0.;
@@ -323,18 +302,10 @@ impl Animation {
         }
     }
 
-    /// The animation's velocity right now.
-    ///
-    /// Pass this to [`Self::restarted`] when retargeting mid-flight to keep motion continuous.
-    /// The camera is retargeted constantly on a canvas, so this is the difference between one
-    /// fluid movement and a sequence of small jerks.
     pub fn current_velocity(&self) -> f64 {
         self.velocity_at(self.clock.now())
     }
 
-    /// Returns a value that stops at the target value after first reaching it.
-    ///
-    /// Best effort; not always exactly precise.
     pub fn clamped_value(&self) -> f64 {
         if self.is_clamped_done() {
             return self.to;

@@ -1,15 +1,3 @@
-//! ext-workspace protocol implementation.
-//!
-//! This is how we map the protocol concepts to the zen concepts:
-//!
-//! - Workspace groups are outputs.
-//! - Workspace coordinates: X = 0, Y = workspace index. They need to be two-dimensional because 1D
-//!   coordinates are defined to be a plain list without a geometric interpretation, while we do
-//!   order workspaces in a vertical line.
-//! - Workspace id: name for named workspaces, unset for unnamed. Because ids in this protocol are
-//!   expected to be stable across sessions.
-//! - Workspace name: name for named workspaces, index for unnamed.
-
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::mem;
@@ -50,7 +38,6 @@ enum Action {
 
 impl Action {
     fn order(&self) -> u8 {
-        // First assign everything (move across outputs), then activate.
         match self {
             Action::Assign(_, _) => 0,
             Action::Activate(_) => 1,
@@ -69,12 +56,10 @@ struct ExtWorkspaceGroupData {
     instances: Vec<ExtWorkspaceGroupHandleV1>,
 }
 
-// Wrapper struct for trait coherence.
 #[derive(PartialEq, Eq)]
 struct WrappedManager(ExtWorkspaceManagerV1);
 
 struct ExtWorkspaceData {
-    // id cannot change once set.
     id: Option<String>,
     name: String,
     coordinates: ArrayVec<u32, 2>,
@@ -94,7 +79,6 @@ pub fn refresh(state: &mut State) {
 
     let mut changed = false;
 
-    // Remove workspaces that no longer exist (sending workspace_leave to workspace groups).
     let mut seen_workspaces = HashMap::new();
     for (mon, _, ws) in state.zen.layout.workspaces() {
         let output = mon.map(|mon| mon.output());
@@ -111,14 +95,12 @@ pub fn refresh(state: &mut State) {
         false
     });
 
-    // Remove workspace groups for outputs that no longer exist.
     protocol_state.workspace_groups.retain(|output, data| {
         if state.zen.sorted_outputs.contains(output) {
             return true;
         }
 
         for group in &data.instances {
-            // Send workspace_leave for all workspaces in this group with matching manager.
             let manager: &WrappedManager = group.data().unwrap();
             for ws in protocol_state.workspaces.values() {
                 if ws.output.as_ref() == Some(output) {
@@ -137,12 +119,10 @@ pub fn refresh(state: &mut State) {
         false
     });
 
-    // Update existing workspaces and create new ones.
     for (mon, ws_idx, ws) in state.zen.layout.workspaces() {
         changed |= refresh_workspace(protocol_state, mon, ws_idx, ws);
     }
 
-    // Update workspace groups and create new ones, sending workspace_enter events as needed.
     for output in &state.zen.sorted_outputs {
         changed |= refresh_workspace_group(protocol_state, output);
     }
@@ -186,24 +166,19 @@ pub fn on_output_bound(state: &mut State, output: &Output, wl_output: &WlOutput)
 
 fn refresh_workspace_group(protocol_state: &mut ExtWorkspaceManagerState, output: &Output) -> bool {
     if protocol_state.workspace_groups.contains_key(output) {
-        // Existing workspace group. Nothing can actually change since our workspace groups are tied
-        // to an output.
         return false;
     }
 
-    // New workspace group, start tracking it.
     let mut data = ExtWorkspaceGroupData {
         instances: Vec::new(),
     };
 
-    // Create workspace group handle for each manager instance.
     for manager in protocol_state.instances.keys() {
         if let Some(client) = manager.client() {
             data.add_instance::<State>(&protocol_state.display, &client, manager, output);
         }
     }
 
-    // Send workspace_enter for all existing workspaces on this output.
     for group in &data.instances {
         let manager: &WrappedManager = group.data().unwrap();
         for ws in protocol_state.workspaces.values() {
@@ -258,7 +233,6 @@ fn remove_workspace_instances(
 
 fn build_name(ws: &Workspace<Mapped>, ws_idx: usize) -> String {
     ws.name().cloned().unwrap_or_else(|| {
-        // Add 1 since this is a human-readable name, and our action indexing is 1-based.
         (ws_idx + 1).to_string()
     })
 }
@@ -281,7 +255,6 @@ fn refresh_workspace(
 
     match protocol_state.workspaces.entry(ws.id()) {
         Entry::Occupied(entry) => {
-            // Existing workspace, check if anything changed.
             let data = entry.into_mut();
 
             let mut id_set = false;
@@ -308,19 +281,15 @@ fn refresh_workspace(
                 state_changed = true;
             }
 
-            // Recreate means name got changed or unset (meaning data.name is back to ws_idx).
             let check = recreate
                 || if data.id.is_some() {
-                    // True means workspace got named, going from ws_idx to name.
                     id_set
                 } else {
-                    // The workspace is unnamed, check if ws_idx changed.
                     coordinates_changed
                 };
             let mut name_changed = false;
             if check {
                 let new_name = build_name(ws, ws_idx);
-                // This will likely be true, except if the workspace got named its index.
                 if data.name != new_name {
                     data.name = new_name;
                     name_changed = true;
@@ -349,9 +318,6 @@ fn refresh_workspace(
             }
 
             if output_changed {
-                // Send workspace_enter to the new output's group. If the group doesn't exist yet
-                // (new groups are created after refreshing workspaces), then workspace_enter() will
-                // be sent when the group is created.
                 send_workspace_enter_leave(&protocol_state.workspace_groups, data, true);
             }
 
@@ -381,7 +347,6 @@ fn refresh_workspace(
             output_changed || something_changed
         }
         Entry::Vacant(entry) => {
-            // New workspace, start tracking it.
             let mut data = ExtWorkspaceData {
                 id: ws.name().cloned(),
                 name: build_name(ws, ws_idx),
@@ -516,7 +481,6 @@ where
 
         let state = state.ext_workspace_manager_state();
 
-        // Send existing workspaces to the new client.
         let mut new_workspaces: HashMap<_, Vec<_>> = HashMap::new();
         for data in state.workspaces.values_mut() {
             let output = data.output.clone();
@@ -527,7 +491,6 @@ where
             }
         }
 
-        // Create workspace groups for all outputs.
         for (output, group_data) in &mut state.workspace_groups {
             let group = group_data.add_instance::<State>(handle, client, &manager, output);
 

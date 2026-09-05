@@ -1,7 +1,3 @@
-// References:
-// - https://invent.kde.org/plasma/kwin/-/blob/397fbbe52a8f2d855ad0c9817b51a9bdf06a68e2/src/a11ykeyboardmonitor.cpp#L41
-// - https://gitlab.gnome.org/GNOME/mutter/-/blob/cbb7295ac1f93a2dfd55a7c0544688e7e5c4d2e2/src/backends/meta-a11y-manager.c
-
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -57,27 +53,21 @@ pub struct KeyboardMonitor {
     iface: Arc<OnceLock<InterfaceRef<Self>>>,
 }
 
-/// Keyboard monitor key block reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KbMonBlock {
-    /// Not blocked.
     Pass,
-    /// Blocked, and this is the first press/release of the a11y modifier.
     ModifierFirstPress,
-    /// Blocked, and this is not the a11y modifier.
     Block,
 }
 
 #[derive(Debug, Default)]
 struct PointerData {
-    /// Clients to be notified of pointer position change.
     clients: HashSet<OwnedUniqueName>,
 }
 
 #[derive(Debug, Default, SerializeDict, Type, Value)]
 #[zvariant(signature = "dict")]
 pub struct PointerAppData {
-    // For the future: other impls send either pid or the two other properties, not both.
     pid: Option<i32>,
     app_dbus_name: Option<String>,
     toplevel_object_path: Option<OwnedObjectPath>,
@@ -97,23 +87,11 @@ enum A11yError {
     #[zbus(error)]
     ZBus(zbus::Error),
     UnknownToplevel,
-    // Catch-all.
     Failed(String),
 }
 
-/// Interface for monitoring of keyboard input by assistive technologies.
-///
-/// This interface is used by assistive technologies to monitor keyboard input of the compositor.
-/// The compositor is expected to listen on the well-known bus name "org.freedesktop.a11y.Manager"
-/// at the object path "/org/freedesktop/a11y/Manager".
 #[interface(name = "org.freedesktop.a11y.KeyboardMonitor")]
 impl KeyboardMonitor {
-    // Starts grabbing all key events. The client receives the events through the KeyEvent signal,
-    // and in addition, the events aren't handled normally by the compositor. This includes changes
-    // to the state of toggles like Caps Lock, Num Lock, and Scroll Lock.
-    //
-    // This behavior stays in effect until the same client calls UngrabKeyboard or closes its D-Bus
-    // connection.
     async fn grab_keyboard(&self, #[zbus(header)] hdr: Header<'_>) -> fdo::Result<()> {
         let Some(sender) = hdr.sender() else {
             return Err(fdo::Error::Failed("no sender".to_owned()));
@@ -128,12 +106,6 @@ impl KeyboardMonitor {
         Ok(())
     }
 
-    // Reverses the effect of calling GrabKeyboard. If GrabKeyboard wasn't previously called, this
-    // method does nothing.
-    //
-    // After calling this method, the key grabs specified in the last call to SetKeyGrabs, if any,
-    // are still in effect. Also, the client will still receive key events through the KeyEvent
-    // signal, if it has called WatchKeyboard.
     async fn ungrab_keyboard(&self, #[zbus(header)] hdr: Header<'_>) -> fdo::Result<()> {
         let Some(sender) = hdr.sender() else {
             return Err(fdo::Error::Failed("no sender".to_owned()));
@@ -149,12 +121,6 @@ impl KeyboardMonitor {
         Ok(())
     }
 
-    // Starts watching all key events. The client receives the events through the KeyEvent signal,
-    // but the events are still handled normally by the compositor. This includes changes to the
-    // state of toggles like Caps Lock, Num Lock, and Scroll Lock.
-    //
-    // This behavior stays in effect until the same client calls UnwatchKeyboard or closes its D-Bus
-    // connection.
     async fn watch_keyboard(&self, #[zbus(header)] hdr: Header<'_>) -> fdo::Result<()> {
         let Some(sender) = hdr.sender() else {
             return Err(fdo::Error::Failed("no sender".to_owned()));
@@ -169,11 +135,6 @@ impl KeyboardMonitor {
         Ok(())
     }
 
-    // Reverses the effect of calling WatchKeyboard. If WatchKeyboard wasn't previously called, this
-    // method does nothing.
-    //
-    // After calling this method, the key grabs specified in the last call to SetKeyGrabs, if any,
-    // are still in effect, but other key events are no longer reported to this client.
     async fn unwatch_keyboard(&self, #[zbus(header)] hdr: Header<'_>) -> fdo::Result<()> {
         let Some(sender) = hdr.sender() else {
             return Err(fdo::Error::Failed("no sender".to_owned()));
@@ -189,25 +150,6 @@ impl KeyboardMonitor {
         Ok(())
     }
 
-    // Sets the current key grabs for the calling client, overriding any previous call to this
-    // method. For grabbed key events, the KeyEvent signal is emitted, and normal key event handling
-    // is suppressed, including state changes for toggles like Caps Lock and Num Lock.
-    //
-    // The grabs set by this method stay in effect until the same client calls this method again, or
-    // until that client closes its D-Bus connection.
-    //
-    // Each item in `modifiers` is an XKB keysym. All keys in this list will be grabbed, and keys
-    // pressed while any of these keys are down will also be grabbed.
-    //
-    // Each item in `keystrokes` is a struct with the following fields:
-    //
-    // - the XKB keysym of the non-modifier key
-    // - the XKB modifier mask of the modifiers, if any, for this keystroke
-    //
-    // If any of the keys in `modifiers` is pressed alone, the compositor is required to ignore the
-    // key press and release event if a second key press of the same modifier is not received within
-    // a reasonable time frame, for example, the key repeat delay. If such event is received, this
-    // second event is processed normally.
     async fn set_key_grabs(
         &self,
         #[zbus(header)] hdr: Header<'_>,
@@ -231,13 +173,6 @@ impl KeyboardMonitor {
         Ok(())
     }
 
-    // The compositor emits this signal for each key press or release.
-    //
-    // - `released`: whether this is a key-up event
-    // - `state`: XKB modifier mask for currently pressed modifiers
-    // - `keysym`: XKB keysym for this key
-    // - `unichar`: Unicode character for this key, or 0 if none
-    // - `keycode`: hardware-dependent keycode for this key
     #[zbus(signal)]
     pub async fn key_event(
         ctxt: &SignalEmitter<'_>,
@@ -267,12 +202,10 @@ impl KeyboardMonitor {
 
         let mut data = self.data.lock().unwrap();
 
-        // Emit key events as necessary.
         for (name, client) in &data.clients {
             if client.should_watch_keypress(&data.suppressed_keys, mods, keysym) {
                 let _span = tracy_client::span!("emitting key event");
 
-                // Emit to that client only.
                 ctxt = ctxt.set_destination(BusName::Unique(name.as_ref()));
                 let ctxt = &ctxt;
                 async_io::block_on(async move {
@@ -292,11 +225,8 @@ impl KeyboardMonitor {
             }
         }
 
-        // Check for double-pressed grabbed modifier that should not be captured.
         if data.grabbed_mods.contains(&keysym) {
             if released {
-                // If missing from suppressed keys, then this is a release corresponding to the
-                // second press that got handled normally.
                 if !data.suppressed_keys.contains(&keysym) {
                     trace!("handling release for second press of grabbed modifier: {keysym:?}");
                     return KbMonBlock::Pass;
@@ -309,7 +239,6 @@ impl KeyboardMonitor {
                 let last_press = *last_press_entry;
                 *last_press_entry = time;
 
-                // Modifier pressed twice; handle it as normal.
                 if time <= last_press.saturating_add(repeat_delay) {
                     trace!("handling second press of grabbed modifier: {keysym:?}");
                     return KbMonBlock::Pass;
@@ -320,17 +249,14 @@ impl KeyboardMonitor {
         let mut block = false;
 
         if released {
-            // This is a release for a key that was grabbed.
             if data.suppressed_keys.remove(&keysym) {
                 trace!("blocking release for previously suppressed key: {keysym:?}");
                 block = true;
             }
         } else if data.suppressed_keys.contains(&keysym) {
-            // Second press for an already-pressed key, e.g. from two keyboards.
             trace!("blocking press for already-pressed key: {keysym:?}");
             block = true;
         } else {
-            // Check if it's grabbed by any client.
             if data
                 .clients
                 .values()
@@ -368,20 +294,17 @@ impl KeyboardClient {
         mods: u32,
         keysym: Keysym,
     ) -> bool {
-        // Grabbing all keys.
         if self.grabbed {
             return true;
         }
 
         for modifier in &self.modifiers {
-            // This is a grabbed modifier, or a grabbed modifier is currently down.
             if *modifier == keysym || suppressed_keys.contains(modifier) {
                 return true;
             }
         }
 
         for (grabbed_keysym, grabbed_mods) in &self.keystrokes {
-            // This is a grabbed keystroke.
             if *grabbed_keysym == keysym && *grabbed_mods == mods {
                 return true;
             }
@@ -404,35 +327,8 @@ impl KeyboardClient {
     }
 }
 
-/// Interface for locating the pointer position in the accessibility tree.
-///
-/// This interface is used by assistive technologies to query the pointer position in the
-/// accessibility tree. The compositor is expected to listen on the well-known bus name
-/// "org.freedesktop.a11y.Manager" at the object path "/org/freedesktop/a11y/Manager".
 #[interface(name = "org.freedesktop.a11y.PointerLocator")]
 impl PointerLocator {
-    // Queries the a11y details about the toplevel beneath the mouse pointer, together with the
-    // relative position of the mouse pointer on the surface. The most up-to-date coordinates as
-    // known to the compositor are returned by this method call.
-    //
-    // Screen readers may use the given information to further query the accessibility tree of the
-    // specific application, in order to identify the application-side accessible elements directly
-    // underneath the mouse pointer.
-    //
-    // This request will also schedule the emission of a following "PointerPositionChanged" signal,
-    // whenever mouse pointer motion would happen.
-    //
-    // The "data" argument is a generic container, so far the only handled keys are relevant to
-    // AT-SPI:
-    //
-    // - "app-dbus-name" (type: s): Application D-Bus name in the a11y D-Bus
-    // - "toplevel-object-path" (type: o): Object path to the toplevel, in the given D-Bus name.
-    //
-    // If this data is not provided, the focused client will be considered to be the desktop
-    // environment itself, and the provided coordinates will be relative to its origin point.
-    //
-    // A org.freedesktop.a11y.UnknownToplevel error will be returned if the client under the pointer
-    // is non-introspectable.
     async fn query_pointer(
         &self,
         #[zbus(header)] hdr: Header<'_>,
@@ -456,9 +352,6 @@ impl PointerLocator {
             }
         };
 
-        // Subscribe the client after all asynchronous operations. Otherwise it's possible for the
-        // pointer to move and the signal to be emitted before returning from this first
-        // QueryPointer request.
         let mut data = self.data.lock().unwrap();
         if !data.clients.contains(&sender) {
             trace!("enabling pointer position notifications for {sender}");
@@ -468,15 +361,6 @@ impl PointerLocator {
         rv
     }
 
-    // This signal is emitted once when two conditions meet:
-    // 1. A "QueryPointer" method call happened before
-    // 2. Pointer motion happened after replying to that method call
-    //
-    // The purpose of the signal is being used as a throttling mechanism, so that a11y pointer
-    // handling is independent of device specifics like frequency rate at which input is handled.
-    //
-    // The expected response for a screen reader to this signal is scheduling a following
-    // "QueryPointer" method call.
     #[zbus(signal)]
     pub async fn pointer_position_changed(ctxt: &SignalEmitter<'_>) -> zbus::Result<()>;
 }
@@ -498,7 +382,6 @@ impl PointerLocator {
             });
         }
 
-        // They will need to QueryPointer again to subscribe for the next signal.
         data.clients.clear();
     }
 }
@@ -600,7 +483,6 @@ impl Manager {
             {
                 warn!("error monitoring keyboard monitor clients: {err:?}");
 
-                // Since the monitor is now broken, prevent any further communication.
                 if let Err(err) = async_conn.close().await {
                     warn!("error closing connection: {err:?}");
                 }
@@ -641,7 +523,6 @@ impl State {
 
         let (mods, keysym, unichar) = keyboard.with_xkb_state(self, |context| {
             let xkb = context.xkb().lock().unwrap();
-            // SAFETY: we're not changing the ref count.
             let state = unsafe { xkb.state() };
 
             let keysym = state.key_get_one_sym(keycode);
@@ -681,35 +562,26 @@ impl State {
         let pointer = &self.zen.seat.get_pointer().unwrap();
         let pointer_pos = pointer.current_location();
 
-        // Grabs can modify pointer focus, but here let's ignore them. I'm not entirely sure what's
-        // expected by a11y users though.
         let contents = match &self.zen.pointer_contents {
             PointContents {
                 surface: Some((surface, surface_pos)),
                 ..
             } => {
                 if let Some(credentials) = get_credentials_for_surface(surface) {
-                    // The current definition of the protocol expects buffer-relative pointer
-                    // coordinates. I don't think this is correct, I opened a discussion here:
-                    // https://gitlab.gnome.org/GNOME/mutter/-/work_items/4919
                     let pos_within_surface = pointer_pos - *surface_pos;
 
                     let data = PointerAppData {
                         pid: Some(credentials.pid),
-                        // FIXME: fill these in from xdg_dbus_annotation when it's merged.
-                        // https://gitlab.freedesktop.org/wayland/wayland-protocols/-/merge_requests/493
                         app_dbus_name: None,
                         toplevel_object_path: None,
                     };
 
                     Some((data, pos_within_surface.x, pos_within_surface.y))
                 } else {
-                    // Client is not introspectable.
                     None
                 }
             }
             _ => {
-                // The focused client is zen itself.
                 Some((PointerAppData::default(), pointer_pos.x, pointer_pos.y))
             }
         };
