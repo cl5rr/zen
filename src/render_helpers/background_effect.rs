@@ -113,15 +113,17 @@ impl BackgroundEffect {
             effect.blur == Some(true)
         };
 
+        let glass = effect.glass == Some(true) && !self.glass_config.off;
+
         let mut options = Options {
             blur,
-            glass: effect.glass == Some(true) && !self.glass_config.off,
-            xray: effect.xray == Some(true),
+            glass,
+            xray: !glass && effect.xray == Some(true),
             noise: effect.noise,
             saturation: effect.saturation,
         };
 
-        if options.is_visible() && effect.xray.is_none() {
+        if !glass && options.is_visible() && effect.xray.is_none() {
             options.xray = true;
         }
 
@@ -157,13 +159,6 @@ impl BackgroundEffect {
         params.fit_clip_radius();
 
         // glass
-        //
-        // The capture blits exactly `geometry`, but refraction samples OUTSIDE it at the rim:
-        // that is what bending the backdrop means. Without a margin those samples hit the edge
-        // of the texture and smear clamp-to-edge pixels around the border. So the captured
-        // region grows by the refraction distance while `clip` stays the true window rect, and
-        // the existing uniform maths, which already maps crop to clip_geo separately from
-        // geometry, handles the difference with no further help.
         let glass = self.options.glass.then(|| GlassParams::from(self.glass_config));
         if let Some(g) = &glass {
             let margin = f64::from(g.refraction).max(0.).ceil();
