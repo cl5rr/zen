@@ -616,15 +616,20 @@ update_zen() {
     before=$(git rev-parse HEAD)
 
     info "fetching"
-    git pull --ff-only || die "pull failed - if it says 'diverged', your local commits
-    and the remote have both moved; sort that out by hand"
+    git pull --ff-only || die "pull failed. If it says 'diverged', your local commits and the remote have both moved; sort that out by hand."
 
     after=$(git rev-parse HEAD)
 
     if [ "$before" = "$after" ]; then
-        ok "already up to date at $(git rev-parse --short HEAD)"
-        DO_BUILD=0
-        DO_INSTALL=0
+        # Deliberately still building and installing. "The pull fetched nothing" is not the
+        # same as "what is installed matches this checkout", and conflating them breaks the
+        # most likely path of all: you have to `git pull` by hand to get this option in the
+        # first place, so the very first --update almost always finds nothing to fetch. If
+        # that skipped the build, the code you just pulled would never be compiled.
+        #
+        # Rebuilding when nothing changed costs nothing; cargo does the work of noticing.
+        ok "nothing to fetch, already at $(git rev-parse --short HEAD)"
+        dim "rebuilding anyway, in case what is installed is older than this checkout"
         return 0
     fi
 
