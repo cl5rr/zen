@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=ZEN
+Comment=A spatial Wayland compositor with an infinite 2D canvas
+Exec=zen-session
+Type=Application
+DesktopNames=zen
+Icon=zen

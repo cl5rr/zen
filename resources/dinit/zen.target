@@ -1,0 +1,6 @@
+type           = internal
+restart        = false
+depends-on:    zen
+waits-for.d:   $XDG_CONFIG_HOME/dinit.d/zen.d/
+waits-for.d:   $HOME/.config/dinit.d/zen.d/
+waits-for.d:   /etc/dinit.d/user/zen.d/

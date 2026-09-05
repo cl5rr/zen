@@ -1,0 +1,10 @@
+/target
+/result
+
+.idea
+
+# insta writes these next to snapshots when a snapshot test fails.
+*.snap.new
+
+# Scratch configs used for nested test runs.
+zen-test*.kdl

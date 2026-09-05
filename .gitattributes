@@ -1,0 +1,9 @@
+# ZEN is a Linux project: keep LF in the working tree on every platform.
+# Without this, a Windows checkout produces CRLF and shell scripts fail with
+# "bad interpreter: /usr/bin/env bash^M" when copied to Linux.
+* text=auto eol=lf
+
+# Binary assets must never be line-ending converted.
+*.png    binary
+*.rgba   binary
+*.ico    binary

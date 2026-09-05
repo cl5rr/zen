@@ -1,0 +1,37 @@
+ZEN
+Copyright (C) 2026 cl5r
+
+Contact: cl5r on Discord.
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. See LICENSE for the full text.
+
+
+Derivation
+----------
+
+ZEN began as a fork of niri, and this notice exists to satisfy GPL-3.0 section 5:
+the original copyright is preserved, and the modifications are stated.
+
+    niri
+    Copyright (C) Ivan Molodetskikh <yalterz@gmail.com> and contributors
+    https://github.com/niri-wm/niri
+    Licensed under the GNU General Public License, version 3 or later.
+
+ZEN branched from niri at version 26.4.0 and has been modified extensively since.
+The layout engine was replaced outright: niri's one-dimensional scrollable strip
+became an unbounded two-dimensional canvas of free-positioned islands, navigated
+by a per-output camera, in which maximize is a viewport operation that sends the
+window no configure at all. That camera, the canvas coordinate system, the island
+model, the spatial navigation, the glass material and the compositor-drawn canvas
+widgets are ZEN's own work.
+
+Substantial parts of the surrounding compositor remain derived from niri: the
+Smithay backends, the Wayland protocol implementations, Xwayland integration, the
+animation and gesture systems, the GLSL rendering pipeline, the KDL configuration
+layer and the IPC. Those parts carry niri's copyright above.
+
+This is a modified version. It is not endorsed by, affiliated with, or supported
+by the niri project, and problems with ZEN should not be reported to them.

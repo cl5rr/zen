@@ -1,0 +1,7 @@
+type               = process
+command            = zen --session
+restart            = false
+working-dir        = $HOME
+ready-notification = pipevar:NOTIFY_FD
+logfile            = $HOME/.local/share/zen/zen.log
+depends-on:        dbus
