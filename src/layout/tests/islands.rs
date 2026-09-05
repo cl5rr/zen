@@ -497,3 +497,83 @@ fn moving_a_clustered_window_moves_the_island() {
     assert!(after.loc.x > before.loc.x, "the island should have moved");
     assert_eq!(ws.island_windows(island).len(), 2, "and kept both members");
 }
+
+// ---------------------------------------------------------------------------------------------
+// The canvas has to actually be unbounded
+// ---------------------------------------------------------------------------------------------
+
+#[track_caller]
+fn visible_workspace_count(layout: &Layout<TestWindow>) -> usize {
+    let MonitorSet::Normal { monitors, .. } = &layout.monitor_set else {
+        unreachable!()
+    };
+    monitors[0].workspaces_with_render_geo().count()
+}
+
+/// A window left of or above the origin must still be drawn.
+///
+/// This is the bug that made the canvas a lie. The workspace rect's `loc` is the content
+/// origin, so its `size` can only grow right and down; a window at negative coordinates fell
+/// outside a rectangle with no way to express it, the cull decided the whole workspace covered
+/// nothing, and *every* window vanished at once. Reported from real use, invisible to every
+/// test here, because nothing had ever panned into negative space.
+#[test]
+fn a_window_at_negative_coordinates_is_still_drawn() {
+    let mut layout = check_ops([Op::AddOutput(1), floating(1), settle()]);
+    assert_eq!(visible_workspace_count(&layout), 1);
+
+    // Far left of, and far above, the origin.
+    check_ops_on_layout(&mut layout, [move_to(-6000., -4000.), settle()]);
+
+    // Go look at it.
+    assert!(layout.camera_fit_all());
+    check_ops_on_layout(&mut layout, [settle()]);
+
+    assert_eq!(
+        visible_workspace_count(&layout),
+        1,
+        "framed a window in negative space and the workspace was culled, \
+         so nothing would be drawn at all"
+    );
+}
+
+/// Pan to a window at negative coordinates *without* zooming out.
+///
+/// The distinction matters and cost me a wrong fix: `camera_fit_all` zooms out to frame things,
+/// and `workspace_size` grows as zoom shrinks, so the rect becomes big enough to intersect the
+/// output no matter what. Panning at zoom 1 is the case that actually breaks, and it is the one
+/// a person hits by dragging a window left and following it.
+#[test]
+fn panning_to_negative_space_at_zoom_one_keeps_it_drawn() {
+    let mut layout = check_ops([Op::AddOutput(1), floating(1), settle()]);
+    check_ops_on_layout(&mut layout, [move_to(-5000., 0.), settle()]);
+
+    layout.set_camera_zoom(1.);
+    // Bring content at x = -5000 back into view.
+    layout.camera_pan_by(Point::from((5300., 0.)));
+    check_ops_on_layout(&mut layout, [settle()]);
+
+    assert_eq!(
+        visible_workspace_count(&layout),
+        1,
+        "panned to a window in negative space at zoom 1 and everything was culled"
+    );
+}
+
+/// The same, panning by hand rather than framing, and in the positive direction too.
+#[test]
+fn panning_far_in_any_direction_keeps_content_drawn() {
+    for (dx, dy) in [(-9000., 0.), (9000., 0.), (0., -7000.), (0., 7000.)] {
+        let mut layout = check_ops([Op::AddOutput(1), floating(1), settle()]);
+        check_ops_on_layout(&mut layout, [move_to(dx, dy), settle()]);
+
+        assert!(layout.camera_fit_all());
+        check_ops_on_layout(&mut layout, [settle()]);
+
+        assert_eq!(
+            visible_workspace_count(&layout),
+            1,
+            "window at ({dx}, {dy}) got culled away"
+        );
+    }
+}

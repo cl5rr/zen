@@ -1782,16 +1782,68 @@ impl<W: LayoutElement> Monitor<W> {
         })
     }
 
+    /// The area a workspace actually covers on screen, for deciding whether to draw it.
+    ///
+    /// This is deliberately not the same rectangle as `workspaces_render_geo` returns. That
+    /// one's `loc` is the *content origin*: everything a workspace draws is positioned relative
+    /// to it, so it cannot move without dragging every window with it. Its `size` can therefore
+    /// only ever extend right and down.
+    ///
+    /// On an unbounded canvas that is not enough. A window dragged left of or above the origin
+    /// sits at negative coordinates, outside a rectangle that has no way to express them, so the
+    /// cull below decided the whole workspace was off-screen and stopped drawing anything at
+    /// all. Panning far enough in any direction made every window vanish at once.
+    ///
+    /// So coverage is computed separately: same origin, but grown in *both* directions to
+    /// enclose the content. Only the visibility test uses it. Rendering and hit-testing keep the
+    /// original rect and are unaffected.
+    fn cull_coverage(
+        geo: Rectangle<f64, Logical>,
+        content: Option<Rectangle<f64, Logical>>,
+        zoom: f64,
+    ) -> Rectangle<f64, Logical> {
+        let Some(content) = content else {
+            return geo;
+        };
+
+        // Content is in workspace-local coordinates; the rect is in view coordinates.
+        let near_x = (content.loc.x * zoom).min(0.);
+        let near_y = (content.loc.y * zoom).min(0.);
+        let far_x = ((content.loc.x + content.size.w) * zoom).max(geo.size.w);
+        let far_y = ((content.loc.y + content.size.h) * zoom).max(geo.size.h);
+
+        Rectangle::new(
+            Point::from((geo.loc.x + near_x, geo.loc.y + near_y)),
+            Size::from((far_x - near_x, far_y - near_y)),
+        )
+    }
+
+    /// Per-workspace content extents, index-aligned with `workspaces`.
+    fn content_extents(&self) -> Vec<Option<Rectangle<f64, Logical>>> {
+        self.workspaces
+            .iter()
+            .map(|ws| ws.floating_tiles_bbox())
+            .collect()
+    }
+
     pub fn workspaces_with_render_geo_cull(
         &self,
         cull: bool,
     ) -> impl Iterator<Item = (&Workspace<W>, Rectangle<f64, Logical>)> {
         let output_geo = Rectangle::from_size(self.view_size);
+        let zoom = self.overview_zoom();
+        let extents = self.content_extents();
 
         let geo = self.workspaces_render_geo();
-        zip(self.workspaces.iter(), geo)
-            // Cull out workspaces outside the output.
-            .filter(move |(_ws, geo)| !cull || geo.intersection(output_geo).is_some())
+        zip(self.workspaces.iter().enumerate(), geo)
+            // Cull out workspaces that cover nothing on this output.
+            .filter(move |((idx, _ws), geo)| {
+                !cull
+                    || Self::cull_coverage(*geo, extents[*idx], zoom)
+                        .intersection(output_geo)
+                        .is_some()
+            })
+            .map(|((_idx, ws), geo)| (ws, geo))
     }
 
     pub fn workspaces_with_render_geo(
@@ -1804,11 +1856,17 @@ impl<W: LayoutElement> Monitor<W> {
         &self,
     ) -> impl Iterator<Item = ((usize, &Workspace<W>), Rectangle<f64, Logical>)> {
         let output_geo = Rectangle::from_size(self.view_size);
+        let zoom = self.overview_zoom();
+        let extents = self.content_extents();
 
         let geo = self.workspaces_render_geo();
         zip(self.workspaces.iter().enumerate(), geo)
-            // Cull out workspaces outside the output.
-            .filter(move |(_ws, geo)| geo.intersection(output_geo).is_some())
+            // Cull out workspaces that cover nothing on this output.
+            .filter(move |((idx, _ws), geo)| {
+                Self::cull_coverage(*geo, extents[*idx], zoom)
+                    .intersection(output_geo)
+                    .is_some()
+            })
     }
 
     pub fn workspaces_with_render_geo_mut(
@@ -1816,11 +1874,19 @@ impl<W: LayoutElement> Monitor<W> {
         cull: bool,
     ) -> impl Iterator<Item = (&mut Workspace<W>, Rectangle<f64, Logical>)> {
         let output_geo = Rectangle::from_size(self.view_size);
+        let zoom = self.overview_zoom();
+        let extents = self.content_extents();
 
         let geo = self.workspaces_render_geo();
-        zip(self.workspaces.iter_mut(), geo)
-            // Cull out workspaces outside the output.
-            .filter(move |(_ws, geo)| !cull || geo.intersection(output_geo).is_some())
+        zip(self.workspaces.iter_mut().enumerate(), geo)
+            // Cull out workspaces that cover nothing on this output.
+            .filter(move |((idx, _ws), geo)| {
+                !cull
+                    || Self::cull_coverage(*geo, extents[*idx], zoom)
+                        .intersection(output_geo)
+                        .is_some()
+            })
+            .map(|((_idx, ws), geo)| (ws, geo))
     }
 
     pub fn workspace_under(
