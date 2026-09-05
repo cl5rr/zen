@@ -218,7 +218,9 @@ fn pan_moves_content_by_the_view_delta() {
     let (before_min, _) = window_bbox(&mut f).expect("no window found");
 
     let delta = Point::<f64, Logical>::from((40., 24.));
+    // Keyboard panning springs rather than teleporting, so let it arrive before measuring.
     f.zen().layout.camera_pan_by(delta);
+    f.zen_complete_animations();
 
     let (after_min, _) = window_bbox(&mut f).expect("window vanished after panning");
 
@@ -254,7 +256,10 @@ fn pan_does_not_disturb_surface_coordinates() {
             .unwrap_or_else(|| panic!("no surface under {probe:?} at zoom {zoom}"));
 
         let delta = Point::<f64, Logical>::from((-24., 12.));
-        f.zen().layout.camera_pan_by(delta);
+        // The pointer-drag primitive, deliberately. This test is about the transform, not the
+        // gesture: keyboard steps accelerate when repeated, so a second `camera_pan_by` in this
+        // loop would move further than `delta` and the probe below would miss.
+        f.zen().layout.camera_pan_immediate(delta);
 
         let after = delivered_at(&mut f, probe + delta)
             .unwrap_or_else(|| panic!("no surface after panning at zoom {zoom}"));

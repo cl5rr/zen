@@ -636,8 +636,9 @@ binds {
 
     Mod+Home { focus-column-first; }
     Mod+End  { focus-column-last; }
-    Mod+Ctrl+Home { move-column-to-first; }
-    Mod+Ctrl+End  { move-column-to-last; }
+    // Scrolling-layout only, they do nothing on the canvas:
+    // Mod+Ctrl+Home { move-column-to-first; }
+    // Mod+Ctrl+End  { move-column-to-last; }
 
     Mod+Shift+Left  { focus-monitor-left; }
     Mod+Shift+Down  { focus-monitor-down; }
@@ -689,8 +690,10 @@ binds {
     // To avoid scrolling through workspaces really fast, you can use
     // the cooldown-ms property. The bind will be rate-limited to this value.
     // You can set a cooldown on any bind, but it's most useful for the wheel.
-    Mod+WheelScrollDown      cooldown-ms=150 { focus-workspace-down; }
-    Mod+WheelScrollUp        cooldown-ms=150 { focus-workspace-up; }
+    // Zoom the camera about the pointer. This is the gesture you reach for most
+    // on a canvas, so it gets plain Mod+wheel rather than a three-key chord.
+    Mod+WheelScrollDown      cooldown-ms=20 { zoom-out; }
+    Mod+WheelScrollUp        cooldown-ms=20 { zoom-in; }
     Mod+Ctrl+WheelScrollDown cooldown-ms=150 { move-column-to-workspace-down; }
     Mod+Ctrl+WheelScrollUp   cooldown-ms=150 { move-column-to-workspace-up; }
 
@@ -774,10 +777,10 @@ binds {
     // Mod+BracketLeft  { consume-or-expel-window-left; }
     // Mod+BracketRight { consume-or-expel-window-right; }
 
-    // Consume one window from the right to the bottom of the focused column.
-    Mod+Comma  { consume-window-into-column; }
-    // Expel the bottom window from the focused column to the right.
-    Mod+Period { expel-window-from-column; }
+    // Scrolling-layout only, both do nothing on the canvas. The island equivalents
+    // are Mod+BracketLeft / Mod+BracketRight to merge and Mod+Backslash to split.
+    // Mod+Comma  { consume-window-into-column; }
+    // Mod+Period { expel-window-from-column; }
 
     // Cycle through widths set in preset-column-widths.
     Mod+R { switch-preset-column-width; }
@@ -787,7 +790,10 @@ binds {
     Mod+Ctrl+Shift+R { switch-preset-window-height; }
     Mod+Ctrl+R { reset-window-height; }
 
-    Mod+F { maximize-column; }
+    // ZEN's maximize: the camera frames the window, the window is not touched.
+    // No resize, no configure, nothing to restore. Pan away and it is still
+    // exactly where it was.
+    Mod+F { camera-maximize; }
     Mod+Shift+F { fullscreen-window; }
 
     // While maximize-column leaves gaps and borders around the window,
@@ -796,14 +802,14 @@ binds {
     // e.g. by double-clicking on the titlebar.
     Mod+M { maximize-window-to-edges; }
 
-    // Expand the focused column to space not taken up by other fully visible columns.
-    // Makes the column "fill the rest of the space".
-    Mod+Ctrl+F { expand-column-to-available-width; }
+    // Frame every window on the canvas. The way back if you pan somewhere empty.
+    Mod+Ctrl+F { fit-all-windows; }
 
+    // Centres the focused window in the view.
     Mod+C { center-column; }
 
-    // Center all fully visible columns on screen.
-    Mod+Ctrl+C { center-visible-columns; }
+    // Scrolling-layout only, does nothing on the canvas:
+    // Mod+Ctrl+C { center-visible-columns; }
 
     // Finer width adjustments.
     // This command can also:
@@ -827,7 +833,9 @@ binds {
     // Toggle tabbed column display mode.
     // Windows in this column will appear as vertical tabs,
     // rather than stacked on top of each other.
-    Mod+Shift+W { toggle-column-tabbed-display; }
+    // Scrolling-layout only. The island equivalent is tabbed islands, which are
+    // not exposed yet because nothing hides the members under the active one.
+    // Mod+Shift+W { toggle-column-tabbed-display; }
 
     // Actions to switch layouts.
     // Note: if you uncomment these, make sure you do NOT have

@@ -1,7 +1,8 @@
 //! Per-output camera: the viewport transform through which one monitor sees its content.
 //!
-//! zen had no camera. Zoom was a bare `f64` derived from overview progress, applied ad-hoc at
-//! roughly 130 call sites, and it was global -- every output zoomed together, always. ZEN needs
+//! The code this was forked from had no camera. Zoom was a bare `f64` derived from overview
+//! progress, applied ad-hoc at roughly 130 call sites, and it was global -- every output zoomed
+//! together, always. ZEN needs
 //! the opposite: a camera is a property of an *output*, so two monitors can look at different
 //! regions of the same space, and a virtual output can frame something different again.
 //!
@@ -25,6 +26,8 @@
 //!
 //! Nothing is lost: the *feel* of zooming comes from [`Camera::zoom_about`] holding a chosen
 //! point still, not from where the origin happens to sit.
+
+use std::time::Duration;
 
 use smithay::utils::{Logical, Point, Rectangle, Size};
 
@@ -54,6 +57,11 @@ pub struct Camera {
     pan_anim: Option<(Animation, Animation)>,
     zoom_anim: Option<Animation>,
 
+    /// Direction and time of the last keyboard pan step, for acceleration.
+    last_step: Option<(Point<f64, Logical>, Duration)>,
+    /// How much the current run of steps has accelerated. Resets when the run stops.
+    step_accel: f64,
+
     min_zoom: f64,
     max_zoom: f64,
 
@@ -69,6 +77,8 @@ impl Camera {
             view_size,
             pan_anim: None,
             zoom_anim: None,
+            last_step: None,
+            step_accel: 1.,
             min_zoom,
             max_zoom: max_zoom.max(min_zoom),
             clock,
@@ -192,6 +202,55 @@ impl Camera {
     pub fn pan_by_view_delta(&mut self, delta: Point<f64, Logical>) {
         self.pan += delta;
         self.pan_anim = None;
+    }
+
+    /// Where the pan is heading: the animation's target if one is in flight, else where it is.
+    ///
+    /// Stepping has to compose against the *target*, not the current position. Composing against
+    /// the current position means each new step throws away the distance the spring has not
+    /// travelled yet, so holding a key fights its own animation and crawls.
+    fn pan_target(&self) -> Point<f64, Logical> {
+        match &self.pan_anim {
+            Some((x, y)) => Point::from((x.to(), y.to())),
+            None => self.pan,
+        }
+    }
+
+    /// Pans by one keyboard step, springing rather than jumping, and accelerating when held.
+    ///
+    /// The old behaviour was `pan += delta` with the animation cleared: a hard teleport per
+    /// keypress, which is what made panning feel snappy and mechanical. Every ingredient for
+    /// something better already existed and was simply not connected. `animate_pan_to` hands
+    /// the in-flight velocity to the new animation, so retargeting mid-flight is continuous;
+    /// key repeat then arrives as a stream of retargets and reads as one smooth movement.
+    ///
+    /// Acceleration is what makes crossing a large canvas bearable. Steps continuing in the
+    /// same direction within `STEP_RUN_MS` compound geometrically up to `MAX_STEP_ACCEL`, so a
+    /// tap nudges and a held key builds speed. Reversing, or pausing, resets it.
+    pub fn pan_step(&mut self, delta: Point<f64, Logical>, config: zen_config::Animation) {
+        /// How long after a step another one still counts as the same run.
+        const STEP_RUN_MS: u64 = 320;
+        /// Growth per repeated step.
+        const STEP_GROWTH: f64 = 1.22;
+        /// Ceiling, so a held key does not end up in another postcode.
+        const MAX_STEP_ACCEL: f64 = 9.;
+
+        let now = self.clock.now_unadjusted();
+        let continuing = self.last_step.is_some_and(|(prev, at)| {
+            now.saturating_sub(at) <= Duration::from_millis(STEP_RUN_MS)
+                // Same general direction: positive dot product.
+                && prev.x * delta.x + prev.y * delta.y > 0.
+        });
+
+        self.step_accel = if continuing {
+            (self.step_accel * STEP_GROWTH).min(MAX_STEP_ACCEL)
+        } else {
+            1.
+        };
+        self.last_step = Some((delta, now));
+
+        let target = self.pan_target() + delta.upscale(self.step_accel);
+        self.animate_pan_to(target, config);
     }
 
     pub fn animate_pan_to(&mut self, target: Point<f64, Logical>, config: zen_config::Animation) {
@@ -424,6 +483,63 @@ mod tests {
         assert!(
             br.x <= 1280. - 19.9 && br.y <= 720. - 19.9,
             "bottom-right {br:?} should sit inside the padding"
+        );
+    }
+
+    /// Panning used to teleport: `pan += delta` with the animation thrown away, one hard jump
+    /// per keypress. Reported from real use as "why is panning so snappy". A step now retargets
+    /// a spring, and a run of steps accelerates, so a tap nudges and a held key builds speed.
+    #[test]
+    fn a_run_of_pan_steps_accelerates_and_reversing_resets_it() {
+        let mut c = camera();
+        let step = Point::<f64, Logical>::from((-100., 0.));
+
+        let mut covered = Vec::new();
+        let mut prev = c.pan_target().x;
+        for _ in 0..4 {
+            c.pan_step(step, zen_config::Animation::new_off());
+            let now = c.pan_target().x;
+            covered.push(prev - now);
+            prev = now;
+        }
+
+        assert!(
+            (covered[0] - 100.).abs() < 0.001,
+            "the first step of a run is exactly one step, got {}",
+            covered[0]
+        );
+        for w in covered.windows(2) {
+            assert!(
+                w[1] > w[0],
+                "each held step must cover more ground than the last: {covered:?}"
+            );
+        }
+
+        // Turning around is a new run, not a continuation of the old momentum.
+        let before = c.pan_target().x;
+        c.pan_step(Point::from((100., 0.)), zen_config::Animation::new_off());
+        let back = c.pan_target().x - before;
+        assert!(
+            (back - 100.).abs() < 0.001,
+            "reversing must start again at one step, got {back}"
+        );
+    }
+
+    /// Steps compose against where the pan is *heading*, not where it currently is.
+    ///
+    /// Composing against the current position throws away the distance the spring has not
+    /// travelled yet, so a held key fights its own animation and crawls.
+    #[test]
+    fn steps_compose_against_the_target_not_the_current_position() {
+        let mut c = camera();
+        c.animate_pan_to(Point::from((-500., 0.)), zen_config::Animation::new_off());
+        assert!((c.pan_target().x + 500.).abs() < 0.001);
+
+        c.pan_step(Point::from((-100., 0.)), zen_config::Animation::new_off());
+        assert!(
+            (c.pan_target().x + 600.).abs() < 0.001,
+            "expected -600, got {}",
+            c.pan_target().x
         );
     }
 }

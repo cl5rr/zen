@@ -44,6 +44,7 @@ use self::move_grab::MoveGrab;
 use self::pick_color_grab::PickColorGrab;
 use self::pick_window_grab::PickWindowGrab;
 use self::resize_grab::ResizeGrab;
+use self::camera_pan_grab::CameraPanGrab;
 use self::spatial_movement_grab::SpatialMovementGrab;
 #[cfg(feature = "dbus")]
 use crate::dbus::freedesktop_a11y::KbMonBlock;
@@ -57,6 +58,7 @@ use crate::utils::spawning::{spawn, spawn_sh};
 use crate::utils::{CastSessionId, center, get_monotonic_time, output_size, ResizeEdge};
 
 pub mod backend_ext;
+pub mod camera_pan_grab;
 pub mod click_grab;
 pub mod move_grab;
 pub mod pick_color_grab;
@@ -3038,6 +3040,40 @@ impl State {
                     self.zen.queue_redraw_all();
                     return;
                 }
+            }
+
+            // Mod+middle-drag pans the canvas.
+            //
+            // On the canvas this is the primary way to move around, and it takes the button
+            // that already meant "drag the world" in the scrolling layout, so the muscle memory
+            // carries over. The strip keeps its own behaviour below when the canvas is off.
+            if button == Some(MouseButton::Middle)
+                && !pointer.is_grabbed()
+                && mod_down
+                && self.zen.layout.opens_on_canvas()
+                && !is_overview_open
+            {
+                if let Some(output) = self.zen.output_under_cursor() {
+                    self.zen.layout.focus_output(&output);
+                }
+
+                let start_data = PointerGrabStartData {
+                    focus: None,
+                    button: button_code,
+                    location: pointer.current_location(),
+                };
+                let grab = CameraPanGrab::new(start_data);
+                pointer.set_grab(self, grab, serial, Focus::Clear);
+                self.zen
+                    .cursor_manager
+                    .set_cursor_image(CursorImageStatus::Named(CursorIcon::AllScroll));
+
+                // FIXME: granular.
+                self.zen.queue_redraw_all();
+
+                // Deliberately not activating the window under the cursor: grabbing the canvas
+                // is a navigation gesture, not a focus one.
+                return;
             }
 
             if button == Some(MouseButton::Middle) && !pointer.is_grabbed() && mod_down {

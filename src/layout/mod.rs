@@ -4775,7 +4775,21 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     /// Pans the active output's camera by a delta in view pixels.
+    /// Pans by one keyboard step: springs to the new target, and accelerates when held.
     pub fn camera_pan_by(&mut self, delta: Point<f64, Logical>) {
+        let config = self.options.animations.overview_open_close.0;
+        let Some(mon) = self.active_monitor() else {
+            return;
+        };
+        mon.clear_camera_focus();
+        mon.camera.pan_step(delta, config);
+    }
+
+    /// Pans by a raw view delta, with no animation.
+    ///
+    /// This is the pointer-drag path: the canvas has to track the cursor exactly, so anything
+    /// that springs or smooths would feel like dragging something through treacle.
+    pub fn camera_pan_immediate(&mut self, delta: Point<f64, Logical>) {
         let Some(mon) = self.active_monitor() else {
             return;
         };
