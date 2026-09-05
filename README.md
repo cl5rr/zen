@@ -66,6 +66,78 @@ per-output virtual monitors.
 - Tabbed islands. The geometry and hit-testing are correct, but nothing hides
   the members underneath the active one, so no action exposes them.
 
+## Keybinds
+
+`Mod` is the Super/Windows key. Everything here is in
+[`resources/default-config.kdl`](resources/default-config.kdl) and is yours to change.
+
+### Camera
+
+The camera is the point of ZEN, so these matter most.
+
+| Keybind | Action |
+|---|---|
+| `Mod+Shift+M` | Camera-maximize: frame the window without resizing it |
+| `Mod+Home`, `Mod+Ctrl+0` | Go home: back to origin (0, 0) at 1:1 |
+| `Mod+Alt+0` | Frame every window. The way out of being lost |
+| `Mod+Alt+arrows` | Pan the camera |
+| `Mod+middle-drag` | Pan with the mouse |
+| `Mod+Alt+wheel`, `Mod+Ctrl+±` | Zoom about the pointer |
+| `Mod+O` | Overview |
+
+### Windows
+
+| Keybind | Action |
+|---|---|
+| `Mod+arrows`, `Mod+HJKL` | Move focus, nearest window in that direction |
+| `Mod+Ctrl+arrows` | Move the window |
+| `Mod+left-drag` | Move the window with the mouse |
+| `Mod+X`, or drag an edge | Resize |
+| `Mod+F` | Fullscreen |
+| `Mod+Q` | Close |
+| `Mod+Shift+arrows` | Move focus to another monitor |
+
+### Islands
+
+Clusters that tile internally and move as one.
+
+| Keybind | Action |
+|---|---|
+| `Mod+[`, `Mod+]` | Merge the window into the island left/right of it |
+| `Mod+Shift+[`, `Mod+Shift+]` | Merge into the island above/below |
+| `Mod+\` | Pull the window out into its own island |
+| `Mod+Alt+HJKL` | Jump between islands, skipping their members |
+
+### Apps and the desktop
+
+| Keybind | Action |
+|---|---|
+| `Mod+Space`, or tap `Mod` | App launcher |
+| `Mod+T` | Terminal |
+| `Mod+W` | Browser |
+| `Mod+Shift+W` | Pick a wallpaper |
+| `Mod+Ctrl+W` | Next wallpaper |
+| `Print` | Screenshot |
+| `Mod+Shift+/` | Show every binding, live from your config |
+
+## Wallpapers
+
+Drop images into `~/.config/zen/wallpapers`. That folder is the entire
+configuration: anything in it shows up in the picker on `Mod+Shift+W`, and
+`Mod+Ctrl+W` cycles. The choice survives a reboot.
+
+`zen-wallpaper` also works from a shell:
+
+```sh
+zen-wallpaper            # pick one
+zen-wallpaper next       # cycle
+zen-wallpaper random
+zen-wallpaper set ~/pictures/thing.jpg
+```
+
+Needs `swaybg`, which `./setup.sh` offers to install. A wallpaper ships with ZEN
+and is seeded into that folder on first install.
+
 ## Building
 
 ```sh

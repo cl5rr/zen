@@ -27,10 +27,23 @@ use crate::zen_render_elements;
 /// The mark, baked in so the animation cannot fail because a file moved.
 static THUMBNAIL_PNG: &[u8] = include_bytes!("../../resources/zen-thumbnail.png");
 
-/// How long the whole reveal takes.
-const DURATION_MS: u64 = 900;
+/// How long the cover sits still, mark showing, before it parts.
+///
+/// Without this the reveal begins the instant the compositor is up, which is while the machine
+/// is still busy starting a session. You miss it, and what you do catch reads as a flicker
+/// rather than an intro. Landing, holding, then opening is the whole difference.
+const HOLD_MS: u64 = 1000;
 
-/// Fraction of the animation over which the mark fades.
+/// How long the parting itself takes.
+const PART_MS: u64 = 900;
+
+/// Total run: hold, then part.
+const TOTAL_MS: u64 = HOLD_MS + PART_MS;
+
+/// Where in the total run the parting begins.
+const HOLD_FRACTION: f64 = HOLD_MS as f64 / TOTAL_MS as f64;
+
+/// Fraction of the *parting* over which the mark fades.
 ///
 /// Shorter than the panel travel, so the mark is gone before the halves finish leaving rather
 /// than riding them off the screen, which looks like it was pushed rather than dissolved.
@@ -59,14 +72,10 @@ pub struct Welcome {
 impl Welcome {
     pub fn new(clock: Clock, color: [f32; 4]) -> Self {
         Self {
-            anim: Animation::ease(
-                clock,
-                0.,
-                1.,
-                0.,
-                DURATION_MS,
-                crate::animation::Curve::EaseOutCubic,
-            ),
+            // Linear over the whole run, because the hold and the parting need different
+            // shapes: the hold must be perfectly still, and easing the total would creep the
+            // panels apart during it. `render` remaps this and applies the ease itself.
+            anim: Animation::ease(clock, 0., 1., 0., TOTAL_MS, crate::animation::Curve::Linear),
             mark: RefCell::new(None),
             mark_loaded: RefCell::new(false),
             panels: RefCell::new((
@@ -95,7 +104,17 @@ impl Welcome {
             return;
         }
 
-        let progress = self.anim.clamped_value().clamp(0., 1.);
+        // Remap the linear run into "hold, then part". Progress stays at exactly 0 for the
+        // hold, so the cover is genuinely still rather than drifting imperceptibly.
+        let raw = self.anim.clamped_value().clamp(0., 1.);
+        let progress = if raw <= HOLD_FRACTION {
+            0.
+        } else {
+            let t = ((raw - HOLD_FRACTION) / (1. - HOLD_FRACTION)).clamp(0., 1.);
+            // Ease-out cubic, applied here rather than by the Animation. See `new`.
+            1. - (1. - t).powi(3)
+        };
+
         let half = view_size.h / 2.;
 
         // Each half travels its own height, so at progress 1 the screen is fully uncovered.

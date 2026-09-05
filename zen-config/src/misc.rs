@@ -289,7 +289,14 @@ impl Default for Welcome {
     fn default() -> Self {
         Self {
             off: false,
-            color: Color::new_unpremul(0.96, 0.96, 0.97, 1.),
+            // Near-black, because the mark is *light* ink on transparency.
+            //
+            // This was near-white until the pixels were actually measured: of the visible ink
+            // in zen-thumbnail.png, 61.6% is above luminance 175 and only 34.1% below 80, mean
+            // 163/255. On a white cover most of the mark and the whole wordmark disappeared,
+            // and the parting seam was invisible too, so the animation read as nothing
+            // happening at all.
+            color: Color::new_unpremul(0.043, 0.047, 0.055, 1.),
         }
     }
 }

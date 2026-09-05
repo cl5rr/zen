@@ -544,6 +544,9 @@ install_zen() {
 
     $SUDO install -Dm755 "$bin"                     "$PREFIX/bin/zen"
     $SUDO install -Dm755 resources/zen-session      "$PREFIX/bin/zen-session"
+    $SUDO install -Dm755 resources/zen-wallpaper    "$PREFIX/bin/zen-wallpaper"
+    $SUDO install -Dm644 resources/default-wallpaper.jpg \
+                                                    "$PREFIX/share/zen/default-wallpaper.jpg"
     $SUDO install -Dm644 resources/zen.desktop      "$PREFIX/share/wayland-sessions/zen.desktop"
     $SUDO install -Dm644 resources/zen-portals.conf "$PREFIX/share/xdg-desktop-portal/zen-portals.conf"
     $SUDO install -Dm644 resources/zen.png          "$PREFIX/share/pixmaps/zen.png"
@@ -828,6 +831,43 @@ write_user_config() {
     cp resources/default-config.kdl "$dst"
     ok "wrote $dst"
     dim "it is heavily commented, and reloads live while ZEN is running"
+
+    seed_wallpapers
+    theme_launcher
+}
+
+# Themes the app launcher, unless you already have a config of your own.
+#
+# fuzzel's stock look is a grey box that reads as an unstyled dialog on a dark
+# canvas. This is the single cheapest thing that stops ZEN looking half-dressed.
+theme_launcher() {
+    local dir="${XDG_CONFIG_HOME:-$HOME/.config}/fuzzel"
+    local dst="$dir/fuzzel.ini"
+
+    if [ -f "$dst" ]; then
+        dim "you already have a fuzzel config, left alone: $dst"
+        return 0
+    fi
+    mkdir -p "$dir"
+    cp resources/fuzzel.ini "$dst"
+    ok "themed the app launcher: $dst"
+}
+
+# Puts the shipped wallpaper where the picker looks, so a fresh install has one.
+#
+# Copied rather than symlinked: it lands in a folder the user is invited to fill with
+# their own images, and a symlink into /usr/share would be a surprise to delete.
+seed_wallpapers() {
+    local dir="${XDG_CONFIG_HOME:-$HOME/.config}/zen/wallpapers"
+    mkdir -p "$dir"
+
+    if [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
+        cp resources/default-wallpaper.jpg "$dir/" 2>/dev/null && \
+            ok "wallpaper folder seeded: $dir"
+        dim "drop images in there; ${C_BOLD}Mod+Shift+W${C_RESET} picks between them"
+    else
+        dim "wallpaper folder already has images, left alone: $dir"
+    fi
 }
 
 install_greeter() {

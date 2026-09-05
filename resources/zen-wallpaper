@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+#
+# ZEN's wallpaper: drop images in a folder, pick one, done.
+#
+#   zen-wallpaper                 pick one, with a preview-less fuzzel menu
+#   zen-wallpaper next            cycle to the next image
+#   zen-wallpaper prev            cycle to the previous one
+#   zen-wallpaper random          pick at random
+#   zen-wallpaper set <path>      set a specific file
+#   zen-wallpaper restore         re-apply the last choice (run at startup)
+#   zen-wallpaper dir             print the wallpaper folder
+#
+# There is no daemon and no config format. The folder IS the config: anything you
+# drop in it shows up next time you open the picker. The current choice is one
+# line in a state file, so it survives a reboot without anything watching it.
+
+set -u
+
+DIR="${ZEN_WALLPAPER_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/zen/wallpapers}"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/zen"
+STATE="$STATE_DIR/wallpaper"
+
+mkdir -p "$DIR" "$STATE_DIR"
+
+die() { printf 'zen-wallpaper: %s\n' "$*" >&2; exit 1; }
+
+# Every image in the folder, sorted, one per line.
+list() {
+    find -L "$DIR" -maxdepth 1 -type f \
+        \( -iname '*.jpg'  -o -iname '*.jpeg' -o -iname '*.png' \
+        -o -iname '*.webp' -o -iname '*.bmp'  -o -iname '*.gif' \) \
+        2>/dev/null | sort
+}
+
+# swaybg is the renderer. One instance at a time: start the new one, then stop the
+# old, so there is no black frame in between.
+apply() {
+    local img="$1"
+    [ -f "$img" ] || die "no such file: $img"
+
+    command -v swaybg >/dev/null 2>&1 || die "swaybg is not installed (pacman -S swaybg)"
+
+    local old
+    old=$(pgrep -x swaybg 2>/dev/null | tr '\n' ' ')
+
+    swaybg --mode fill --image "$img" >/dev/null 2>&1 &
+    local new=$!
+
+    # Give the new one a moment to put up its first frame before killing the old.
+    sleep 0.35
+    if kill -0 "$new" 2>/dev/null; then
+        [ -n "$old" ] && kill $old 2>/dev/null
+        printf '%s\n' "$img" > "$STATE"
+    else
+        die "swaybg failed to start for $img"
+    fi
+}
+
+current() { [ -f "$STATE" ] && cat "$STATE" || true; }
+
+# Move n places through the list, wrapping.
+cycle() {
+    local step="$1" images n i cur idx
+    mapfile -t images < <(list)
+    n=${#images[@]}
+    [ "$n" -gt 0 ] || die "no images in $DIR"
+
+    cur=$(current)
+    idx=-1
+    for i in "${!images[@]}"; do
+        [ "${images[$i]}" = "$cur" ] && idx=$i && break
+    done
+
+    if [ "$idx" -lt 0 ]; then
+        idx=0
+    else
+        idx=$(( (idx + step + n) % n ))
+    fi
+    apply "${images[$idx]}"
+}
+
+pick() {
+    local images menu choice
+    mapfile -t images < <(list)
+    [ "${#images[@]}" -gt 0 ] || die "no images in $DIR - drop some in and try again"
+
+    if command -v fuzzel >/dev/null 2>&1; then
+        # Show bare filenames, map back to full paths.
+        choice=$(printf '%s\n' "${images[@]}" | xargs -r -n1 basename \
+                 | fuzzel --dmenu --prompt 'wallpaper: ' 2>/dev/null)
+        [ -n "$choice" ] || exit 0
+        apply "$DIR/$choice"
+    else
+        # No launcher installed: fall back to cycling rather than doing nothing.
+        cycle 1
+    fi
+}
+
+case "${1:-pick}" in
+    pick)    pick ;;
+    next)    cycle 1 ;;
+    prev)    cycle -1 ;;
+    random)  mapfile -t images < <(list)
+             [ "${#images[@]}" -gt 0 ] || die "no images in $DIR"
+             apply "${images[$((RANDOM % ${#images[@]}))]}" ;;
+    set)     [ $# -ge 2 ] || die "set needs a path"
+             apply "$2" ;;
+    restore) img=$(current)
+             if [ -n "$img" ] && [ -f "$img" ]; then
+                 apply "$img"
+             else
+                 # First run, or the remembered file went away: take the first one.
+                 mapfile -t images < <(list)
+                 [ "${#images[@]}" -gt 0 ] && apply "${images[0]}"
+             fi ;;
+    dir)     printf '%s\n' "$DIR" ;;
+    list)    list ;;
+    -h|--help|help)
+             sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *)       die "unknown command: $1 (try --help)" ;;
+esac
