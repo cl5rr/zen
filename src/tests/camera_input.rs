@@ -218,8 +218,9 @@ fn pan_moves_content_by_the_view_delta() {
     let (before_min, _) = window_bbox(&mut f).expect("no window found");
 
     let delta = Point::<f64, Logical>::from((40., 24.));
-    // Keyboard panning springs rather than teleporting, so let it arrive before measuring.
-    f.zen().layout.camera_pan_by(delta);
+    // The exact-delta primitive. `camera_pan_by` is a held-key velocity now: it ignores the
+    // magnitude entirely and covers ground per frame, so it cannot express "move by this much".
+    f.zen().layout.camera_pan_immediate(delta);
     f.zen_complete_animations();
 
     let (after_min, _) = window_bbox(&mut f).expect("window vanished after panning");

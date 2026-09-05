@@ -221,12 +221,12 @@ fn you_can_pan_away_from_a_camera_maximized_window() {
     f.zen_complete_animations();
     assert!(window_visible(&mut f), "window should be framed and visible");
 
-    // Pan far enough that the framed window leaves the viewport entirely.
-    for _ in 0..40 {
-        f.zen()
-            .layout
-            .camera_pan_by(Point::from((-400., 0.)));
-    }
+    // Pan far enough that the framed window leaves the viewport entirely. The exact-delta
+    // primitive, because `camera_pan_by` is a held-key velocity: it ignores magnitude and
+    // covers ground per frame, so a loop of calls with no frames between them moves nothing.
+    f.zen()
+        .layout
+        .camera_pan_immediate(Point::from((-16000., 0.)));
     f.zen_complete_animations();
 
     assert!(
@@ -323,7 +323,7 @@ fn manual_pan_breaks_the_follow() {
 
     // Take the camera by hand.
     let delta = Point::<f64, Logical>::from((-120., 60.));
-    f.zen().layout.camera_pan_by(delta);
+    f.zen().layout.camera_pan_immediate(delta);
     f.zen_complete_animations();
     let pan_after_manual = f.zen().layout.camera_pan();
 

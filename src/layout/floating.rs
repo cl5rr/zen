@@ -244,11 +244,6 @@ impl Data {
     }
 
     #[cfg(test)]
-    pub fn center(&self) -> Point<f64, Logical> {
-        self.logical_pos + self.size.downscale(2.)
-    }
-
-    #[cfg(test)]
     fn verify_invariants(&self) {
         let mut temp = *self;
         temp.recompute_logical_pos();

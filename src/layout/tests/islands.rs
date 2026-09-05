@@ -311,7 +311,7 @@ fn a_new_window_opens_where_the_camera_is_looking() {
     let first = render_pos(&layout, 1);
 
     // Pan the view left, which moves the canvas point under the viewport centre to the right.
-    layout.camera_pan_by(Point::from((-600., 0.)));
+    layout.camera_pan_immediate(Point::from((-600., 0.)));
     check_ops_on_layout(&mut layout, [settle(), floating(2), settle()]);
 
     let ws = layout.active_workspace().unwrap();
@@ -369,7 +369,7 @@ fn panning_away_drops_the_join() {
     check_ops_on_layout(&mut layout, [settle()]);
     assert!(layout.spawn_island_target().is_some());
 
-    layout.camera_pan_by(Point::from((-600., 0.)));
+    layout.camera_pan_immediate(Point::from((-600., 0.)));
     check_ops_on_layout(&mut layout, [settle()]);
 
     assert_eq!(layout.spawn_island_target(), None);
@@ -550,7 +550,7 @@ fn panning_to_negative_space_at_zoom_one_keeps_it_drawn() {
 
     layout.set_camera_zoom(1.);
     // Bring content at x = -5000 back into view.
-    layout.camera_pan_by(Point::from((5300., 0.)));
+    layout.camera_pan_immediate(Point::from((5300., 0.)));
     check_ops_on_layout(&mut layout, [settle()]);
 
     assert_eq!(

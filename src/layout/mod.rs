@@ -4775,14 +4775,16 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     /// Pans the active output's camera by a delta in view pixels.
-    /// Pans by one keyboard step: springs to the new target, and accelerates when held.
+    /// Pushes the camera in a direction for as long as the key is held.
+    ///
+    /// Only the sign of `delta` matters; speed belongs to the camera, which ramps it up while
+    /// the key repeats and coasts to a stop when it stops.
     pub fn camera_pan_by(&mut self, delta: Point<f64, Logical>) {
-        let config = self.options.animations.overview_open_close.0;
         let Some(mon) = self.active_monitor() else {
             return;
         };
         mon.clear_camera_focus();
-        mon.camera.pan_step(delta, config);
+        mon.camera.pan_drive(delta);
     }
 
     /// Pans by a raw view delta, with no animation.

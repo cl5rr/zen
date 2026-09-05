@@ -43,6 +43,35 @@ const ZOOM_RUBBER_BAND: RubberBand = RubberBand {
     limit: 0.3,
 };
 
+/// A held direction the camera is being pushed in.
+///
+/// Keyboard panning is a *velocity*, not a series of jumps. A key held down should start the
+/// canvas moving gently and wind it up, the way pushing something heavy works, and let it coast
+/// briefly when released. Discrete steps cannot express any of that: they arrive at whatever
+/// rate the keyboard repeats, so the motion is the key repeat rate wearing a costume.
+#[derive(Debug, Clone, Copy)]
+struct PanDrive {
+    /// Unit direction in view space.
+    dir: Point<f64, Logical>,
+    /// Current speed, view pixels per second.
+    speed: f64,
+    /// While the clock is before this, the key is still considered held. Each repeat pushes it
+    /// out; when it lapses, the drive coasts to a stop instead of stopping dead.
+    held_until: Duration,
+}
+
+/// Speed a pan starts at. Low enough that a tap nudges rather than lurches.
+const PAN_START_SPEED: f64 = 260.;
+/// Ceiling, so crossing a large canvas stays controllable.
+const PAN_MAX_SPEED: f64 = 3400.;
+/// How hard the drive winds up, view pixels per second per second.
+const PAN_ACCEL: f64 = 2600.;
+/// How hard it winds down once the key is released.
+const PAN_DECEL: f64 = 5200.;
+/// A repeat later than this means the key was released. Comfortably longer than any key repeat
+/// interval, so a held key never stutters into a coast and back.
+const PAN_HELD_GRACE_MS: u64 = 180;
+
 #[derive(Debug)]
 pub struct Camera {
     /// Where content-space `(0, 0)` lands in view space.
@@ -57,10 +86,10 @@ pub struct Camera {
     pan_anim: Option<(Animation, Animation)>,
     zoom_anim: Option<Animation>,
 
-    /// Direction and time of the last keyboard pan step, for acceleration.
-    last_step: Option<(Point<f64, Logical>, Duration)>,
-    /// How much the current run of steps has accelerated. Resets when the run stops.
-    step_accel: f64,
+    /// Continuous keyboard pan: a direction being driven, and how fast it is going.
+    drive: Option<PanDrive>,
+    /// Clock reading at the last `advance_animations`, so drive can integrate over real time.
+    last_advance: Option<Duration>,
 
     min_zoom: f64,
     max_zoom: f64,
@@ -77,8 +106,8 @@ impl Camera {
             view_size,
             pan_anim: None,
             zoom_anim: None,
-            last_step: None,
-            step_accel: 1.,
+            drive: None,
+            last_advance: None,
             min_zoom,
             max_zoom: max_zoom.max(min_zoom),
             clock,
@@ -204,53 +233,65 @@ impl Camera {
         self.pan_anim = None;
     }
 
-    /// Where the pan is heading: the animation's target if one is in flight, else where it is.
+    /// Pushes the camera in a direction, continuously, for as long as the key is held.
     ///
-    /// Stepping has to compose against the *target*, not the current position. Composing against
-    /// the current position means each new step throws away the distance the spring has not
-    /// travelled yet, so holding a key fights its own animation and crawls.
-    fn pan_target(&self) -> Point<f64, Logical> {
-        match &self.pan_anim {
-            Some((x, y)) => Point::from((x.to(), y.to())),
-            None => self.pan,
+    /// Call this on every key repeat. The direction only needs a sign per axis; magnitude is
+    /// ignored, because speed is the drive's business, not the caller's.
+    ///
+    /// What this replaces, twice over. First it was `pan += delta` with the animation cleared,
+    /// a hard teleport per keypress. Then it was a spring retargeted per keypress, which was
+    /// smoother but still moved in discrete shoves at whatever rate the keyboard repeated. A
+    /// held key should simply move the canvas: slowly at first, winding up while you hold it,
+    /// coasting to a stop when you let go. That is a velocity, so this models one.
+    pub fn pan_drive(&mut self, dir: Point<f64, Logical>) {
+        let len = (dir.x * dir.x + dir.y * dir.y).sqrt();
+        if len <= f64::EPSILON {
+            return;
         }
+        let dir = Point::from((dir.x / len, dir.y / len));
+        let held_until = self.clock.now_unadjusted() + Duration::from_millis(PAN_HELD_GRACE_MS);
+
+        // Keep the speed we already built up when the push continues in the same direction;
+        // reversing starts again from rest, so a change of mind does not fling the canvas.
+        let speed = match self.drive {
+            Some(d) if d.dir.x * dir.x + d.dir.y * dir.y > 0. => d.speed,
+            _ => PAN_START_SPEED,
+        };
+
+        // Establish a time baseline if there is none, or the first frame of the first pan
+        // measures dt against nothing and silently covers no ground.
+        self.last_advance.get_or_insert(self.clock.now_unadjusted());
+
+        // A keyboard push takes the camera by hand, so any spring in flight stops here.
+        self.pan_anim = None;
+        self.drive = Some(PanDrive {
+            dir,
+            speed,
+            held_until,
+        });
     }
 
-    /// Pans by one keyboard step, springing rather than jumping, and accelerating when held.
-    ///
-    /// The old behaviour was `pan += delta` with the animation cleared: a hard teleport per
-    /// keypress, which is what made panning feel snappy and mechanical. Every ingredient for
-    /// something better already existed and was simply not connected. `animate_pan_to` hands
-    /// the in-flight velocity to the new animation, so retargeting mid-flight is continuous;
-    /// key repeat then arrives as a stream of retargets and reads as one smooth movement.
-    ///
-    /// Acceleration is what makes crossing a large canvas bearable. Steps continuing in the
-    /// same direction within `STEP_RUN_MS` compound geometrically up to `MAX_STEP_ACCEL`, so a
-    /// tap nudges and a held key builds speed. Reversing, or pausing, resets it.
-    pub fn pan_step(&mut self, delta: Point<f64, Logical>, config: zen_config::Animation) {
-        /// How long after a step another one still counts as the same run.
-        const STEP_RUN_MS: u64 = 320;
-        /// Growth per repeated step.
-        const STEP_GROWTH: f64 = 1.22;
-        /// Ceiling, so a held key does not end up in another postcode.
-        const MAX_STEP_ACCEL: f64 = 9.;
-
-        let now = self.clock.now_unadjusted();
-        let continuing = self.last_step.is_some_and(|(prev, at)| {
-            now.saturating_sub(at) <= Duration::from_millis(STEP_RUN_MS)
-                // Same general direction: positive dot product.
-                && prev.x * delta.x + prev.y * delta.y > 0.
-        });
-
-        self.step_accel = if continuing {
-            (self.step_accel * STEP_GROWTH).min(MAX_STEP_ACCEL)
-        } else {
-            1.
+    /// Integrates the keyboard drive. Returns true while it still has work to do.
+    fn advance_drive(&mut self, dt: f64) -> bool {
+        let Some(mut d) = self.drive else {
+            return false;
         };
-        self.last_step = Some((delta, now));
 
-        let target = self.pan_target() + delta.upscale(self.step_accel);
-        self.animate_pan_to(target, config);
+        let held = self.clock.now_unadjusted() < d.held_until;
+        d.speed = if held {
+            (d.speed + PAN_ACCEL * dt).min(PAN_MAX_SPEED)
+        } else {
+            d.speed - PAN_DECEL * dt
+        };
+
+        if d.speed <= 0. {
+            self.drive = None;
+            return false;
+        }
+
+        self.pan += d.dir.upscale(d.speed * dt);
+        self.drive = Some(d);
+        true
     }
 
     pub fn animate_pan_to(&mut self, target: Point<f64, Logical>, config: zen_config::Animation) {
@@ -298,11 +339,25 @@ impl Camera {
     // -------------------------------------------------------------- animation ------
 
     pub fn is_animating(&self) -> bool {
-        self.zoom_anim.is_some() || self.pan_anim.is_some()
+        // The drive counts: while a key is held the camera is moving every frame, and a caller
+        // that thinks the camera is at rest would stop redrawing and freeze the pan.
+        self.zoom_anim.is_some() || self.pan_anim.is_some() || self.drive.is_some()
     }
 
     /// Samples in-flight animations and retires finished ones.
     pub fn advance_animations(&mut self) {
+        // Real elapsed time, clamped: a stalled frame must not teleport the canvas.
+        let now = self.clock.now_unadjusted();
+        let dt = self
+            .last_advance
+            .map_or(0., |prev| now.saturating_sub(prev).as_secs_f64())
+            .clamp(0., 0.05);
+        self.last_advance = Some(now);
+
+        if dt > 0. {
+            self.advance_drive(dt);
+        }
+
         if let Some(anim) = &self.zoom_anim {
             self.zoom = anim.value();
             if anim.is_done() {
@@ -353,6 +408,13 @@ mod tests {
 
     fn approx(a: Point<f64, Logical>, b: Point<f64, Logical>, tol: f64) -> bool {
         (a.x - b.x).abs() < tol && (a.y - b.y).abs() < tol
+    }
+
+    /// Moves the clock on by `ms` and lets the camera integrate, the way a frame would.
+    fn advance(c: &mut Camera, ms: u64) {
+        let now = c.clock.now_unadjusted() + Duration::from_millis(ms);
+        c.clock.set_unadjusted(now);
+        c.advance_animations();
     }
 
     /// A fresh camera must contribute nothing, or it would shift every existing layout.
@@ -486,60 +548,90 @@ mod tests {
         );
     }
 
-    /// Panning used to teleport: `pan += delta` with the animation thrown away, one hard jump
-    /// per keypress. Reported from real use as "why is panning so snappy". A step now retargets
-    /// a spring, and a run of steps accelerates, so a tap nudges and a held key builds speed.
+    /// Panning used to teleport: `pan += delta` per keypress. Then it was a spring retargeted
+    /// per keypress, which still moved in discrete shoves at the keyboard repeat rate. It is now
+    /// a velocity: held means moving, and holding longer means moving faster.
     #[test]
-    fn a_run_of_pan_steps_accelerates_and_reversing_resets_it() {
+    fn a_held_pan_starts_slow_and_winds_up() {
         let mut c = camera();
-        let step = Point::<f64, Logical>::from((-100., 0.));
+        let left = Point::<f64, Logical>::from((-1., 0.));
 
+        // Each "frame" is 16ms of held key, the way key repeat plus redraw actually arrive.
         let mut covered = Vec::new();
-        let mut prev = c.pan_target().x;
-        for _ in 0..4 {
-            c.pan_step(step, zen_config::Animation::new_off());
-            let now = c.pan_target().x;
+        let mut prev = c.pan_offset_view().x;
+        for _ in 0..6 {
+            c.pan_drive(left);
+            advance(&mut c, 16);
+            let now = c.pan_offset_view().x;
             covered.push(prev - now);
             prev = now;
         }
 
         assert!(
-            (covered[0] - 100.).abs() < 0.001,
-            "the first step of a run is exactly one step, got {}",
-            covered[0]
+            covered.iter().all(|d| *d > 0.),
+            "a held key must move the canvas every frame, got {covered:?}"
         );
         for w in covered.windows(2) {
             assert!(
                 w[1] > w[0],
-                "each held step must cover more ground than the last: {covered:?}"
+                "each frame of a held key must cover more than the last: {covered:?}"
             );
         }
+    }
 
-        // Turning around is a new run, not a continuation of the old momentum.
-        let before = c.pan_target().x;
-        c.pan_step(Point::from((100., 0.)), zen_config::Animation::new_off());
-        let back = c.pan_target().x - before;
+    /// Letting go coasts to a stop rather than stopping dead, and then stays stopped.
+    #[test]
+    fn releasing_coasts_to_a_stop() {
+        let mut c = camera();
+        for _ in 0..8 {
+            c.pan_drive(Point::from((-1., 0.)));
+            advance(&mut c, 16);
+        }
+
+        // Stop pushing. The grace window lapses, then it decelerates.
+        let mut moved_after_release = 0.;
+        let mut prev = c.pan_offset_view().x;
+        for _ in 0..60 {
+            advance(&mut c, 16);
+            let now = c.pan_offset_view().x;
+            moved_after_release += prev - now;
+            prev = now;
+        }
         assert!(
-            (back - 100.).abs() < 0.001,
-            "reversing must start again at one step, got {back}"
+            moved_after_release > 0.,
+            "releasing should coast, not stop dead"
+        );
+
+        let settled = c.pan_offset_view().x;
+        for _ in 0..30 {
+            advance(&mut c, 16);
+        }
+        assert!(
+            (c.pan_offset_view().x - settled).abs() < 0.001,
+            "once stopped it must stay stopped, drifted to {}",
+            c.pan_offset_view().x
         );
     }
 
-    /// Steps compose against where the pan is *heading*, not where it currently is.
-    ///
-    /// Composing against the current position throws away the distance the spring has not
-    /// travelled yet, so a held key fights its own animation and crawls.
+    /// Turning around starts again from rest, so a change of mind does not fling the canvas.
     #[test]
-    fn steps_compose_against_the_target_not_the_current_position() {
+    fn reversing_starts_again_from_rest() {
         let mut c = camera();
-        c.animate_pan_to(Point::from((-500., 0.)), zen_config::Animation::new_off());
-        assert!((c.pan_target().x + 500.).abs() < 0.001);
+        for _ in 0..10 {
+            c.pan_drive(Point::from((-1., 0.)));
+            advance(&mut c, 16);
+        }
 
-        c.pan_step(Point::from((-100., 0.)), zen_config::Animation::new_off());
+        let before = c.pan_offset_view().x;
+        c.pan_drive(Point::from((1., 0.)));
+        advance(&mut c, 16);
+        let first_back = c.pan_offset_view().x - before;
+
+        // One frame at the starting speed, not at the speed built up going the other way.
+        let expected = PAN_START_SPEED * 0.016;
         assert!(
-            (c.pan_target().x + 600.).abs() < 0.001,
-            "expected -600, got {}",
-            c.pan_target().x
+            first_back < expected * 2.,
+            "reversing carried momentum: moved {first_back}, expected about {expected}"
         );
     }
 }
