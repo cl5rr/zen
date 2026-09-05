@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use zen_config::CornerRadius;
 use smithay::backend::renderer::gles::GlesRenderer;
-use smithay::utils::{Logical, Point, Rectangle, Scale};
+use smithay::utils::{Logical, Point, Rectangle, Scale, Size};
 use smithay::wayland::compositor::{with_states, SurfaceData};
 use wayland_server::protocol::wl_surface::WlSurface;
 
@@ -10,7 +10,9 @@ use crate::handlers::background_effect::get_cached_blur_region;
 use crate::zen_render_elements;
 use crate::render_helpers::blur::BlurOptions;
 use crate::render_helpers::damage::ExtraDamage;
-use crate::render_helpers::framebuffer_effect::{FramebufferEffect, FramebufferEffectElement};
+use crate::render_helpers::framebuffer_effect::{
+    FramebufferEffect, FramebufferEffectElement, GlassParams,
+};
 use crate::render_helpers::xray::{XrayElement, XrayPos};
 use crate::render_helpers::RenderCtx;
 use crate::utils::region::TransformedRegion;
@@ -22,12 +24,14 @@ pub struct BackgroundEffect {
     damage: ExtraDamage,
     corner_radius: CornerRadius,
     blur_config: zen_config::Blur,
+    glass_config: zen_config::Glass,
     options: Options,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Options {
     pub blur: bool,
+    pub glass: bool,
     pub xray: bool,
     pub noise: Option<f64>,
     pub saturation: Option<f64>,
@@ -37,6 +41,7 @@ impl Options {
     fn is_visible(&self) -> bool {
         self.xray
             || self.blur
+            || self.glass
             || self.noise.is_some_and(|x| x > 0.)
             || self.saturation.is_some_and(|x| x != 1.)
     }
@@ -75,6 +80,7 @@ impl BackgroundEffect {
             damage: ExtraDamage::new(),
             corner_radius: CornerRadius::default(),
             blur_config: zen_config::Blur::default(),
+            glass_config: zen_config::Glass::default(),
             options: Options::default(),
         }
     }
@@ -84,12 +90,13 @@ impl BackgroundEffect {
         self.nonxray.damage();
     }
 
-    pub fn update_config(&mut self, config: zen_config::Blur) {
-        if self.blur_config == config {
+    pub fn update_config(&mut self, config: zen_config::Blur, glass: zen_config::Glass) {
+        if self.blur_config == config && self.glass_config == glass {
             return;
         }
 
         self.blur_config = config;
+        self.glass_config = glass;
         self.damage.damage_all();
         self.nonxray.damage();
     }
@@ -108,6 +115,7 @@ impl BackgroundEffect {
 
         let mut options = Options {
             blur,
+            glass: effect.glass == Some(true) && !self.glass_config.off,
             xray: effect.xray == Some(true),
             noise: effect.noise,
             saturation: effect.saturation,
@@ -148,6 +156,25 @@ impl BackgroundEffect {
         }
         params.fit_clip_radius();
 
+        // glass
+        //
+        // The capture blits exactly `geometry`, but refraction samples OUTSIDE it at the rim:
+        // that is what bending the backdrop means. Without a margin those samples hit the edge
+        // of the texture and smear clamp-to-edge pixels around the border. So the captured
+        // region grows by the refraction distance while `clip` stays the true window rect, and
+        // the existing uniform maths, which already maps crop to clip_geo separately from
+        // geometry, handles the difference with no further help.
+        let glass = self.options.glass.then(|| GlassParams::from(self.glass_config));
+        if let Some(g) = &glass {
+            let margin = f64::from(g.refraction).max(0.).ceil();
+            if margin > 0. {
+                params.geometry = Rectangle::new(
+                    params.geometry.loc - Point::from((margin, margin)),
+                    params.geometry.size + Size::from((margin * 2., margin * 2.)),
+                );
+            }
+        }
+
         let damage = self.damage.render(params.geometry);
 
         let blur = self.options.blur && !self.blur_config.off;
@@ -177,9 +204,9 @@ impl BackgroundEffect {
                 &mut |elem| push(elem.into()),
             );
         } else {
-            let elem = self
-                .nonxray
-                .render(ns, params, blur_options, noise, saturation);
+            let elem =
+                self.nonxray
+                    .render(ns, params, blur_options, noise, saturation, glass);
             push(elem.into());
         }
     }
@@ -261,6 +288,7 @@ pub fn render_for_tile(
     surface_off: Point<f64, Logical>,
     surface_anim_scale: Scale<f64>,
     blur_config: zen_config::Blur,
+    glass_config: zen_config::Glass,
     radius: CornerRadius,
     effect: zen_config::BackgroundEffect,
     should_block_out: bool,
@@ -274,7 +302,7 @@ pub fn render_for_tile(
         let blur_region = get_cached_blur_region(states);
         let has_blur_region = blur_region.as_ref().is_some_and(|r| !r.is_empty());
 
-        background_effect.update_config(blur_config);
+        background_effect.update_config(blur_config, glass_config);
         background_effect.update_render_elements(radius, effect, has_blur_region);
 
         if !background_effect.is_visible() {

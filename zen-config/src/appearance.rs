@@ -1044,6 +1044,8 @@ pub struct BackgroundEffectRule {
     #[knuffel(child, unwrap(argument))]
     pub blur: Option<bool>,
     #[knuffel(child, unwrap(argument))]
+    pub glass: Option<bool>,
+    #[knuffel(child, unwrap(argument))]
     pub noise: Option<FloatOrInt<0, 1000>>,
     #[knuffel(child, unwrap(argument))]
     pub saturation: Option<FloatOrInt<0, 1000>>,
@@ -1055,13 +1057,15 @@ pub struct BackgroundEffect {
 
     pub blur: Option<bool>,
 
+    pub glass: Option<bool>,
+
     pub noise: Option<f64>,
     pub saturation: Option<f64>,
 }
 
 impl MergeWith<BackgroundEffectRule> for BackgroundEffect {
     fn merge_with(&mut self, part: &BackgroundEffectRule) {
-        merge_clone_opt!((self, part), xray, blur);
+        merge_clone_opt!((self, part), xray, blur, glass);
 
         if let Some(x) = part.noise {
             self.noise = Some(x.0);

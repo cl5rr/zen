@@ -100,8 +100,8 @@ pub trait LayoutElement {
 
     fn id(&self) -> &Self::Id;
 
-    fn update_config(&mut self, blur_config: zen_config::Blur) {
-        let _ = blur_config;
+    fn update_config(&mut self, blur_config: zen_config::Blur, glass_config: zen_config::Glass) {
+        let _ = (blur_config, glass_config);
     }
 
     fn size(&self) -> Size<i32, Logical>;
@@ -283,6 +283,7 @@ pub struct Options {
     pub camera: zen_config::Camera,
     pub widgets: zen_config::Widgets,
     pub blur: zen_config::Blur,
+    pub glass: zen_config::Glass,
     pub disable_resize_throttling: bool,
     pub disable_transactions: bool,
     pub deactivate_unfocused_windows: bool,
@@ -508,6 +509,7 @@ impl Options {
             camera: config.camera,
             widgets: config.widgets.clone(),
             blur: config.blur,
+            glass: config.glass,
             disable_resize_throttling: config.debug.disable_resize_throttling,
             disable_transactions: config.debug.disable_transactions,
             deactivate_unfocused_windows: config.debug.deactivate_unfocused_windows,

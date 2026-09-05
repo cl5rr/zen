@@ -38,6 +38,35 @@ pub struct FramebufferEffectElement {
     blur_options: Option<BlurOptions>,
     noise: f32,
     saturation: f32,
+    glass: Option<GlassParams>,
+}
+
+// glass
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GlassParams {
+    pub tint: [f32; 4],
+    pub refraction: f32,
+    pub falloff: f32,
+    pub squircle: f32,
+    pub specular: f32,
+    pub spec_power: f32,
+    pub light_dir: (f32, f32),
+}
+
+impl From<zen_config::Glass> for GlassParams {
+    fn from(g: zen_config::Glass) -> Self {
+        let [r, gr, b, _] = g.tint.to_array_unpremul();
+        Self {
+            tint: [r, gr, b, g.opacity as f32],
+            refraction: g.refraction as f32,
+            falloff: g.falloff as f32,
+            squircle: g.squircle as f32,
+            specular: g.specular as f32,
+            spec_power: 24.,
+            light_dir: (0., -1.),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -67,6 +96,7 @@ impl FramebufferEffect {
         blur_options: Option<BlurOptions>,
         noise: f32,
         saturation: f32,
+        glass: Option<GlassParams>,
     ) -> FramebufferEffectElement {
         let (clip_geo, corner_radius) = params
             .clip
@@ -88,6 +118,7 @@ impl FramebufferEffect {
             blur_options,
             noise,
             saturation,
+            glass,
         }
     }
 }
@@ -97,7 +128,7 @@ impl FramebufferEffectElement {
         &self,
         crop: Rectangle<f64, Logical>,
         transform: Transform,
-    ) -> [Uniform<'static>; 7] {
+    ) -> Vec<Uniform<'static>> {
         let offset = crop.loc - (self.clip_geo.loc - self.geometry.loc);
         let offset = Vec2::new(offset.x as f32, offset.y as f32);
         let crop_size = Vec2::new(crop.size.w as f32, crop.size.h as f32);
@@ -113,7 +144,7 @@ impl FramebufferEffectElement {
 
         let clip_geo_size = (self.clip_geo.size.w as f32, self.clip_geo.size.h as f32);
 
-        [
+        let mut uniforms = vec![
             Uniform::new("zen_scale", self.scale),
             Uniform::new("geo_size", clip_geo_size),
             Uniform::new("corner_radius", <[f32; 4]>::from(self.corner_radius)),
@@ -121,7 +152,21 @@ impl FramebufferEffectElement {
             Uniform::new("noise", self.noise),
             Uniform::new("saturation", self.saturation),
             Uniform::new("bg_color", [0f32, 0., 0., 0.]),
-        ]
+        ];
+
+        if let Some(g) = self.glass {
+            uniforms.extend([
+                Uniform::new("glass_tint", g.tint),
+                Uniform::new("refraction_strength", g.refraction),
+                Uniform::new("refraction_falloff", g.falloff),
+                Uniform::new("squircle_n", g.squircle),
+                Uniform::new("spec_strength", g.specular),
+                Uniform::new("spec_power", g.spec_power),
+                Uniform::new("light_dir", g.light_dir),
+            ]);
+        }
+
+        uniforms
     }
 }
 
@@ -349,7 +394,12 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
             clamped_dst.size.to_f64().upscale(dst_to_src).to_logical(1.),
         );
 
-        let program = Shaders::get_from_frame(frame).postprocess_and_clip.clone();
+        let shaders = Shaders::get_from_frame(frame);
+        let program = if self.glass.is_some() {
+            shaders.glass_and_clip.clone()
+        } else {
+            shaders.postprocess_and_clip.clone()
+        };
         let uniforms = program
             .is_some()
             .then(|| self.compute_uniforms(crop, frame.transformation()));

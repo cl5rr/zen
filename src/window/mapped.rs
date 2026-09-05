@@ -82,6 +82,7 @@ pub struct Mapped {
     block_out_buffer: RefCell<SolidColorBuffer>,
 
     blur_config: zen_config::Blur,
+    glass_config: zen_config::Glass,
 
     animate_next_configure: bool,
 
@@ -189,6 +190,7 @@ impl Mapped {
             ignore_opacity_window_rule: false,
             block_out_buffer: RefCell::new(SolidColorBuffer::new((0., 0.), [0., 0., 0., 1.])),
             blur_config: config.blur,
+            glass_config: config.glass,
             animate_next_configure: false,
             animate_serials: Vec::new(),
             animation_snapshot: None,
@@ -492,8 +494,9 @@ impl LayoutElement for Mapped {
         &self.window
     }
 
-    fn update_config(&mut self, blur_config: zen_config::Blur) {
+    fn update_config(&mut self, blur_config: zen_config::Blur, glass_config: zen_config::Glass) {
         self.blur_config = blur_config;
+        self.glass_config = glass_config;
     }
 
     fn size(&self) -> Size<i32, Logical> {
@@ -592,6 +595,7 @@ impl LayoutElement for Mapped {
                 surface_off,
                 surface_anim_scale,
                 self.blur_config,
+                self.glass_config,
                 popup_rules.geometry_corner_radius.unwrap_or_default(),
                 effect,
                 false,
@@ -623,6 +627,7 @@ impl LayoutElement for Mapped {
             self.buf_loc().to_f64(),
             surface_anim_scale,
             self.blur_config,
+            self.glass_config,
             radius,
             self.rules.background_effect,
             should_block_out,

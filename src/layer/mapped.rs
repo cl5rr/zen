@@ -35,6 +35,7 @@ pub struct MappedLayer {
     shadow: Shadow,
 
     blur_config: zen_config::Blur,
+    glass_config: zen_config::Glass,
 
     view_size: Size<f64, Logical>,
 
@@ -76,6 +77,7 @@ impl MappedLayer {
             scale,
             shadow: Shadow::new(shadow_config),
             blur_config: config.blur,
+            glass_config: config.glass,
             clock,
         }
     }
@@ -87,6 +89,7 @@ impl MappedLayer {
         self.shadow.update_config(shadow_config);
 
         self.blur_config = config.blur;
+        self.glass_config = config.glass;
     }
 
     pub fn update_shaders(&mut self) {
@@ -227,6 +230,7 @@ impl MappedLayer {
             surface_off,
             surface_anim_scale,
             self.blur_config,
+            self.glass_config,
             radius,
             self.rules.background_effect,
             should_block_out,
@@ -294,6 +298,7 @@ impl MappedLayer {
                 surface_off,
                 surface_anim_scale,
                 self.blur_config,
+                self.glass_config,
                 popup_rules.geometry_corner_radius.unwrap_or_default(),
                 effect,
                 false,

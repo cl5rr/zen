@@ -111,9 +111,6 @@ input {
 // https://github.com/cl5rr/zen
 // The glass material applied to windows.
 //
-// Not wired up yet -- the shader exists and compiles, the element that feeds it
-// the backdrop does not. Documented here so the knobs are settled.
-//
 // opacity spans the whole range the material can be:
 //   0.0  pure refraction -- glass you see straight through
 //   0.15 a faint frost (the default), backdrop still clearly readable
@@ -123,7 +120,14 @@ input {
 // Refraction still shapes the rim at any opacity, so even a fully opaque pane
 // reads as a solid object rather than a flat rectangle.
 glass {
-    // Remove this line once the material is wired up.
+    // Remove this line to turn the material on, then ask for it per window
+    // with a rule:
+    //
+    //     window-rule {
+    //         geometry-corner-radius 12
+    //         clip-to-geometry true
+    //         background-effect { glass true; blur true; }
+    //     }
     off
 
     opacity 0.15
