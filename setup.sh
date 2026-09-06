@@ -567,6 +567,10 @@ install_zen() {
     $SUDO install -Dm755 resources/zen-wallpaper    "$PREFIX/bin/zen-wallpaper"
     $SUDO install -Dm644 resources/default-wallpaper.jpg \
                                                     "$PREFIX/share/zen/default-wallpaper.jpg"
+    for wp in resources/wallpapers/*; do
+        [ -f "$wp" ] && $SUDO install -Dm644 "$wp" \
+            "$PREFIX/share/zen/wallpapers/$(basename "$wp")"
+    done
     $SUDO install -Dm644 resources/zen.desktop      "$PREFIX/share/wayland-sessions/zen.desktop"
     $SUDO install -Dm644 resources/zen-portals.conf "$PREFIX/share/xdg-desktop-portal/zen-portals.conf"
     $SUDO install -Dm644 resources/zen.png          "$PREFIX/share/pixmaps/zen.png"
@@ -1003,6 +1007,41 @@ theme_terminal() {
     theme_file "$base/kitty/kitty.conf"         resources/kitty.conf    "kitty"
 }
 
+# Ly ships a config.ini whose keys vary between versions, so this only rewrites keys
+# that are already in the file rather than replacing it wholesale. Anything Ly does
+# not have is simply skipped instead of being silently ignored at runtime.
+theme_ly() {
+    local cfg=/etc/ly/config.ini
+    [ -f "$cfg" ] || { dim "no $cfg to theme; Ly will use its defaults"; return 0; }
+
+    need_root
+    if [ ! -f "$cfg.zen-backup" ]; then
+        $SUDO cp "$cfg" "$cfg.zen-backup"
+        dim "kept your original as $cfg.zen-backup"
+    fi
+
+    # ZEN's ground and accent, in the terminal colours Ly speaks.
+    ly_set "$cfg" bg 0
+    ly_set "$cfg" fg 15
+    ly_set "$cfg" border_fg 6
+    ly_set "$cfg" clock "%H:%M"
+    ly_set "$cfg" animation none
+    ly_set "$cfg" asterisk "*"
+    ly_set "$cfg" blank_box true
+    ly_set "$cfg" hide_key_hints false
+    ly_set "$cfg" save true
+    ly_set "$cfg" waylandsessions /usr/share/wayland-sessions
+
+    ok "themed the login screen: $cfg"
+}
+
+# Rewrites one key only if Ly already knows it, commented out or not.
+ly_set() {
+    local cfg="$1" key="$2" value="$3"
+    grep -qE "^[#[:space:]]*$key[[:space:]]*=" "$cfg" || return 0
+    $SUDO sed -i -E "s|^[#[:space:]]*$key[[:space:]]*=.*|$key = $value|" "$cfg"
+}
+
 # An unconfigured swaylock is a blank white panel you cannot tell apart from a
 # crash, which is worse than no lock screen at all.
 theme_lock() {
@@ -1038,13 +1077,24 @@ seed_wallpapers() {
     local dir="${XDG_CONFIG_HOME:-$HOME/.config}/zen/wallpapers"
     mkdir -p "$dir"
 
-    if [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
-        cp resources/default-wallpaper.jpg "$dir/" 2>/dev/null && \
-            ok "wallpaper folder seeded: $dir"
-        dim "drop images in there; ${C_BOLD}Mod+Shift+W${C_RESET} picks between them"
-    else
+    if [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then
         dim "wallpaper folder already has images, left alone: $dir"
+        return 0
     fi
+
+    # Numbered so the one people see on first boot sorts first; the rest join the cycle.
+    local n=0 wp
+    for wp in resources/wallpapers/*; do
+        [ -f "$wp" ] || continue
+        cp "$wp" "$dir/" 2>/dev/null && n=$((n + 1))
+    done
+
+    if [ "$n" = 0 ]; then
+        cp resources/default-wallpaper.jpg "$dir/01-forest.jpg" 2>/dev/null && n=1
+    fi
+
+    ok "wallpaper folder seeded with $n image(s): $dir"
+    dim "drop more in there; ${C_BOLD}Mod+Shift+W${C_RESET} picks between them"
 }
 
 install_greeter() {
@@ -1075,11 +1125,7 @@ install_greeter_ly() {
     pacman_install $GREETER_LY_PKGS || return 1
     need_root
 
-    if [ -f /etc/ly/config.ini ]; then
-        $SUDO sed -i 's/^#\?animation *=.*/animation = matrix/' /etc/ly/config.ini 2>/dev/null || true
-        $SUDO sed -i 's/^#\?clock *=.*/clock = %H:%M/' /etc/ly/config.ini 2>/dev/null || true
-        dim "config at /etc/ly/config.ini"
-    fi
+    theme_ly
 
     ok "Ly installed"
     greeter_epilogue "ly"
