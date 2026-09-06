@@ -78,12 +78,31 @@ impl Camera {
         self.view_size
     }
 
+    // The workspace is drawn centred in the view, so a zoom of z leaves this much space
+    // on each side. It is a function of zoom, which is why it cannot be left out of
+    // anything that has to hold a point still while the zoom changes.
+    fn centring_offset(&self, zoom: f64) -> Point<f64, Logical> {
+        Point::from((
+            self.view_size.w * (1. - zoom) / 2.,
+            self.view_size.h * (1. - zoom) / 2.,
+        ))
+    }
+
+    fn view_to_content_at(
+        &self,
+        p: Point<f64, Logical>,
+        zoom: f64,
+        pan: Point<f64, Logical>,
+    ) -> Point<f64, Logical> {
+        (p - pan - self.centring_offset(zoom)).downscale(zoom)
+    }
+
     pub fn content_to_view(&self, p: Point<f64, Logical>) -> Point<f64, Logical> {
-        p.upscale(self.zoom) + self.pan
+        p.upscale(self.zoom) + self.pan + self.centring_offset(self.zoom)
     }
 
     pub fn view_to_content(&self, p: Point<f64, Logical>) -> Point<f64, Logical> {
-        (p - self.pan).downscale(self.zoom)
+        self.view_to_content_at(p, self.zoom, self.pan)
     }
 
     pub fn visible_rect(&self) -> Rectangle<f64, Logical> {
@@ -262,7 +281,9 @@ impl Camera {
 
         let rect_center = rect.loc + Point::from((rect.size.w / 2., rect.size.h / 2.));
         let view_center = Point::from((self.view_size.w / 2., self.view_size.h / 2.));
-        let pan = view_center - rect_center.upscale(zoom);
+        // Same centring offset the render applies, so framing lands the rect where it
+        // was asked to rather than half a viewport away from it.
+        let pan = view_center - rect_center.upscale(zoom) - self.centring_offset(zoom);
 
         self.animate_zoom_to(zoom, config);
         self.animate_pan_to(pan, config);
@@ -293,9 +314,15 @@ impl Camera {
             // Correct the pan by the zoom *change*, reading the pan as it stands after
             // the drive has already moved it this frame. Assigning it outright would
             // hold the anchor but silently undo panning for the length of the zoom.
+            //
+            // The centring offset has to be in this arithmetic. The workspace is drawn
+            // centred in the view, and that offset is a function of the zoom, so a
+            // correction that used pan alone left the point under the cursor drifting
+            // by half the view's change in size: the zoom looked like it came from the
+            // middle of the screen rather than from the pointer.
             if let Some(view_anchor) = self.zoom_anchor {
-                let under = (view_anchor - self.pan).downscale(self.zoom);
-                self.pan = view_anchor - under.upscale(next);
+                let under = self.view_to_content_at(view_anchor, self.zoom, self.pan);
+                self.pan = view_anchor - under.upscale(next) - self.centring_offset(next);
             }
 
             self.zoom = next;

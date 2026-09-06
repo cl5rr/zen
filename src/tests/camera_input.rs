@@ -301,3 +301,76 @@ fn travel_does_nothing_when_not_on_the_map() {
     assert!(!f.zen().layout.is_at_map_zoom());
     assert!(!f.zen().layout.travel_to_island_at(Point::from((640., 360.))));
 }
+
+// Zooming has to leave whatever is under the pointer under the pointer.
+//
+// The bug this catches: the camera pinned the anchor using pan and zoom alone, while
+// the render also centres the workspace in the view by an offset that is itself a
+// function of zoom. The point under the cursor therefore slid by half the view's change
+// in size, and the zoom looked like it came from the middle of the screen.
+#[test]
+fn zooming_keeps_the_point_under_the_cursor_still() {
+    let mut f = fixture_with_window();
+    f.zen().layout.set_window_floating(None, true);
+    f.zen_complete_animations();
+
+    // Deliberately off centre: an anchor in the middle of the screen cannot tell a
+    // correct pinning from one that always zooms about the middle.
+    let anchor = Point::from((OUTPUT_W as f64 * 0.22, OUTPUT_H as f64 * 0.78));
+
+    let before = f
+        .zen()
+        .layout
+        .active_monitor_ref()
+        .unwrap()
+        .view_to_workspace(anchor);
+
+    for _ in 0..4 {
+        f.zen().layout.camera_zoom_step(true, anchor);
+        f.zen_complete_animations();
+    }
+
+    let mon = f.zen().layout.active_monitor_ref().unwrap();
+    assert!(mon.camera_zoom() > 1.2, "the zoom did not actually change");
+
+    let after = mon.view_to_workspace(anchor);
+    assert!(
+        (after.x - before.x).abs() < 1. && (after.y - before.y).abs() < 1.,
+        "the canvas drifted under the cursor: {before:?} -> {after:?}"
+    );
+}
+
+#[test]
+fn zooming_back_out_lands_where_it_started() {
+    let mut f = fixture_with_window();
+    f.zen().layout.set_window_floating(None, true);
+    f.zen_complete_animations();
+
+    let anchor = Point::from((OUTPUT_W as f64 * 0.8, OUTPUT_H as f64 * 0.3));
+    let before = f
+        .zen()
+        .layout
+        .active_monitor_ref()
+        .unwrap()
+        .view_to_workspace(anchor);
+
+    for _ in 0..3 {
+        f.zen().layout.camera_zoom_step(true, anchor);
+        f.zen_complete_animations();
+    }
+    for _ in 0..3 {
+        f.zen().layout.camera_zoom_step(false, anchor);
+        f.zen_complete_animations();
+    }
+
+    let after = f
+        .zen()
+        .layout
+        .active_monitor_ref()
+        .unwrap()
+        .view_to_workspace(anchor);
+    assert!(
+        (after.x - before.x).abs() < 1. && (after.y - before.y).abs() < 1.,
+        "in and back out did not return: {before:?} -> {after:?}"
+    );
+}
