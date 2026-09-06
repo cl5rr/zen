@@ -443,6 +443,10 @@ spawn-at-startup "waybar"
 // them. Needs swaybg installed.
 spawn-at-startup "zen-wallpaper" "restore"
 
+// The clipboard watcher behind Mod+Ctrl+V. Without it the history is always empty, because
+// nothing is recording what you copy.
+spawn-sh-at-startup "wl-paste --watch cliphist store"
+
 // A notification daemon.
 // spawn-at-startup "mako"
 
@@ -943,6 +947,15 @@ binds {
     Print { screenshot; }
     Ctrl+Print { screenshot-screen; }
     Alt+Print { screenshot-window; }
+
+    // Clipboard history. ZEN keeps no clipboard of its own: wl-paste watches the
+    // selection, cliphist stores it, and this reads that store back through the
+    // launcher. Needs wl-clipboard and cliphist, and the startup watcher above.
+    //
+    // Ctrl is in the chord because plain Mod+V already toggles floating.
+    Mod+Ctrl+V hotkey-overlay-title="Clipboard history" {
+        spawn-sh "cliphist list | fuzzel --dmenu | cliphist decode | wl-copy";
+    }
 
     // Applications such as remote-desktop clients and software KVM switches may
     // request that ZEN stops processing the keyboard shortcuts defined here

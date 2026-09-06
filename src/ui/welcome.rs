@@ -54,7 +54,16 @@ zen_render_elements! {
 
 #[derive(Debug)]
 pub struct Welcome {
-    anim: Animation,
+    // Started on the first frame, not at construction.
+    //
+    // The whole animation is 2.2 seconds. Between building this and drawing anything,
+    // a TTY session still has to scan connectors, set a mode, build a GLES context,
+    // start Xwayland and spawn the startup apps. That routinely takes longer than the
+    // animation lasts, so a timer started here would be finished before the first
+    // frame and the welcome would never be seen on the one boot it exists for. Nested,
+    // where startup is nearly instant, it looked fine.
+    clock: Clock,
+    anim: RefCell<Option<Animation>>,
     mark: RefCell<Option<TextureBuffer<GlesTexture>>>,
     mark_loaded: RefCell<bool>,
     panels: RefCell<(SolidColorBuffer, SolidColorBuffer)>,
@@ -64,7 +73,8 @@ pub struct Welcome {
 impl Welcome {
     pub fn new(clock: Clock, color: [f32; 4]) -> Self {
         Self {
-            anim: Animation::ease(clock, 0., 1., 0., TOTAL_MS, crate::animation::Curve::Linear),
+            clock,
+            anim: RefCell::new(None),
             mark: RefCell::new(None),
             mark_loaded: RefCell::new(false),
             panels: RefCell::new((
@@ -75,12 +85,28 @@ impl Welcome {
         }
     }
 
+    // Not started is not done: it has to survive until something draws it.
     pub fn is_done(&self) -> bool {
-        self.anim.is_done()
+        self.anim.borrow().as_ref().is_some_and(Animation::is_done)
     }
 
     pub fn are_animations_ongoing(&self) -> bool {
-        !self.anim.is_done()
+        !self.is_done()
+    }
+
+    fn progress(&self) -> f64 {
+        let mut anim = self.anim.borrow_mut();
+        let anim = anim.get_or_insert_with(|| {
+            Animation::ease(
+                self.clock.clone(),
+                0.,
+                1.,
+                0.,
+                TOTAL_MS,
+                crate::animation::Curve::Linear,
+            )
+        });
+        anim.clamped_value().clamp(0., 1.)
     }
 
     fn load<R: ZenRenderer>(&self, renderer: &mut R, scale: f64) {
@@ -111,7 +137,7 @@ impl Welcome {
             return;
         }
 
-        let raw = self.anim.clamped_value().clamp(0., 1.);
+        let raw = self.progress();
 
         let intro = smoothstep((raw / INTRO_END).clamp(0., 1.));
         let part = ((raw - PART_START) / (1. - PART_START)).clamp(0., 1.);
@@ -303,4 +329,34 @@ fn load_mark(renderer: &mut GlesRenderer, scale: f64) -> anyhow::Result<TextureB
         Vec::new(),
     )?;
     Ok(buffer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    // The bug: the timer used to start at construction, and a TTY session spends longer
+    // than the whole animation getting to its first frame, so the welcome was finished
+    // before anything could draw it. It has to survive an arbitrary startup delay.
+    #[test]
+    fn a_slow_startup_does_not_consume_the_welcome() {
+        let mut clock = Clock::with_time(Duration::ZERO);
+        let welcome = Welcome::new(clock.clone(), [1., 1., 1., 1.]);
+
+        // Far longer than the animation, exactly as a cold boot would be.
+        clock.set_unadjusted(Duration::from_secs(30));
+        assert!(
+            !welcome.is_done(),
+            "the welcome expired before anything drew it"
+        );
+        assert_eq!(welcome.progress(), 0., "it should begin at the first frame");
+
+        clock.set_unadjusted(Duration::from_secs(30) + Duration::from_millis(TOTAL_MS / 2));
+        let half = welcome.progress();
+        assert!(half > 0.4 && half < 0.6, "half way through, got {half}");
+
+        clock.set_unadjusted(Duration::from_secs(30) + Duration::from_millis(TOTAL_MS + 50));
+        assert!(welcome.is_done(), "it should finish once it has actually run");
+    }
 }

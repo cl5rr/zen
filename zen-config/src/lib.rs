@@ -2456,6 +2456,7 @@ mod tests {
         +            natural_scroll: true,
 
         -    spawn_at_startup: [],
+        -    spawn_sh_at_startup: [],
         +    spawn_at_startup: [
         +        SpawnAtStartup {
         +            command: [
@@ -2467,6 +2468,11 @@ mod tests {
         +                "zen-wallpaper",
         +                "restore",
         +            ],
+        +        },
+        +    ],
+        +    spawn_sh_at_startup: [
+        +        SpawnShAtStartup {
+        +            command: "wl-paste --watch cliphist store",
         +        },
         +    ],
 

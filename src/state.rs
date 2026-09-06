@@ -1721,6 +1721,76 @@ impl State {
         self.reload_output_config();
     }
 
+    // Virtual outputs live on State rather than Zen because creating one has to touch
+    // both: the layout, so windows can go there, and the backend's IPC output map, so
+    // anything that lists monitors can see it.
+    pub fn create_virtual_output(
+        &mut self,
+        name: &str,
+        width: u16,
+        height: u16,
+        refresh: u32,
+    ) -> Result<(), String> {
+        if self.zen.global_space.outputs().any(|o| o.name() == name) {
+            return Err(format!("an output called {name} already exists"));
+        }
+        if width == 0 || height == 0 {
+            return Err("a virtual output needs a size".to_owned());
+        }
+
+        let virtual_output = VirtualOutput::new(name, width, height, refresh);
+        let output = virtual_output.output.clone();
+        let interval = virtual_output.refresh_interval();
+        let id = virtual_output.id;
+
+        // Without this the output is real to the compositor and to clients, but
+        // `zen msg outputs` never mentions it, so the settings app and every other
+        // tool that lists monitors is blind to it.
+        self.backend.ipc_outputs().lock().unwrap().insert(
+            id,
+            zen_ipc::Output {
+                name: name.to_owned(),
+                make: "ZEN".to_owned(),
+                model: "Virtual".to_owned(),
+                serial: Some(name.to_owned()),
+                physical_size: None,
+                modes: vec![zen_ipc::Mode {
+                    width,
+                    height,
+                    refresh_rate: refresh,
+                    is_preferred: true,
+                }],
+                current_mode: Some(0),
+                is_custom_mode: true,
+                vrr_supported: false,
+                vrr_enabled: false,
+                logical: None,
+                max_bpc: None,
+            },
+        );
+        self.zen.ipc_outputs_changed = true;
+
+        self.zen.virtual_outputs.insert(name.to_owned(), virtual_output);
+        self.zen.add_output(output, Some(interval), false);
+        Ok(())
+    }
+
+    pub fn destroy_virtual_output(&mut self, name: &str) -> Result<(), String> {
+        let Some(virtual_output) = self.zen.virtual_outputs.remove(name) else {
+            return Err(format!("{name} is not a virtual output"));
+        };
+
+        let output = virtual_output.output.clone();
+        let id = virtual_output.id;
+        drop(virtual_output);
+
+        self.backend.ipc_outputs().lock().unwrap().remove(&id);
+        self.zen.ipc_outputs_changed = true;
+
+        self.zen.remove_output(&output);
+        Ok(())
+    }
+
     pub fn refresh_ipc_outputs(&mut self) {
         if !self.zen.ipc_outputs_changed {
             return;
@@ -6119,37 +6189,5 @@ impl Zen {
         result
     }
 
-    pub fn create_virtual_output(
-        &mut self,
-        name: &str,
-        width: u16,
-        height: u16,
-        refresh: u32,
-    ) -> Result<(), String> {
-        if self.global_space.outputs().any(|o| o.name() == name) {
-            return Err(format!("an output called {name} already exists"));
-        }
-        if width == 0 || height == 0 {
-            return Err("a virtual output needs a size".to_owned());
-        }
 
-        let virtual_output = VirtualOutput::new(name, width, height, refresh);
-        let output = virtual_output.output.clone();
-        let interval = virtual_output.refresh_interval();
-
-        self.virtual_outputs.insert(name.to_owned(), virtual_output);
-        self.add_output(output, Some(interval), false);
-        Ok(())
-    }
-
-    pub fn destroy_virtual_output(&mut self, name: &str) -> Result<(), String> {
-        let Some(virtual_output) = self.virtual_outputs.remove(name) else {
-            return Err(format!("{name} is not a virtual output"));
-        };
-
-        let output = virtual_output.output.clone();
-        drop(virtual_output);
-        self.remove_output(&output);
-        Ok(())
-    }
 }

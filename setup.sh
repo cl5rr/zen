@@ -397,6 +397,27 @@ portal_backend_package_for() {
     esac
 }
 
+# ScreenCast is only implemented by some backends. gnome is the one ZEN targets.
+screencast_backend_package_for() {
+    case "$1" in
+        pacman) echo xdg-desktop-portal-gnome ;; apt) echo xdg-desktop-portal-gnome ;;
+        dnf)    echo xdg-desktop-portal-gnome ;; apk) echo xdg-desktop-portal-gnome ;;
+        zypper) echo xdg-desktop-portal-gnome ;;
+    esac
+}
+
+# Emoji, plus the symbol and arrow ranges a status bar reaches for. Noto is the one
+# every distro packages and the one with the widest coverage.
+emoji_packages_for() {
+    case "$1" in
+        pacman) echo "noto-fonts noto-fonts-emoji ttf-nerd-fonts-symbols" ;;
+        apt)    echo "fonts-noto-core fonts-noto-color-emoji" ;;
+        dnf)    echo "google-noto-sans-fonts google-noto-color-emoji-fonts" ;;
+        apk)    echo "font-noto font-noto-emoji" ;;
+        zypper) echo "noto-sans-fonts noto-coloremoji-fonts" ;;
+    esac
+}
+
 font_package_for() {
     case "$1" in
         pacman) echo ttf-dejavu ;; apt) echo fonts-dejavu-core ;;
@@ -598,6 +619,19 @@ EOF
         N_MISSING=$((N_MISSING + 1))
     fi
 
+    # Screen sharing is a separate backend from the file picker. ZEN implements
+    # screencasting against xdg-desktop-portal-gnome, and the gtk backend does not
+    # implement ScreenCast at all, so with only gtk installed OBS records a black frame
+    # and nothing says why.
+    if have xdg-desktop-portal-gnome         || ls /usr/libexec/xdg-desktop-portal-gnome /usr/lib/xdg-desktop-portal-gnome              >/dev/null 2>&1; then
+        row_ok "screen sharing" ""
+        N_OK=$((N_OK + 1))
+    else
+        row_miss "screen sharing" "OBS and screen share need xdg-desktop-portal-gnome"
+        add_missing "$(screencast_backend_package_for "$PKG_MGR")"
+        N_MISSING=$((N_MISSING + 1))
+    fi
+
     # fontconfig being installed says nothing about there being a font to find.
     if have fc-list; then
         local nfonts nmono
@@ -614,6 +648,19 @@ EOF
         else
             row_ok "fonts" "$nfonts installed, $nmono monospace"
             N_OK=$((N_OK + 1))
+        fi
+
+        # Emoji and the symbol ranges are a separate font from the text one, and
+        # nothing degrades gracefully without them: a missing glyph is a hollow box in
+        # a chat window, a bar, or a window title. Asked for by codepoint rather than
+        # by package name, because the package differs per distro and per font.
+        if fc-list ':charset=1F600' 2>/dev/null | grep -q .             && fc-list ':charset=2764' 2>/dev/null | grep -q .; then
+            row_ok "emoji" ""
+            N_OK=$((N_OK + 1))
+        else
+            row_miss "emoji" "without this, emoji render as hollow boxes everywhere"
+            for pkg in $(emoji_packages_for "$PKG_MGR"); do add_missing "$pkg"; done
+            N_MISSING=$((N_MISSING + 1))
         fi
     fi
 
@@ -1187,7 +1234,7 @@ ui_multi() {
 #   media     the XF86 keys: volume, brightness, play/pause
 #   apps      Mod+W, Mod+E, Mod+D and notifications
 DESKTOP_APPS="alacritty fuzzel swaybg swaylock waybar"
-MEDIA_APPS="wireplumber playerctl brightnessctl xdg-utils"
+MEDIA_APPS="wireplumber playerctl brightnessctl xdg-utils wl-clipboard cliphist"
 EXTRA_APPS="firefox nautilus mako"
 GREETER_PKGS="greetd cage greetd-regreet"
 GREETER_LY_PKGS="ly"
@@ -1213,7 +1260,7 @@ install_desktop_apps() {
 
 # What the shipped keybinds spawn, as "command:package" pairs. Checked by command
 # because that is what a bind actually needs to find on PATH.
-BIND_APPS="waybar:waybar alacritty:alacritty fuzzel:fuzzel swaybg:swaybg swaylock:swaylock wpctl:wireplumber playerctl:playerctl brightnessctl:brightnessctl xdg-open:xdg-utils firefox:firefox nautilus:nautilus mako:mako"
+BIND_APPS="waybar:waybar wl-copy:wl-clipboard cliphist:cliphist alacritty:alacritty fuzzel:fuzzel swaybg:swaybg swaylock:swaylock wpctl:wireplumber playerctl:playerctl brightnessctl:brightnessctl xdg-open:xdg-utils firefox:firefox nautilus:nautilus mako:mako"
 
 install_extra_apps() {
     step "Installing optional extras"

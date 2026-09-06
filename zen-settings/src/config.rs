@@ -501,28 +501,27 @@ mod tests {
 
     #[test]
     fn startup_commands_round_trip() {
+        // Asserted as a property rather than against a fixed list. Pinning the shipped
+        // startup entries here made this test fail every time a new one was added,
+        // which says nothing about whether the round trip works.
         let mut c = shipped();
-        assert_eq!(
-            c.startup(),
-            vec![
-                vec!["waybar".to_owned()],
-                vec!["zen-wallpaper".to_owned(), "restore".to_owned()],
-            ]
+        let shipped_startup = c.startup();
+        assert!(
+            shipped_startup.iter().any(|cmd| cmd.first().is_some_and(|p| p == "waybar")),
+            "the shipped config should start the bar, got {shipped_startup:?}"
         );
 
-        c.set_startup(&[
+        let wanted = vec![
             vec!["waybar".to_owned()],
             vec!["zen-wallpaper".to_owned(), "restore".to_owned()],
-        ]);
+            vec!["something-new".to_owned(), "--flag".to_owned()],
+        ];
+        c.set_startup(&wanted);
 
         let back = from(&c.doc.to_string());
-        assert_eq!(
-            back.startup(),
-            vec![
-                vec!["waybar".to_owned()],
-                vec!["zen-wallpaper".to_owned(), "restore".to_owned()]
-            ]
-        );
+        assert_eq!(back.startup(), wanted);
+        zen_config::Config::parse_mem(&c.doc.to_string())
+            .expect("the edited config must still parse");
     }
 
     #[test]

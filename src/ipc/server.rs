@@ -393,7 +393,7 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             {
                 let (tx, rx) = async_channel::bounded(1);
                 ctx.event_loop.insert_idle(move |state| {
-                    let result = state.zen.create_virtual_output(&output, width, height, refresh);
+                    let result = state.create_virtual_output(&output, width, height, refresh);
                     if result.is_ok() {
                         state.zen.queue_redraw_all();
                     }
@@ -406,7 +406,7 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             if matches!(action, zen_ipc::OutputAction::Destroy) {
                 let (tx, rx) = async_channel::bounded(1);
                 ctx.event_loop.insert_idle(move |state| {
-                    let result = state.zen.destroy_virtual_output(&output);
+                    let result = state.destroy_virtual_output(&output);
                     if result.is_ok() {
                         state.zen.queue_redraw_all();
                     }
