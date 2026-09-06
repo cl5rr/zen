@@ -120,7 +120,10 @@ input {
 // Refraction still shapes the rim at any opacity, so even a fully opaque pane
 // reads as a solid object rather than a flat rectangle.
 glass {
-    opacity 0.15
+    // Frost. The material is applied to the backdrop *behind* a window, so it only
+    // reads if the window itself is see-through: see the opacity rules further down
+    // and the terminal themes ZEN ships.
+    opacity 0.30
     tint "#ffffff"
 
     // How far, in logical pixels, the rim bends what is behind it, and the
@@ -504,6 +507,22 @@ window-rule {
     }
 }
 
+// The material only shows through pixels a window leaves translucent, and most
+// apps are fully opaque, so on its own the glass is invisible on everything but
+// a terminal you configured yourself. These make the windows themselves slightly
+// see-through, and let unfocused ones recede further.
+//
+// Set both to 1.0 if you want opaque windows back.
+window-rule {
+    match is-active=true
+    opacity 0.92
+}
+
+window-rule {
+    match is-active=false
+    opacity 0.82
+}
+
 binds {
     // Keys consist of modifiers separated by + signs, followed by an XKB key name
     // in the end. To find an XKB name for a particular key, you may use a program
@@ -557,7 +576,9 @@ binds {
     // bind above if you would rather not name a browser at all.
     // Mod+W hotkey-overlay-title="Browser" { spawn-sh "xdg-open about:blank || firefox"; }
 
-    Super+Alt+L hotkey-overlay-title="Lock the Screen: swaylock" { spawn "swaylock"; }
+    // Not Super+Alt+L: on a TTY Mod is Super, so that chord is Mod+Alt+L, which
+    // moves between islands.
+    Mod+Shift+Escape hotkey-overlay-title="Lock the Screen" { spawn "swaylock"; }
 
     // Use spawn-sh to run a shell command. Do this if you need pipes, multiple commands, etc.
     // Note: the entire command goes as a single argument. It's passed verbatim to `sh -c`.

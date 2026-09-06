@@ -900,8 +900,7 @@ write_user_config() {
     dim "it is heavily commented, and reloads live while ZEN is running"
 
     seed_wallpapers
-    theme_launcher
-    theme_terminal
+    theme_all
 }
 
 # Themes the app launcher, unless you already have a config of your own.
@@ -926,16 +925,37 @@ theme_launcher() {
 # Without this the terminal is opaque, which hides the glass material entirely and
 # makes a fresh install look like any other compositor.
 theme_terminal() {
-    local dir="${XDG_CONFIG_HOME:-$HOME/.config}/alacritty"
-    local dst="$dir/alacritty.toml"
+    local base="${XDG_CONFIG_HOME:-$HOME/.config}"
+    theme_file "$base/alacritty/alacritty.toml" resources/alacritty.toml "alacritty"
+    theme_file "$base/foot/foot.ini"            resources/foot.ini      "foot"
+    theme_file "$base/kitty/kitty.conf"         resources/kitty.conf    "kitty"
+}
 
+# An unconfigured swaylock is a blank white panel you cannot tell apart from a
+# crash, which is worse than no lock screen at all.
+theme_lock() {
+    local base="${XDG_CONFIG_HOME:-$HOME/.config}"
+    theme_file "$base/swaylock/config" resources/swaylock.conf "swaylock"
+}
+
+theme_file() {
+    local dst="$1" src="$2" what="$3"
     if [ -f "$dst" ]; then
-        dim "you already have an alacritty config, left alone: $dst"
+        dim "you already have a $what config, left alone: $dst"
         return 0
     fi
-    mkdir -p "$dir"
-    cp resources/alacritty.toml "$dst"
-    ok "themed the terminal: $dst"
+    mkdir -p "$(dirname "$dst")"
+    cp "$src" "$dst" || return 0
+    ok "themed $what: $dst"
+}
+
+# Every shipped theme, applied only where the user has no config of their own.
+# Safe to run repeatedly, which is why the update path can call it too: a theme
+# added after someone installed would otherwise never reach them.
+theme_all() {
+    theme_launcher
+    theme_terminal
+    theme_lock
 }
 
 # Puts the shipped wallpaper where the picker looks, so a fresh install has one.
@@ -1106,6 +1126,7 @@ main() {
     fi
 
     if [ "$DO_UPDATE" = 1 ]; then update_zen || exit 1; fi
+    if [ "$DO_UPDATE" = 1 ]; then theme_all; fi
     if [ "$DO_DEPS" = 1 ]; then check_deps; install_deps; fi
     if [ "$W_APPS" = 1 ]; then install_desktop_apps; fi
     if [ "$W_EXTRAS" = 1 ]; then install_extra_apps; fi

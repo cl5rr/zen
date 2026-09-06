@@ -4060,22 +4060,42 @@ impl Zen {
                 }};
             }
 
-            for (ws, geo) in mon.workspaces_with_render_geo() {
-                let ns = Some(ws.id().get() as usize);
-                let xray_pos = XrayPos::new(geo.loc, zoom);
-                push_popups_from_layer!(Layer::Bottom, ns, xray_pos, process!(geo));
-                push_popups_from_layer!(Layer::Background, ns, xray_pos, process!(geo));
+            // The per-workspace path draws one copy of the wallpaper inside each
+            // workspace rect, which is what the overview grid wants. Outside the
+            // overview those rects live in canvas space, so following them would drag
+            // the wallpaper around as the camera pans.
+            let in_overview = mon.in_overview();
+
+            if in_overview {
+                for (ws, geo) in mon.workspaces_with_render_geo() {
+                    let ns = Some(ws.id().get() as usize);
+                    let xray_pos = XrayPos::new(geo.loc, zoom);
+                    push_popups_from_layer!(Layer::Bottom, ns, xray_pos, process!(geo));
+                    push_popups_from_layer!(Layer::Background, ns, xray_pos, process!(geo));
+                }
+            } else {
+                push_popups_from_layer!(Layer::Bottom);
+                push_popups_from_layer!(Layer::Background);
             }
 
             mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
 
-            for (ws, geo) in mon.workspaces_with_render_geo() {
-                let ns = Some(ws.id().get() as usize);
-                let xray_pos = XrayPos::new(geo.loc, zoom);
-                push_normal_from_layer!(Layer::Bottom, ns, xray_pos, process!(geo));
-                push_normal_from_layer!(Layer::Background, ns, xray_pos, process!(geo));
+            if in_overview {
+                for (ws, geo) in mon.workspaces_with_render_geo() {
+                    let ns = Some(ws.id().get() as usize);
+                    let xray_pos = XrayPos::new(geo.loc, zoom);
+                    push_normal_from_layer!(Layer::Bottom, ns, xray_pos, process!(geo));
+                    push_normal_from_layer!(Layer::Background, ns, xray_pos, process!(geo));
 
-                process!(geo)(ws.render_background());
+                    process!(geo)(ws.render_background());
+                }
+            } else {
+                push_normal_from_layer!(Layer::Bottom);
+                push_normal_from_layer!(Layer::Background);
+
+                if let Some((ws, _geo)) = mon.workspaces_with_render_geo().next() {
+                    push(ws.render_background().into());
+                }
             }
         }
 

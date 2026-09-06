@@ -1712,6 +1712,10 @@ impl<W: LayoutElement> Monitor<W> {
         (InsertWorkspace::NewAt(last_idx + 1), dummy)
     }
 
+    pub fn in_overview(&self) -> bool {
+        self.overview_open || self.overview_progress.is_some()
+    }
+
     pub fn render_above_top_layer(&self) -> bool {
         if self.workspace_switch.is_some() || self.overview_progress.is_some() {
             return false;

@@ -9,7 +9,7 @@
 # have one. It is yours after that; ZEN will not overwrite it.
 
 [window]
-opacity = 0.78
+opacity = 0.62
 decorations = "None"
 dynamic_padding = true
 padding = { x = 14, y = 12 }

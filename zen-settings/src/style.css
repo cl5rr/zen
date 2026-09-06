@@ -278,3 +278,31 @@ scrollbar slider {
 scrollbar slider:hover {
     background-color: rgba(255, 255, 255, 0.28);
 }
+
+/* window controls */
+windowcontrols button {
+    background-color: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 8px;
+    min-width: 22px;
+    min-height: 22px;
+    margin: 0 3px;
+    padding: 0;
+    color: #cbd1da;
+    -gtk-icon-size: 14px;
+}
+
+windowcontrols button:hover {
+    background-color: rgba(255, 255, 255, 0.14);
+    color: #ffffff;
+}
+
+windowcontrols button.close:hover {
+    background-color: #e06c75;
+    border-color: #e06c75;
+    color: #ffffff;
+}
+
+windowcontrols button image {
+    color: inherit;
+}
