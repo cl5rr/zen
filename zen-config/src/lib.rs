@@ -2469,6 +2469,12 @@ mod tests {
         +                "restore",
         +            ],
         +        },
+        +        SpawnAtStartup {
+        +            command: [
+        +                "zen-lock",
+        +                "idle",
+        +            ],
+        +        },
         +    ],
         +    spawn_sh_at_startup: [
         +        SpawnShAtStartup {

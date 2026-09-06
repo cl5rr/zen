@@ -869,6 +869,7 @@ install_zen() {
     $SUDO install -Dm755 "$bin"                     "$PREFIX/bin/zen"
     $SUDO install -Dm755 resources/zen-session      "$PREFIX/bin/zen-session"
     $SUDO install -Dm755 resources/zen-wallpaper    "$PREFIX/bin/zen-wallpaper"
+    $SUDO install -Dm755 resources/zen-lock         "$PREFIX/bin/zen-lock"
     $SUDO install -Dm644 resources/default-wallpaper.jpg \
                                                     "$PREFIX/share/zen/default-wallpaper.jpg"
     for wp in resources/wallpapers/*; do
@@ -1233,7 +1234,7 @@ ui_multi() {
 #   core      Mod+T, Mod+Space, the wallpaper, the lock screen
 #   media     the XF86 keys: volume, brightness, play/pause
 #   apps      Mod+W, Mod+E, Mod+D and notifications
-DESKTOP_APPS="alacritty fuzzel swaybg swaylock waybar"
+DESKTOP_APPS="alacritty fuzzel swaybg swaylock swayidle waybar"
 MEDIA_APPS="wireplumber playerctl brightnessctl xdg-utils wl-clipboard cliphist"
 EXTRA_APPS="firefox nautilus mako"
 GREETER_PKGS="greetd cage greetd-regreet"
@@ -1260,7 +1261,7 @@ install_desktop_apps() {
 
 # What the shipped keybinds spawn, as "command:package" pairs. Checked by command
 # because that is what a bind actually needs to find on PATH.
-BIND_APPS="waybar:waybar wl-copy:wl-clipboard cliphist:cliphist alacritty:alacritty fuzzel:fuzzel swaybg:swaybg swaylock:swaylock wpctl:wireplumber playerctl:playerctl brightnessctl:brightnessctl xdg-open:xdg-utils firefox:firefox nautilus:nautilus mako:mako"
+BIND_APPS="waybar:waybar wl-copy:wl-clipboard cliphist:cliphist swayidle:swayidle alacritty:alacritty fuzzel:fuzzel swaybg:swaybg swaylock:swaylock wpctl:wireplumber playerctl:playerctl brightnessctl:brightnessctl xdg-open:xdg-utils firefox:firefox nautilus:nautilus mako:mako"
 
 install_extra_apps() {
     step "Installing optional extras"

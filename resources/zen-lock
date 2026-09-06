@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+#
+# ZEN's lock screen.
+#
+#   zen-lock              lock now
+#   zen-lock idle         run the idle watcher (lock after a while, then blank)
+#   zen-lock preview      lock, but unlock again after 5 seconds, for trying looks out
+#
+# swaylock on its own paints one flat colour, which is why an unconfigured lock screen
+# looks like the machine died rather than like it is waiting for you. This picks the
+# best background the machine can actually produce, in this order:
+#
+#   1. swaylock-effects, which can screenshot and blur the real session itself
+#   2. a blurred copy of the current wallpaper, made once and cached
+#   3. the wallpaper, unblurred
+#   4. the flat colour from swaylock.conf
+#
+# Every step down is a missing package, not an error, so this works on a bare install
+# and gets better as you add things.
+
+set -u
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/zen"
+BLUR_CACHE="$STATE_DIR/lock-background.png"
+mkdir -p "$STATE_DIR"
+
+die() { printf 'zen-lock: %s\n' "$*" >&2; exit 1; }
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# The wallpaper currently on screen, as recorded by zen-wallpaper.
+current_wallpaper() {
+    local state="$STATE_DIR/wallpaper"
+    [ -f "$state" ] || return 1
+    local path; path=$(cat "$state" 2>/dev/null)
+    [ -n "$path" ] && [ -f "$path" ] || return 1
+    # A video wallpaper has no still frame to blur without decoding it.
+    case "${path,,}" in
+        *.mp4|*.mkv|*.webm|*.mov|*.m4v|*.avi) return 1 ;;
+    esac
+    printf '%s\n' "$path"
+}
+
+# Blurred once and kept, because blurring a 4K image takes long enough to be visible
+# as a delay between pressing the bind and the screen actually locking.
+blurred_wallpaper() {
+    local wp; wp=$(current_wallpaper) || return 1
+    have magick || have convert || return 1
+
+    if [ -f "$BLUR_CACHE" ] && [ "$BLUR_CACHE" -nt "$wp" ]; then
+        printf '%s\n' "$BLUR_CACHE"
+        return 0
+    fi
+
+    local im=magick
+    have magick || im=convert
+    # Scaled down and back up: far faster than a large blur radius, and the result is
+    # indistinguishable once it is behind a lock screen.
+    if "$im" "$wp" -resize 25% -blur 0x8 -resize 400% -fill black -colorize 35% \
+            "$BLUR_CACHE" 2>/dev/null; then
+        printf '%s\n' "$BLUR_CACHE"
+        return 0
+    fi
+    return 1
+}
+
+supports_effects() {
+    swaylock --help 2>&1 | grep -q -- '--effect-blur'
+}
+
+lock() {
+    have swaylock || die "swaylock is not installed (pacman -S swaylock)"
+
+    local args=()
+
+    if supports_effects; then
+        # The real session, blurred. This is the one that looks like the screen froze
+        # and went soft rather than like it was replaced.
+        args+=(--screenshots --effect-blur 8x5 --effect-vignette 0.3:0.6
+               --clock --timestr "%H:%M" --datestr "%A, %e %B"
+               --indicator --indicator-caps-lock)
+    else
+        local bg
+        if bg=$(blurred_wallpaper) || bg=$(current_wallpaper); then
+            args+=(--image "$bg" --scaling fill)
+        fi
+    fi
+
+    swaylock "${args[@]}" "$@"
+}
+
+idle() {
+    have swayidle || die "the idle timer needs swayidle (pacman -S swayidle)"
+
+    local lock_after="${ZEN_LOCK_AFTER:-600}"
+    local blank_after="${ZEN_BLANK_AFTER:-900}"
+
+    # before-sleep matters most: without it the machine can suspend and come back
+    # unlocked, which is the one case where a lock screen really has to be there.
+    exec swayidle -w \
+        timeout "$lock_after" "$0" \
+        timeout "$blank_after" 'zen msg action power-off-monitors' \
+            resume 'zen msg action power-on-monitors' \
+        before-sleep "$0"
+}
+
+case "${1:-lock}" in
+    lock)    shift 2>/dev/null; lock "$@" ;;
+    idle)    idle ;;
+    preview) if supports_effects; then
+                 lock --grace 5 --grace-no-mouse
+             else
+                 # Plain swaylock has no grace period, so a preview is just a lock.
+                 printf 'zen-lock: no grace period here, this is a real lock\n' >&2
+                 lock
+             fi ;;
+    -h|--help|help)
+             sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *)       die "unknown command: $1 (try --help)" ;;
+esac

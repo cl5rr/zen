@@ -447,6 +447,12 @@ spawn-at-startup "zen-wallpaper" "restore"
 // nothing is recording what you copy.
 spawn-sh-at-startup "wl-paste --watch cliphist store"
 
+// Lock after ten minutes idle, blank the screens after fifteen, and lock before
+// suspending. Needs swayidle; zen-lock says so plainly if it is missing rather than
+// failing silently. Change the timings with ZEN_LOCK_AFTER and ZEN_BLANK_AFTER, or
+// drop this line to never lock on its own.
+spawn-at-startup "zen-lock" "idle"
+
 // A notification daemon.
 // spawn-at-startup "mako"
 
@@ -635,7 +641,10 @@ binds {
 
     // Not Super+Alt+L: on a TTY Mod is Super, so that chord is Mod+Alt+L, which
     // moves between islands.
-    Mod+Shift+Escape hotkey-overlay-title="Lock the Screen" { spawn "swaylock"; }
+    // zen-lock rather than swaylock directly: it picks the best background the
+    // machine can produce, which is the blurred live session where swaylock-effects
+    // is installed and the blurred wallpaper otherwise.
+    Mod+Shift+Escape hotkey-overlay-title="Lock the Screen" { spawn "zen-lock"; }
 
     // Use spawn-sh to run a shell command. Do this if you need pipes, multiple commands, etc.
     // Note: the entire command goes as a single argument. It's passed verbatim to `sh -c`.
