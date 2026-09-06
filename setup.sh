@@ -107,8 +107,8 @@ Usage: ./setup.sh [options]
   --install          Install ZEN after building (needs root for PREFIX).
   --debug            Build the debug profile instead of release.
   --with-visual-tests
-                     Also require GTK4/libadwaita, used by zen-visual-tests
-                     (the shader iteration harness).
+                     Also build zen-visual-tests, the shader iteration harness.
+                     GTK4/libadwaita are checked either way, for the settings app.
   --features LIST    Extra cargo features.
   --no-default-features
                      Build without dbus/systemd/screencast. Leaner, and handy
@@ -423,17 +423,16 @@ $LIBS
 EOF
     fi
 
-    # Optional extras.
-    if [ "$WITH_VISUAL_TESTS" = 1 ]; then
-        printf '\n    %svisual tests (GTK4)%s\n' "$C_BOLD" "$C_RESET"
-        if pkg-config --exists gtk4 2>/dev/null && pkg-config --exists libadwaita-1 2>/dev/null; then
-            row_ok "gtk4 + libadwaita" "$(pkg-config --modversion gtk4 2>/dev/null)"
-            N_OK=$((N_OK + 1))
-        else
-            row_miss "gtk4 + libadwaita" "settings app, shader harness"
-            for pkg in $(gtk_packages_for "$PKG_MGR"); do add_missing "$pkg"; done
-            N_MISSING=$((N_MISSING + 1))
-        fi
+    # The settings app. Optional, but it is a shipped feature on Mod+, so a plain
+    # install should get it rather than silently skipping it.
+    printf '\n    %ssettings app (GTK4)%s\n' "$C_BOLD" "$C_RESET"
+    if pkg-config --exists gtk4 2>/dev/null && pkg-config --exists libadwaita-1 2>/dev/null; then
+        row_ok "gtk4 + libadwaita" "$(pkg-config --modversion gtk4 2>/dev/null)"
+        N_OK=$((N_OK + 1))
+    else
+        row_miss "gtk4 + libadwaita" "zen-settings, and the shader harness"
+        for pkg in $(gtk_packages_for "$PKG_MGR"); do add_missing "$pkg"; done
+        N_MISSING=$((N_MISSING + 1))
     fi
 
     # PipeWire is only needed for the default screencast feature.
@@ -447,8 +446,10 @@ EOF
     esac
 
     printf '\n'
-    if [ "$N_MISSING" -eq 0 ] && [ "$N_UNKNOWN" -eq 0 ]; then
+    if [ "$N_MISSING" -eq 0 ] && [ "$N_UNKNOWN" -eq 0 ] && [ -z "${MISSING_PKGS# }" ]; then
         printf '    %sall %s checks passed - nothing to install.%s\n' "$C_GREEN" "$N_OK" "$C_RESET"
+    elif [ "$N_MISSING" -eq 0 ] && [ "$N_UNKNOWN" -eq 0 ]; then
+        printf '    %sall %s checks passed, plus optional packages below.%s\n' "$C_GREEN" "$N_OK" "$C_RESET"
     elif [ "$N_UNKNOWN" -gt 0 ]; then
         printf '    %s%s present, %s missing, %s unverifiable until pkg-config is installed.%s\n' \
             "$C_BOLD" "$N_OK" "$N_MISSING" "$N_UNKNOWN" "$C_RESET"
@@ -993,7 +994,7 @@ wizard() {
                 "No, I will start ZEN from a TTY" || return 1
             [ "$UI_CHOICE" = 0 ] && W_GREETER=1
             ;;
-        1)  DO_UPDATE=1; DO_DEPS=0; DO_BUILD=1; DO_INSTALL=1 ;;
+        1)  DO_UPDATE=1; DO_DEPS=1; DO_BUILD=1; DO_INSTALL=1 ;;
         2)  ui_multi "Pick what to do  (space toggles)" \
                 "Install build dependencies:on" \
                 "Build ZEN:on" \
