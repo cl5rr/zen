@@ -998,6 +998,7 @@ impl Tty {
 
             let disable_laptop_panels = self.should_disable_laptop_panels(zen.is_lid_closed);
             let should_disable = |conn: &str| disable_laptop_panels && is_laptop_panel(conn);
+            let kept_on = self.output_kept_on();
 
             let config = self.config.borrow();
             let disable_monitor_names = config.debug.disable_monitor_names;
@@ -1011,7 +1012,8 @@ impl Tty {
                     .cloned()
                     .unwrap_or_default();
 
-                config.off || should_disable(&output_name.connector)
+                (config.off && kept_on.as_deref() != Some(&output_name.connector))
+                    || should_disable(&output_name.connector)
             };
 
             if let Err(err) = device.cleanup_mismatching_resources(&should_be_off) {
@@ -2212,6 +2214,52 @@ impl Tty {
         false
     }
 
+    // safety
+    //
+    // A config that switches every monitor off is not recoverable from inside ZEN. The
+    // session is still running, it just has nowhere to draw, and the way back is a TTY
+    // the person who did it may well not know how to reach. So when every connected
+    // output would be off, one is kept on regardless.
+    //
+    // Only `off` from the config is overridden. The laptop-panel rule already refuses
+    // to fire unless some other connector is present, so it can never be the thing that
+    // leaves nothing on.
+    fn output_kept_on(&self) -> Option<String> {
+        let config = self.config.borrow();
+        let disable_monitor_names = config.debug.disable_monitor_names;
+
+        let mut candidates = Vec::new();
+        for device in self.devices.values() {
+            for (connector, crtc) in device.drm_scanner.crtcs() {
+                if connector.state() != connector::State::Connected {
+                    continue;
+                }
+                if device
+                    .non_desktop_connectors
+                    .contains(&(connector.handle(), crtc))
+                {
+                    continue;
+                }
+
+                let name = device.known_crtc_name(&crtc, connector, disable_monitor_names);
+                let off = config.outputs.find(&name).is_some_and(|c| c.off);
+                if !off {
+                    return None;
+                }
+                candidates.push(name.connector);
+            }
+        }
+
+        // Sorted so the rescued output is the same one on every run rather than
+        // whichever the scan happened to reach first.
+        candidates.sort_unstable();
+        let kept = candidates.into_iter().next();
+        if let Some(kept) = &kept {
+            warn!("every output is configured off; keeping {kept} on so the session stays usable");
+        }
+        kept
+    }
+
     pub fn on_output_config_changed(&mut self, zen: &mut Zen) {
         let _span = tracy_client::span!("Tty::on_output_config_changed");
 
@@ -2223,6 +2271,8 @@ impl Tty {
 
         let disable_laptop_panels = self.should_disable_laptop_panels(zen.is_lid_closed);
         let should_disable = |connector: &str| disable_laptop_panels && is_laptop_panel(connector);
+        let kept_on = self.output_kept_on();
+        let is_kept = |connector: &str| kept_on.as_deref() == Some(connector);
 
         let mut to_disconnect = vec![];
         let mut to_connect = vec![];
@@ -2236,7 +2286,9 @@ impl Tty {
                     .find(&surface.name)
                     .cloned()
                     .unwrap_or_default();
-                if config.off || should_disable(&surface.name.connector) {
+                if (config.off && !is_kept(&surface.name.connector))
+                    || should_disable(&surface.name.connector)
+                {
                     to_disconnect.push((node, crtc));
                     continue;
                 }
@@ -2383,7 +2435,9 @@ impl Tty {
                     .cloned()
                     .unwrap_or_default();
 
-                if !(config.off || should_disable(&output_name.connector)) {
+                if !((config.off && !is_kept(&output_name.connector))
+                    || should_disable(&output_name.connector))
+                {
                     to_connect.push((node, connector.clone(), crtc, output_name));
                 }
             }

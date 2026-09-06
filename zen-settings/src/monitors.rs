@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::process::Command;
 use std::rc::Rc;
 
@@ -118,6 +118,7 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
             .build(),
     );
 
+    let names: Vec<String> = screens.iter().map(|s| s.name.clone()).collect();
     let placed = Rc::new(RefCell::new(screens.clone()));
     column.append(&arrangement(state, &placed));
 
@@ -129,7 +130,7 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
                 .css_classes(["group-label"])
                 .build(),
         );
-        column.append(&card(state, screen, i));
+        column.append(&card(state, screen, i, &names));
     }
 
     scrolled(&column)
@@ -322,7 +323,15 @@ fn rounded(cr: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
 }
 
 // per screen
-fn card(state: &Rc<App>, screen: &Screen, index: usize) -> gtk::Widget {
+// True when `name` is the only monitor still enabled, so turning it off would leave
+// the session with nowhere to draw.
+fn is_last_enabled(config: &crate::config::Config, all: &[String], name: &str) -> bool {
+    !all
+        .iter()
+        .any(|other| other != name && !config.output(other).off)
+}
+
+fn card(state: &Rc<App>, screen: &Screen, index: usize, all: &[String]) -> gtk::Widget {
     let card = gtk::Box::new(Orientation::Vertical, 0);
     card.add_css_class("card");
 
@@ -402,7 +411,34 @@ fn card(state: &Rc<App>, screen: &Screen, index: usize) -> gtk::Widget {
     {
         let state = state.clone();
         let name = screen.name.clone();
+        let all: Vec<String> = all.to_vec();
+        // Set while the handler puts the switch back, so the resulting notify is not
+        // read as the user flipping it again.
+        let reverting = Rc::new(Cell::new(false));
+        let guard = reverting.clone();
         on.connect_active_notify(move |s| {
+            if guard.get() {
+                return;
+            }
+
+            // Turning off the last enabled monitor leaves a running session with
+            // nowhere to draw, and the way out is a TTY. The compositor refuses this
+            // too; refusing it here is what lets us say why.
+            if !s.is_active() {
+                let last = state
+                    .config
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|c| is_last_enabled(c, &all, &name));
+                if last {
+                    guard.set(true);
+                    s.set_active(true);
+                    guard.set(false);
+                    state.say("that is your only enabled monitor, so it stays on", "bad");
+                    return;
+                }
+            }
+
             if let Some(config) = state.config.borrow_mut().as_mut() {
                 config.set_output_off(&name, !s.is_active());
             }
@@ -412,7 +448,7 @@ fn card(state: &Rc<App>, screen: &Screen, index: usize) -> gtk::Widget {
     card.append(&row(
         "Enabled",
         if index == 0 {
-            "Turning off your only monitor leaves you with nothing to look at"
+            "The last enabled monitor cannot be turned off"
         } else {
             ""
         },
@@ -466,4 +502,40 @@ fn scrolled(child: &gtk::Box) -> gtk::Widget {
         .vexpand(true)
         .build()
         .upcast()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(text: &str) -> crate::config::Config {
+        crate::config::Config::from_str_for_test(text)
+    }
+
+    #[test]
+    fn the_only_enabled_monitor_is_recognised() {
+        let all = vec!["eDP-1".to_owned(), "HDMI-A-1".to_owned()];
+
+        let both_on = cfg("");
+        assert!(!is_last_enabled(&both_on, &all, "eDP-1"));
+
+        let other_off = cfg("output \"HDMI-A-1\" {
+    off
+}
+");
+        assert!(
+            is_last_enabled(&other_off, &all, "eDP-1"),
+            "eDP-1 is the only one left on, so it must not be turned off"
+        );
+        assert!(
+            !is_last_enabled(&other_off, &all, "HDMI-A-1"),
+            "an already-off monitor is not the last enabled one"
+        );
+    }
+
+    #[test]
+    fn a_single_monitor_can_never_be_turned_off() {
+        let all = vec!["eDP-1".to_owned()];
+        assert!(is_last_enabled(&cfg(""), &all, "eDP-1"));
+    }
 }
