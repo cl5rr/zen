@@ -17,6 +17,9 @@ struct PanDrive {
     held_until: Duration,
 }
 
+// zoom
+const ZOOM_WHILE_PANNING: f64 = 0.4;
+
 const PAN_START_SPEED: f64 = 260.;
 const PAN_MAX_SPEED: f64 = 3400.;
 const PAN_ACCEL: f64 = 2600.;
@@ -32,6 +35,7 @@ pub struct Camera {
 
     pan_anim: Option<(Animation, Animation)>,
     zoom_anim: Option<Animation>,
+    zoom_anchor: Option<(Point<f64, Logical>, Point<f64, Logical>)>,
 
     drive: Option<PanDrive>,
     last_advance: Option<Duration>,
@@ -51,6 +55,7 @@ impl Camera {
             view_size,
             pan_anim: None,
             zoom_anim: None,
+            zoom_anchor: None,
             drive: None,
             last_advance: None,
             min_zoom,
@@ -109,27 +114,51 @@ impl Camera {
 
     pub fn set_zoom_immediate(&mut self, zoom: f64) {
         self.zoom_anim = None;
+        self.zoom_anchor = None;
         self.zoom = self.clamp_zoom(zoom);
     }
 
-    pub fn zoom_about(&mut self, view_anchor: Point<f64, Logical>, factor: f64) {
+    // A wheel notch is a target, not a jump. The pan is not animated alongside the
+    // zoom: it is recomputed from the live zoom every frame, which is what holds the
+    // point under the pointer still all the way through rather than only at the ends.
+    pub fn zoom_about(
+        &mut self,
+        view_anchor: Point<f64, Logical>,
+        factor: f64,
+        config: zen_config::Animation,
+    ) {
+        // Zooming while the canvas is already moving is nearly always a slipped
+        // finger, so a notch counts for much less then.
+        let factor = if self.drive.is_some() {
+            factor.powf(ZOOM_WHILE_PANNING)
+        } else {
+            factor
+        };
+
+        let current = match &self.zoom_anim {
+            Some(anim) => anim.to(),
+            None => self.zoom,
+        };
+
         let anchor_content = self.view_to_content(view_anchor);
-        let new_zoom = self.band_zoom(self.zoom * factor);
+        let target = self.band_zoom(current * factor);
 
-        self.pan = view_anchor - anchor_content.upscale(new_zoom);
-        self.zoom = new_zoom;
-
-        self.zoom_anim = None;
         self.pan_anim = None;
+        self.zoom_anchor = Some((view_anchor, anchor_content));
+        self.start_zoom_anim(target, config);
     }
 
     pub fn animate_zoom_to(&mut self, target: f64, config: zen_config::Animation) {
         let target = self.clamp_zoom(target);
+        self.start_zoom_anim(target, config);
+    }
+
+    fn start_zoom_anim(&mut self, target: f64, config: zen_config::Animation) {
         let from = self.zoom;
-        let velocity = self
-            .zoom_anim
-            .as_ref()
-            .map_or(0., Animation::current_velocity);
+        let velocity = match &self.zoom_anim {
+            Some(anim) => anim.current_velocity(),
+            None => 0.,
+        };
 
         self.zoom_anim = Some(Animation::new(
             self.clock.clone(),
@@ -259,10 +288,17 @@ impl Camera {
         }
 
         if let Some(anim) = &self.zoom_anim {
-            self.zoom = anim.value();
-            if anim.is_done() {
-                self.zoom = anim.to();
+            let done = anim.is_done();
+            self.zoom = if done { anim.to() } else { anim.value() };
+            if done {
                 self.zoom_anim = None;
+            }
+
+            if let Some((view_anchor, anchor_content)) = self.zoom_anchor {
+                self.pan = view_anchor - anchor_content.upscale(self.zoom);
+            }
+            if done {
+                self.zoom_anchor = None;
             }
         }
         if let Some((x, y)) = &self.pan_anim {
@@ -345,38 +381,59 @@ mod tests {
     }
 
     #[test]
-    fn zoom_about_holds_the_anchor_still() {
-        let mut c = camera();
+    fn zoom_holds_the_anchor_still_every_frame() {
+        let mut clock = Clock::with_time(Duration::ZERO);
+        let config = zen_config::animations::OverviewOpenCloseAnim::default().0;
+
+        // The clock is shared and only ever moves forward: rewinding it for each
+        // anchor would put the spring before its own start time and it would sit
+        // still, which looks exactly like a broken animation.
+        let mut now = 0u64;
+
         for anchor in [(0., 0.), (640., 360.), (1279., 719.), (200., 500.)] {
             let anchor = Point::<f64, Logical>::from(anchor);
-            c.set_zoom_immediate(1.);
-            c.set_pan_immediate(Point::from((0., 0.)));
+            let mut c = Camera::new(clock.clone(), Size::from((1280., 720.)), 0.1, 10.);
 
             let before = c.view_to_content(anchor);
-            for _ in 0..6 {
-                c.zoom_about(anchor, 1.25);
-            }
-            let after = c.view_to_content(anchor);
+            c.zoom_about(anchor, 1.6, config);
 
-            assert!(
-                approx(before, after, 1e-6),
-                "anchor {anchor:?} drifted from {before:?} to {after:?} while zooming"
-            );
-            c.verify_invariants();
+            for step in 1..=60 {
+                now += 10;
+                clock.set_unadjusted(Duration::from_millis(now));
+                c.advance_animations();
+
+                let at = c.view_to_content(anchor);
+                assert!(
+                    approx(before, at, 1e-6),
+                    "anchor {anchor:?} drifted to {at:?} from {before:?} at frame {step}"
+                );
+                c.verify_invariants();
+            }
+
+            assert!(c.zoom > 1.05, "zoom barely moved, ended at {}", c.zoom);
         }
     }
 
     #[test]
     fn zoom_rubber_bands_past_limits_but_stays_finite() {
-        let mut c = camera();
+        let mut clock = Clock::with_time(Duration::ZERO);
+        let config = zen_config::animations::OverviewOpenCloseAnim::default().0;
+        let mut c = Camera::new(clock.clone(), Size::from((1280., 720.)), 0.1, 10.);
         let anchor = Point::<f64, Logical>::from((640., 360.));
+        let mut now = 0u64;
 
         for _ in 0..50 {
-            c.zoom_about(anchor, 2.0);
+            c.zoom_about(anchor, 2.0, config);
+            for _ in 0..40 {
+                now += 10;
+                clock.set_unadjusted(Duration::from_millis(now));
+                c.advance_animations();
+            }
         }
         assert!(
             c.zoom() > c.max_zoom,
-            "should be allowed to overshoot the max"
+            "should be allowed to overshoot the max, got {}",
+            c.zoom()
         );
         assert!(
             c.zoom() < c.max_zoom * 3.,
@@ -385,11 +442,17 @@ mod tests {
         );
 
         for _ in 0..80 {
-            c.zoom_about(anchor, 0.5);
+            c.zoom_about(anchor, 0.5, config);
+            for _ in 0..40 {
+                now += 10;
+                clock.set_unadjusted(Duration::from_millis(now));
+                c.advance_animations();
+            }
         }
         assert!(
             c.zoom() < c.min_zoom,
-            "should be allowed to overshoot the min"
+            "should be allowed to overshoot the min, got {}",
+            c.zoom()
         );
         assert!(c.zoom() > 0., "zoom must stay positive, got {}", c.zoom());
         c.verify_invariants();

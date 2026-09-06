@@ -4346,11 +4346,12 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn camera_zoom_by(&mut self, factor: f64, anchor: Point<f64, Logical>) {
+        let config = self.options.animations.overview_open_close.0;
         let Some(mon) = self.active_monitor() else {
             return;
         };
         mon.clear_camera_focus();
-        mon.camera.zoom_about(anchor, factor);
+        mon.camera.zoom_about(anchor, factor, config);
     }
 
     pub fn camera_zoom_step(&mut self, zoom_in: bool, anchor: Point<f64, Logical>) {
