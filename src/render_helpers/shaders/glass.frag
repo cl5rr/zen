@@ -98,7 +98,12 @@ void main() {
         offset_uv = inv * offset_geo;
     }
 
-    vec4 color = texture2D(tex, v_coords + offset_uv);
+    // The capture is clipped to the output, so a window straddling a screen edge has a
+    // texture that stops short of its own geometry. The refraction offset is largest at
+    // exactly that edge, so without this it samples past the end of the capture and gets
+    // whatever the wrap mode gives back, which reads as a pale smear hanging off screen.
+    vec2 uv = clamp(v_coords + offset_uv, vec2(0.0), vec2(1.0));
+    vec4 color = texture2D(tex, uv);
 #if defined(NO_ALPHA)
     color = vec4(color.rgb, 1.0);
 #endif

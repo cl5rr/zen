@@ -11,7 +11,7 @@ use smithay::backend::renderer::utils::CommitCounter;
 use smithay::backend::renderer::{Frame as _, FrameContext, Offscreen, Texture as _};
 use smithay::gpu_span_location;
 use smithay::utils::user_data::UserDataMap;
-use smithay::utils::{Buffer, Logical, Physical, Rectangle, Scale, Transform};
+use smithay::utils::{Buffer, Logical, Physical, Rectangle, Scale, Size, Transform};
 
 use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
 use crate::render_helpers::background_effect::RenderParams;
@@ -232,6 +232,10 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
             let size = transform.transform_size(size);
 
             let size = size.to_logical(1).to_buffer(1, Transform::Normal);
+
+            // A window almost entirely off screen clamps to nothing, and a zero-sized
+            // texture is not a buffer any of this can draw from.
+            let size = Size::from((size.w.max(1), size.h.max(1)));
 
             if inner
                 .framebuffer
