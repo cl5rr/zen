@@ -9,7 +9,7 @@ use smithay::reexports::calloop::channel::SyncSender;
 
 use crate::state::State;
 
-const POLLING_INTERVAL: Duration = Duration::from_millis(500);
+const POLLING_INTERVAL: Duration = Duration::from_millis(150);
 
 pub struct Watcher {
     load_config: mpsc::Sender<Option<String>>,

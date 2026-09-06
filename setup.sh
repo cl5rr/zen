@@ -105,6 +105,8 @@ Usage: ./setup.sh [options]
   --deps-only        Install missing dependencies and exit.
   --build-only       Skip dependency handling; just build.
   --install          Install ZEN after building (needs root for PREFIX).
+  --greeter WHICH    Set up a login screen: ly, greetd, or none. Choosing ly
+                     removes greetd first, since both want VT 1.
   --debug            Build the debug profile instead of release.
   --with-visual-tests
                      Also build zen-visual-tests, the shader iteration harness.
@@ -138,6 +140,7 @@ while [ $# -gt 0 ]; do
         --deps-only)            DO_BUILD=0; DO_INSTALL=0 ;;
         --build-only)           DO_DEPS=0 ;;
         --install)              DO_INSTALL=1 ;;
+        --greeter)              shift; GREETER="${1:-ask}"; W_GREETER=1 ;;
         --debug)                BUILD_PROFILE=debug ;;
         --with-visual-tests)    WITH_VISUAL_TESTS=1 ;;
         --features)             [ $# -ge 2 ] || die "--features needs an argument"
@@ -861,9 +864,18 @@ ui_multi() {
 # The steps a person otherwise has to find out about by reading a guide on their
 # phone. Every one of these was manual friction the first time around.
 
-DESKTOP_APPS="alacritty fuzzel"
-EXTRA_APPS="firefox swaybg mako swaylock"
+# Everything the shipped keybinds actually spawn, grouped by how much you would
+# miss it. Derived from the spawn lines in resources/default-config.kdl; if you add
+# a bind that spawns something, add its package here too.
+#
+#   core      Mod+T, Mod+Space, the wallpaper, the lock screen
+#   media     the XF86 keys: volume, brightness, play/pause
+#   apps      Mod+W, Mod+E, Mod+D and notifications
+DESKTOP_APPS="alacritty fuzzel swaybg swaylock"
+MEDIA_APPS="wireplumber playerctl brightnessctl xdg-utils"
+EXTRA_APPS="firefox nautilus mako"
 GREETER_PKGS="greetd cage greetd-regreet"
+GREETER_LY_PKGS="ly"
 
 pacman_install() {
     [ "$PKG_MGR" = pacman ] || {
@@ -875,13 +887,18 @@ pacman_install() {
 }
 
 install_desktop_apps() {
-    step "Installing the apps ZEN's default keybinds expect"
-    dim "Mod+T opens a terminal, Mod+Space opens the launcher"
-    pacman_install $DESKTOP_APPS && ok "terminal and launcher installed"
+    step "Installing what the keybinds expect"
+    dim "Mod+T terminal, Mod+Space launcher, Mod+Shift+W wallpaper, Mod+Shift+Escape lock"
+    pacman_install $DESKTOP_APPS || return 1
+    ok "terminal, launcher, wallpaper and lock installed"
+
+    dim "media and brightness keys: wpctl, playerctl, brightnessctl"
+    pacman_install $MEDIA_APPS && ok "media keys will work"
 }
 
 install_extra_apps() {
     step "Installing optional extras"
+    dim "Mod+W browser, Mod+E files, and a notification daemon"
     pacman_install $EXTRA_APPS && ok "extras installed"
 }
 
@@ -976,6 +993,44 @@ seed_wallpapers() {
 }
 
 install_greeter() {
+    if [ "$UI_TTY" = 1 ] && [ "$GREETER" = ask ]; then
+        ui_menu "Which login screen?"             "Ly    (a small TTY greeter, no GTK, no Wayland session of its own)"             "greetd + ReGreet  (graphical, heavier, needs cage)"             "Skip" || return 0
+        case "$UI_CHOICE" in
+            0) GREETER=ly ;;
+            1) GREETER=greetd ;;
+            *) return 0 ;;
+        esac
+    fi
+
+    case "$GREETER" in
+        ly) install_greeter_ly ;;
+        greetd|ask) install_greeter_greetd ;;
+        none) return 0 ;;
+    esac
+}
+
+# Ly reads /usr/share/wayland-sessions, which is where install_zen already puts
+# zen.desktop, so there is nothing to configure: ZEN just appears in its list.
+install_greeter_ly() {
+    step "Installing the login screen"
+    dim "Ly is a TTY greeter: it lists the sessions it finds and gets out of the way"
+
+    remove_greetd_if_present
+
+    pacman_install $GREETER_LY_PKGS || return 1
+    need_root
+
+    if [ -f /etc/ly/config.ini ]; then
+        $SUDO sed -i 's/^#\?animation *=.*/animation = matrix/' /etc/ly/config.ini 2>/dev/null || true
+        $SUDO sed -i 's/^#\?clock *=.*/clock = %H:%M/' /etc/ly/config.ini 2>/dev/null || true
+        dim "config at /etc/ly/config.ini"
+    fi
+
+    ok "Ly installed"
+    greeter_epilogue "ly"
+}
+
+install_greeter_greetd() {
     step "Installing the login screen"
     dim "greetd runs the session, ReGreet draws it, cage hosts it"
 
@@ -988,36 +1043,43 @@ install_greeter() {
     fi
 
     $SUDO mkdir -p /etc/greetd
-    printf '%s\n' \
-        '[terminal]' \
-        'vt = 1' \
-        '' \
-        '[default_session]' \
-        'command = "cage -s -- regreet"' \
-        'user = "greeter"' \
-        | $SUDO tee /etc/greetd/config.toml >/dev/null
+    printf '%s
+'         '[terminal]'         'vt = 1'         ''         '[default_session]'         'command = "cage -s -- regreet"'         'user = "greeter"'         | $SUDO tee /etc/greetd/config.toml >/dev/null
 
     if [ ! -f /etc/greetd/regreet.toml ]; then
-        printf '%s\n' \
-            '[background]' \
-            'path = "/usr/share/pixmaps/zen.png"' \
-            'fit = "Cover"' \
-            '' \
-            '[GTK]' \
-            'application_prefer_dark_theme = true' \
-            'cursor_theme_name = "Adwaita"' \
-            'font_name = "Cantarell 14"' \
-            | $SUDO tee /etc/greetd/regreet.toml >/dev/null
+        printf '%s
+'             '[background]'             'path = "/usr/share/pixmaps/zen.png"'             'fit = "Cover"'             ''             '[GTK]'             'application_prefer_dark_theme = true'             'cursor_theme_name = "Adwaita"'             'font_name = "Cantarell 14"'             | $SUDO tee /etc/greetd/regreet.toml >/dev/null
     fi
 
     ok "greetd configured"
-    printf '\n'
+    greeter_epilogue "greetd"
+}
+
+# Two greeters both wanting VT 1 is a black screen, so the old one goes first.
+remove_greetd_if_present() {
+    have greetd || [ -f /etc/greetd/config.toml ] || return 0
+
+    need_root
+    info "removing greetd first, so the two do not fight over the same VT"
+
+    $SUDO systemctl disable --now greetd 2>/dev/null || true
+    if [ "$PKG_MGR" = pacman ]; then
+        $SUDO pacman -Rns --noconfirm greetd greetd-regreet cage 2>/dev/null             || $SUDO pacman -Rns --noconfirm greetd 2>/dev/null || true
+    fi
+    [ -d /etc/greetd ] && $SUDO mv /etc/greetd /etc/greetd.removed 2>/dev/null
+    ok "greetd disabled and removed; its config is at /etc/greetd.removed"
+}
+
+greeter_epilogue() {
+    local unit="$1"
+    printf '
+'
     warn "NOT enabling it yet, on purpose."
     info "Test ZEN from a TTY first:  ${C_BOLD}zen${C_RESET}"
     info "If that works, enable the login screen with:"
-    info "  ${C_BOLD}sudo systemctl enable --now greetd${C_RESET}"
+    info "  ${C_BOLD}sudo systemctl enable --now $unit${C_RESET}"
     info "If a login screen ever leaves you at a black screen, press"
-    info "  ${C_BOLD}Ctrl+Alt+F2${C_RESET} and run ${C_BOLD}sudo systemctl disable --now greetd${C_RESET}"
+    info "  ${C_BOLD}Ctrl+Alt+F2${C_RESET} and run ${C_BOLD}sudo systemctl disable --now $unit${C_RESET}"
 }
 
 # ---------------------------------------------------------------- wizard ----
@@ -1039,6 +1101,7 @@ W_APPS=0
 W_EXTRAS=0
 W_CONFIG=0
 W_GREETER=0
+GREETER=ask
 
 wizard() {
     banner

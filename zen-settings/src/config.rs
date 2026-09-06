@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 use anyhow::{bail, Context as _};
 use kdl::{KdlDocument, KdlEntry, KdlNode, KdlValue};
@@ -36,32 +35,27 @@ impl Config {
         Ok(Self { path, doc })
     }
 
-    pub fn save(&self) -> anyhow::Result<bool> {
+    // Checked in process rather than by shelling out to `zen validate`. Spawning the
+    // compositor binary per keystroke cost more than everything else here put together,
+    // and it made the safety net depend on zen being on PATH.
+    pub fn save(&self) -> anyhow::Result<()> {
+        let text = self.doc.to_string();
+
+        if let Err(err) = zen_config::Config::parse_mem(&text) {
+            let why = format!("{err}");
+            let why = why
+                .lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .unwrap_or("no reason given")
+                .to_owned();
+            bail!("rejected: {why}");
+        }
+
         let tmp = self.path.with_extension("kdl.new");
-        fs::write(&tmp, self.doc.to_string())?;
-
-        let checked = match Command::new("zen")
-            .args(["validate", "--config"])
-            .arg(&tmp)
-            .output()
-        {
-            Ok(out) if out.status.success() => true,
-            Ok(out) => {
-                let text = String::from_utf8_lossy(&out.stderr).into_owned();
-                let why = text
-                    .lines()
-                    .map(str::trim)
-                    .find(|l| !l.is_empty())
-                    .unwrap_or("no reason given")
-                    .to_owned();
-                let _ = fs::remove_file(&tmp);
-                bail!("rejected: {why}");
-            }
-            Err(_) => false,
-        };
-
+        fs::write(&tmp, &text)?;
         fs::rename(&tmp, &self.path)?;
-        Ok(checked)
+        Ok(())
     }
 
     // read

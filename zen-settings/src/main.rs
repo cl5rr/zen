@@ -30,7 +30,7 @@ impl App {
         drop(pending);
 
         let this = self.clone();
-        glib::timeout_add_local_once(std::time::Duration::from_millis(280), move || {
+        glib::timeout_add_local_once(std::time::Duration::from_millis(90), move || {
             if *this.pending.borrow() != generation {
                 return;
             }
@@ -45,8 +45,7 @@ impl App {
         };
 
         match config.save() {
-            Ok(true) => self.say("saved", "good"),
-            Ok(false) => self.say("saved, but zen is not on PATH to check it", "bad"),
+            Ok(()) => self.say("saved", "good"),
             Err(err) => self.say(&format!("{err}"), "bad"),
         }
     }

@@ -245,6 +245,30 @@ pub const PAGES: &[Page] = &[
         }],
     },
     Page {
+        name: "Input",
+        title: "Input",
+        blurb: "How the pointer and the keyboard decide what is focused.",
+        groups: &[Group {
+            title: "FOCUS",
+            rows: &[
+                Row {
+                    label: "Follow the mouse",
+                    hint: "On, moving the pointer onto a window focuses it. Off, you click to focus",
+                    path: &["input"],
+                    key: "focus-follows-mouse",
+                    kind: Kind::Flag { invert: false },
+                },
+                Row {
+                    label: "Warp the pointer to focus",
+                    hint: "Jump the pointer to the centre of a window when it takes focus",
+                    path: &["input"],
+                    key: "warp-mouse-to-focus",
+                    kind: Kind::Flag { invert: false },
+                },
+            ],
+        }],
+    },
+    Page {
         name: "Startup",
         title: "Startup",
         blurb: "What you see in the first two seconds.",
