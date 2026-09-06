@@ -592,8 +592,8 @@ EOF
     # fontconfig being installed says nothing about there being a font to find.
     if have fc-list; then
         local nfonts nmono
-        nfonts="$(fc-list 2>/dev/null | wc -l)"
-        nmono="$(fc-list :spacing=100 2>/dev/null | wc -l)"
+        nfonts="$(fc-list 2>/dev/null | wc -l || true)"
+        nmono="$(fc-list :spacing=100 2>/dev/null | wc -l || true)"
         if [ "${nfonts:-0}" -eq 0 ]; then
             row_miss "fonts" "fontconfig is installed but finds no font at all"
             add_missing "$(font_package_for "$PKG_MGR")"
@@ -632,7 +632,7 @@ check_system() {
 
     # No render node means no GPU to draw with, and the TTY backend simply exits.
     if ls /dev/dri/card* >/dev/null 2>&1; then
-        row_ok "GPU" "$(ls -d /dev/dri/card* 2>/dev/null | tr '\n' ' ')"
+        row_ok "GPU" "$(ls -d /dev/dri/card* 2>/dev/null | tr '\n' ' ' || true)"
         N_OK=$((N_OK + 1))
     else
         row_miss "GPU" "no /dev/dri/card*; ZEN can run nested but not on a TTY"
@@ -660,13 +660,14 @@ check_system() {
 
     # Without logind, device access is group membership and nothing else.
     if [ ! -d /run/systemd/system ]; then
-        local groups; groups="$(id -nG 2>/dev/null)"
+        local groups; groups="$(id -nG 2>/dev/null || true)"
         local want missing_groups=""
         for want in video input seat; do
             case " $groups " in *" $want "*) ;; *) missing_groups="$missing_groups $want" ;; esac
         done
         if [ -n "$missing_groups" ]; then
-            row_miss "groups" "add yourself:sudo usermod -aG$(echo "$missing_groups" | tr ' ' ',') $USER"
+            local who="${USER:-$(id -un 2>/dev/null || echo you)}"
+            row_miss "groups" "sudo usermod -aG$(echo "${missing_groups# }" | tr ' ' ',') $who"
             N_MISSING=$((N_MISSING + 1))
         else
             row_ok "groups" "video input seat"
@@ -677,7 +678,7 @@ check_system() {
     # Audio and screencasting both ride on PipeWire at runtime, separately from the
     # headers the build needs.
     if have pipewire; then
-        row_ok "pipewire" "$(pipewire --version 2>/dev/null | head -1)"
+        row_ok "pipewire" "$(pipewire --version 2>/dev/null | head -1 || true)"
         N_OK=$((N_OK + 1))
     else
         row_miss "pipewire" "audio and screen sharing at runtime"
@@ -702,7 +703,11 @@ install_deps() {
             [ -n "$lib" ] && printf '      %-18s %s\n' "$lib" "$desc"
         done
         printf '\n    plus a C compiler, clang, pkg-config, and Rust >= 1.87.\n'
-        exit 1
+        # Same reasoning as the declined prompt below: on an update this is
+        # information, not a reason to stop, because what is installed still needs
+        # rebuilding from the code that was just pulled.
+        [ "$DO_UPDATE" = 1 ] || exit 1
+        return 0
     fi
 
     step "Installing missing packages"
@@ -710,7 +715,14 @@ install_deps() {
     set -- $MISSING_PKGS
     info "$# package(s) via $PKG_MGR:"
     dim "$*"
-    confirm || die "aborted"
+
+    # On an update, declining is a decision about packages, not about the update. Only a
+    # fresh install treats it as aborting, because there the build needs them.
+    if ! confirm; then
+        [ "$DO_UPDATE" = 1 ] || die "aborted"
+        dim "skipped; ZEN will still be built and installed"
+        return 0
+    fi
 
     need_root
     local y=""; [ "$ASSUME_YES" = 1 ] && y=1
@@ -1304,6 +1316,7 @@ is_unmodified_zen_theme() {
 
 theme_file() {
     local dst="$1" src="$2" what="$3"
+    [ -f "$src" ] || return 0
     if [ -f "$dst" ]; then
         if cmp -s "$src" "$dst"; then
             dim "$what theme already current: $dst"
