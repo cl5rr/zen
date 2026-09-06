@@ -2459,6 +2459,11 @@ mod tests {
         +    spawn_at_startup: [
         +        SpawnAtStartup {
         +            command: [
+        +                "waybar",
+        +            ],
+        +        },
+        +        SpawnAtStartup {
+        +            command: [
         +                "zen-wallpaper",
         +                "restore",
         +            ],

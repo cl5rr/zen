@@ -26,7 +26,7 @@ use zen::utils::spawning::{
 };
 use zen::utils::{cause_panic, version, watcher, xwayland, IS_SYSTEMD_SERVICE};
 use zen_config::{Config, ConfigPath};
-use zen_ipc::socket::SOCKET_PATH_ENV;
+use zen_ipc::socket::{COMPAT_SOCKET_PATH_ENV, SOCKET_PATH_ENV};
 use sd_notify::NotifyState;
 use smithay::reexports::wayland_server::Display;
 use tracing_subscriber::EnvFilter;
@@ -181,6 +181,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(ipc) = &state.zen.ipc_server {
         let socket_path = ipc.socket_path.as_deref().unwrap();
         env::set_var(SOCKET_PATH_ENV, socket_path);
+        // ZEN's IPC is niri's, forked, so every tool built against it already speaks
+        // this protocol and looks for it under this name. Exporting both is what makes
+        // waybar's workspace and window modules work without a ZEN-specific plugin.
+        env::set_var(COMPAT_SOCKET_PATH_ENV, socket_path);
         info!("IPC listening on: {}", socket_path.to_string_lossy());
     }
 
@@ -255,6 +259,7 @@ fn import_environment() {
         "XDG_CURRENT_DESKTOP",
         "XDG_SESSION_TYPE",
         SOCKET_PATH_ENV,
+        COMPAT_SOCKET_PATH_ENV,
     ]
     .join(" ");
 

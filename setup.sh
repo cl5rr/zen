@@ -1186,7 +1186,7 @@ ui_multi() {
 #   core      Mod+T, Mod+Space, the wallpaper, the lock screen
 #   media     the XF86 keys: volume, brightness, play/pause
 #   apps      Mod+W, Mod+E, Mod+D and notifications
-DESKTOP_APPS="alacritty fuzzel swaybg swaylock"
+DESKTOP_APPS="alacritty fuzzel swaybg swaylock waybar"
 MEDIA_APPS="wireplumber playerctl brightnessctl xdg-utils"
 EXTRA_APPS="firefox nautilus mako"
 GREETER_PKGS="greetd cage greetd-regreet"
@@ -1213,7 +1213,7 @@ install_desktop_apps() {
 
 # What the shipped keybinds spawn, as "command:package" pairs. Checked by command
 # because that is what a bind actually needs to find on PATH.
-BIND_APPS="alacritty:alacritty fuzzel:fuzzel swaybg:swaybg swaylock:swaylock wpctl:wireplumber playerctl:playerctl brightnessctl:brightnessctl xdg-open:xdg-utils firefox:firefox nautilus:nautilus mako:mako"
+BIND_APPS="waybar:waybar alacritty:alacritty fuzzel:fuzzel swaybg:swaybg swaylock:swaylock wpctl:wireplumber playerctl:playerctl brightnessctl:brightnessctl xdg-open:xdg-utils firefox:firefox nautilus:nautilus mako:mako"
 
 install_extra_apps() {
     step "Installing optional extras"
@@ -1244,16 +1244,8 @@ write_user_config() {
 # fuzzel's stock look is a grey box that reads as an unstyled dialog on a dark
 # canvas. This is the single cheapest thing that stops ZEN looking half-dressed.
 theme_launcher() {
-    local dir="${XDG_CONFIG_HOME:-$HOME/.config}/fuzzel"
-    local dst="$dir/fuzzel.ini"
-
-    if [ -f "$dst" ]; then
-        dim "you already have a fuzzel config, left alone: $dst"
-        return 0
-    fi
-    mkdir -p "$dir"
-    cp resources/fuzzel.ini "$dst"
-    ok "themed the app launcher: $dst"
+    local base="${XDG_CONFIG_HOME:-$HOME/.config}"
+    theme_file "$base/fuzzel/fuzzel.ini" resources/fuzzel.ini "the app launcher"
 }
 
 # Themes the terminal, unless you already have a config of your own.
@@ -1304,6 +1296,14 @@ ly_set() {
 
 # An unconfigured swaylock is a blank white panel you cannot tell apart from a
 # crash, which is worse than no lock screen at all.
+# The status bar. Two files, and the same rule as every other theme: installed only
+# where there is nothing already, updated later only if it is still ZEN's copy.
+theme_bar() {
+    local base="${XDG_CONFIG_HOME:-$HOME/.config}"
+    theme_file "$base/waybar/config.jsonc" resources/waybar/config.jsonc "waybar"
+    theme_file "$base/waybar/style.css"    resources/waybar/style.css    "the waybar style"
+}
+
 theme_lock() {
     local base="${XDG_CONFIG_HOME:-$HOME/.config}"
     theme_file "$base/swaylock/config" resources/swaylock.conf "swaylock"
@@ -1352,6 +1352,7 @@ theme_all() {
     theme_launcher
     theme_terminal
     theme_lock
+    theme_bar
 }
 
 # Puts the shipped wallpaper where the picker looks, so a fresh install has one.

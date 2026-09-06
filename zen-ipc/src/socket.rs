@@ -8,6 +8,11 @@ use crate::{Event, Reply, Request};
 
 pub const SOCKET_PATH_ENV: &str = "ZEN_SOCKET";
 
+// ZEN's IPC is a fork of niri's and still speaks the same protocol, so the tools people
+// already run on a niri desktop work here unchanged as long as they can find the socket.
+// They all look for it under this name.
+pub const COMPAT_SOCKET_PATH_ENV: &str = "NIRI_SOCKET";
+
 pub struct Socket {
     stream: BufReader<UnixStream>,
 }

@@ -1,3 +1,4 @@
+mod bar;
 mod config;
 mod lists;
 mod monitors;
@@ -113,6 +114,7 @@ fn build(app: &adw::Application) {
     stack.add_named(&monitors::page(&state), Some("Monitors"));
     stack.add_named(&lists::binds_page(&state), Some("Keybinds"));
     stack.add_named(&lists::startup_page(&state), Some("Startup apps"));
+    stack.add_named(&bar::page(&state), Some("Status bar"));
     stack.add_named(&wallpaper::page(&state), Some("Wallpaper"));
 
     let sidebar = build_sidebar(&stack);
@@ -165,6 +167,7 @@ fn build_sidebar(stack: &gtk::Stack) -> gtk::Widget {
     names.push("Monitors");
     names.push("Keybinds");
     names.push("Startup apps");
+    names.push("Status bar");
     names.push("Wallpaper");
 
     for name in &names {

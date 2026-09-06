@@ -604,7 +604,7 @@ fn card(state: &Rc<App>, screen: &Screen, index: usize, all: &[String]) -> gtk::
     card.upcast()
 }
 
-fn row(label: &str, hint: &str, control: gtk::Widget) -> gtk::Widget {
+pub fn row(label: &str, hint: &str, control: gtk::Widget) -> gtk::Widget {
     let text = gtk::Box::new(Orientation::Vertical, 2);
     text.set_hexpand(true);
     text.append(
@@ -634,7 +634,7 @@ fn row(label: &str, hint: &str, control: gtk::Widget) -> gtk::Widget {
     line.upcast()
 }
 
-fn separator(card: &gtk::Box) {
+pub fn separator(card: &gtk::Box) {
     let sep = gtk::Box::new(Orientation::Horizontal, 0);
     sep.add_css_class("row-sep");
     card.append(&sep);

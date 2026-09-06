@@ -1,0 +1,104 @@
+/* ZEN's status bar.
+ *
+ * Each module is its own rounded pill on a transparent bar rather than one solid strip,
+ * so the bar reads as objects floating over the canvas instead of a band cutting the
+ * top off the screen. The colours are the ones in default-config.kdl: the near-white
+ * focus ring, and the same dark ground the glass tint pulls toward.
+ *
+ * Installed to ~/.config/waybar/style.css only if you do not already have one. It is
+ * yours after that; ZEN will not overwrite it. */
+
+* {
+    border: none;
+    border-radius: 0;
+    font-family: "Inter", "Cantarell", sans-serif;
+    font-size: 12.5px;
+    min-height: 0;
+}
+
+window#waybar {
+    background: transparent;
+    color: #e8eaed;
+}
+
+/* Every module gets the same pill. Listing them rather than using a wildcard keeps the
+   bar's own box out of it, which would otherwise get a background too. */
+#workspaces,
+#window,
+#clock,
+#pulseaudio,
+#backlight,
+#battery,
+#network,
+#tray {
+    background-color: rgba(14, 16, 20, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 14px;
+    padding: 2px 12px;
+    margin: 0;
+    color: #d6dae2;
+}
+
+#workspaces {
+    padding: 2px 4px;
+}
+
+#workspaces button {
+    background: transparent;
+    border-radius: 11px;
+    color: #7b8290;
+    padding: 0 9px;
+    margin: 2px 1px;
+    min-width: 18px;
+}
+
+#workspaces button:hover {
+    background-color: rgba(255, 255, 255, 0.07);
+    color: #e8eaed;
+}
+
+#workspaces button.active {
+    background-color: rgba(207, 230, 255, 0.16);
+    color: #cfe6ff;
+}
+
+#workspaces button.urgent {
+    background-color: rgba(224, 108, 117, 0.22);
+    color: #ff8b93;
+}
+
+#window {
+    color: #9aa2b1;
+}
+
+/* Nothing focused means an empty label, and an empty pill is just a floating smudge. */
+window#waybar.empty #window {
+    background: transparent;
+    border-color: transparent;
+    padding: 0;
+}
+
+#clock {
+    color: #e8eaed;
+    font-weight: 600;
+}
+
+#battery.warning {
+    color: #e5c07b;
+}
+
+#battery.critical {
+    color: #ff8b93;
+    border-color: rgba(224, 108, 117, 0.45);
+}
+
+#network.disconnected {
+    color: #7b8290;
+}
+
+#tray menu {
+    background-color: #12151a;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 10px;
+    color: #e8eaed;
+}

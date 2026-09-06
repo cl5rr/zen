@@ -504,7 +504,10 @@ mod tests {
         let mut c = shipped();
         assert_eq!(
             c.startup(),
-            vec![vec!["zen-wallpaper".to_owned(), "restore".to_owned()]]
+            vec![
+                vec!["waybar".to_owned()],
+                vec!["zen-wallpaper".to_owned(), "restore".to_owned()],
+            ]
         );
 
         c.set_startup(&[

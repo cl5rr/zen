@@ -422,16 +422,20 @@ layout {
 //
 // ZEN is a compositor, not a desktop environment: it does not ship a
 // taskbar, and deliberately so -- a panel you cannot replace is worse
-// than one you chose. Any layer-shell panel works; uncomment one.
+// than one you chose. Any layer-shell panel works.
 //
-// waybar is the usual choice. Others that work unmodified: eww, ags,
-// yambar, hyprpanel.
+// waybar is the one ZEN themes and the one Settings > Status bar edits. It is
+// on by default because a desktop with no clock is not a finished desktop.
+// Others work unmodified if you would rather: eww, ags, yambar, hyprpanel.
+//
+// ZEN exports NIRI_SOCKET alongside ZEN_SOCKET, so waybar's workspace and
+// window modules find the compositor with no plugin of their own.
 //
 // Later, ZEN's canvas widgets will be able to host these *in* the canvas
 // rather than pinned to a screen edge -- same programs, positioned in the
 // space instead of over it.
 // ---------------------------------------------------------------------
-// spawn-at-startup "waybar"
+spawn-at-startup "waybar"
 
 // The wallpaper. `zen-wallpaper` re-applies whatever you last picked, so this
 // is all that is needed; there is no daemon to configure and no path to keep in
