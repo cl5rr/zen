@@ -59,15 +59,29 @@ impl Config {
     }
 
     // read
+    //
+    // A config has several window-rule nodes and only one of them applies to every
+    // window: the one with no match. Taking the first by name would land on whichever
+    // app-specific rule happens to be written earliest, so settings that mean "all
+    // windows" would silently edit the wezterm rule.
+    fn pick<'a>(doc: &'a KdlDocument, name: &str) -> Option<&'a KdlNode> {
+        let idx = pick_index(doc, name)?;
+        Some(&doc.nodes()[idx])
+    }
+
     fn section(&self, path: &[&str]) -> Option<&KdlNode> {
         let mut doc = &self.doc;
         let mut found = None;
         for name in path {
-            let node = doc.get(name)?;
+            let node = Self::pick(doc, name)?;
             found = Some(node);
             doc = node.children()?;
         }
         found
+    }
+
+    pub fn boolean(&self, path: &[&str], key: &str) -> Option<bool> {
+        self.leaf(path, key)?.entries().first()?.value().as_bool()
     }
 
     fn leaf(&self, path: &[&str], key: &str) -> Option<&KdlNode> {
@@ -112,6 +126,12 @@ impl Config {
     pub fn set_string(&mut self, path: &[&str], key: &str, value: &str) {
         let mut entry = KdlEntry::new(KdlValue::String(value.to_owned()));
         entry.set_value_repr(format!("{value:?}"));
+        self.set_argument(path, key, entry);
+    }
+
+    pub fn set_boolean(&mut self, path: &[&str], key: &str, value: bool) {
+        let mut entry = KdlEntry::new(KdlValue::Bool(value));
+        entry.set_value_repr(value.to_string());
         self.set_argument(path, key, entry);
     }
 
@@ -166,10 +186,21 @@ impl Config {
     fn children_mut(&mut self, path: &[&str]) -> &mut KdlDocument {
         let mut doc = &mut self.doc;
         for (depth, name) in path.iter().enumerate() {
-            if doc.get(name).is_none() {
-                doc.nodes_mut().push(fresh(name, depth));
-            }
-            let node = doc.get_mut(name).unwrap();
+            let idx = match pick_index(doc, name) {
+                Some(idx) => idx,
+                None => {
+                    doc.nodes_mut().push(fresh(node_name(name), depth));
+                    let idx = doc.nodes().len() - 1;
+                    // A rule created for a selector must carry the match it was
+                    // selected by, or it would apply to every window and never be
+                    // found again.
+                    if let Some(selector) = name.split_once('@').map(|(_, sel)| sel) {
+                        add_match(&mut doc.nodes_mut()[idx], selector, depth + 1);
+                    }
+                    idx
+                }
+            };
+            let node = &mut doc.nodes_mut()[idx];
             if node.children().is_none() {
                 node.set_children(empty(depth));
             }
@@ -180,6 +211,67 @@ impl Config {
 }
 
 // util
+//
+// A path segment may carry a selector after '@' so a spec row can name one node out of
+// several with the same name. "window-rule" alone means the rule with no match at all,
+// the one that applies to every window; "window-rule@is-active=true" means the rule
+// whose match says exactly that. Without this, every rule row would edit whichever
+// window-rule happened to be written first.
+fn node_name(segment: &str) -> &str {
+    segment.split_once('@').map_or(segment, |(name, _)| name)
+}
+
+fn match_nodes(node: &KdlNode) -> impl Iterator<Item = &KdlNode> {
+    node.children()
+        .into_iter()
+        .flat_map(|c| c.nodes().iter())
+        .filter(|n| n.name().value() == "match")
+}
+
+fn selects(node: &KdlNode, selector: Option<&str>) -> bool {
+    let Some(selector) = selector else {
+        return match_nodes(node).next().is_none();
+    };
+    let Some((prop, want)) = selector.split_once('=') else {
+        return false;
+    };
+    match_nodes(node).any(|m| {
+        m.get(prop)
+            .is_some_and(|e| e.value().as_bool().map(|b| b.to_string()) == Some(want.to_owned()))
+    })
+}
+
+fn add_match(node: &mut KdlNode, selector: &str, depth: usize) {
+    let Some((prop, want)) = selector.split_once('=') else {
+        return;
+    };
+    let Ok(want) = want.parse::<bool>() else {
+        return;
+    };
+    if node.children().is_none() {
+        node.set_children(empty(depth - 1));
+    }
+    let mut m = fresh("match", depth);
+    let mut entry = KdlEntry::new_prop(prop, KdlValue::Bool(want));
+    entry.set_value_repr(want.to_string());
+    m.entries_mut().push(entry);
+    node.children_mut().as_mut().unwrap().nodes_mut().push(m);
+}
+
+fn pick_index(doc: &KdlDocument, segment: &str) -> Option<usize> {
+    let (name, selector) = match segment.split_once('@') {
+        Some((name, sel)) => (name, Some(sel)),
+        None => (segment, None),
+    };
+
+    // Only rule nodes come in several copies; everything else is a plain lookup, and
+    // treating it as selectable would make an absent selector mean "has no children".
+    let selectable = matches!(name, "window-rule" | "layer-rule");
+    doc.nodes().iter().position(|n| {
+        n.name().value() == name && (!selectable || selects(n, selector))
+    })
+}
+
 fn fresh(name: &str, depth: usize) -> KdlNode {
     let mut node = KdlNode::new(name);
     node.set_leading("    ".repeat(depth));
@@ -221,6 +313,90 @@ mod tests {
 
     fn shipped() -> Config {
         from(include_str!("../../resources/default-config.kdl"))
+    }
+
+    // The shipped config has four window-rule nodes and only the third applies to
+    // every window. A path lookup by name alone lands on the wezterm rule, so the
+    // tint toggle would silently edit that instead, and nothing else would notice.
+    #[test]
+    fn the_tint_toggle_finds_the_rule_that_has_no_match() {
+        let mut c = shipped();
+        assert_eq!(c.boolean(&["window-rule"], "draw-border-with-background"), Some(false));
+
+        c.set_boolean(&["window-rule"], "draw-border-with-background", true);
+        let text = c.doc.to_string();
+
+        // Counted as nodes, not as text: the config explains the setting in a comment
+        // further up, so a substring count is 2 before anything is even written.
+        let carriers: Vec<bool> = c
+            .doc
+            .nodes()
+            .iter()
+            .filter(|n| n.name().value() == "window-rule")
+            .map(|n| {
+                n.children().is_some_and(|c| {
+                    c.nodes()
+                        .iter()
+                        .any(|n| n.name().value() == "draw-border-with-background")
+                })
+            })
+            .collect();
+        assert_eq!(
+            carriers.iter().filter(|c| **c).count(),
+            1,
+            "the setting landed in {} of {} rules",
+            carriers.iter().filter(|c| **c).count(),
+            carriers.len()
+        );
+        assert!(text.contains("draw-border-with-background true"));
+        assert!(
+            text.contains("wezterm"),
+            "the app-specific rules must survive the edit"
+        );
+
+        let reread = from(&text);
+        assert_eq!(reread.boolean(&["window-rule"], "draw-border-with-background"), Some(true));
+        zen_config::Config::parse_mem(&text).expect("the edited config must still parse");
+    }
+
+    // The two opacity rules are told apart only by their match, and creating one
+    // without its match would produce a rule that applies to every window.
+    #[test]
+    fn opacity_rows_address_the_active_and_inactive_rules_separately() {
+        let mut c = shipped();
+        assert_eq!(c.number(&["window-rule@is-active=true"], "opacity"), Some(0.92));
+        assert_eq!(c.number(&["window-rule@is-active=false"], "opacity"), Some(0.82));
+
+        c.set_number(&["window-rule@is-active=true"], "opacity", 0.5, 2);
+        let text = c.doc.to_string();
+        let reread = from(&text);
+        assert_eq!(reread.number(&["window-rule@is-active=true"], "opacity"), Some(0.5));
+        assert_eq!(
+            reread.number(&["window-rule@is-active=false"], "opacity"),
+            Some(0.82),
+            "editing the focused rule must not touch the unfocused one"
+        );
+        zen_config::Config::parse_mem(&text).expect("the edited config must still parse");
+    }
+
+    #[test]
+    fn a_rule_created_for_a_selector_carries_that_match() {
+        let mut c = from("layout {
+    gaps 20
+}
+");
+        c.set_number(&["window-rule@is-active=true"], "opacity", 0.5, 2);
+        let text = c.doc.to_string();
+
+        assert!(text.contains("is-active=true"), "created rule has no match: {text}");
+        let reread = from(&text);
+        assert_eq!(reread.number(&["window-rule@is-active=true"], "opacity"), Some(0.5));
+        assert_eq!(
+            reread.number(&["window-rule"], "opacity"),
+            None,
+            "the new rule must not read as the global one"
+        );
+        zen_config::Config::parse_mem(&text).expect("the created config must still parse");
     }
 
     #[test]
@@ -561,6 +737,14 @@ impl Config {
                     .and_then(|e| e.value().as_string())
                     .is_some_and(|n| n == name)
         })
+    }
+
+    #[cfg(test)]
+    pub fn from_str_for_test(text: &str) -> Self {
+        Self {
+            path: PathBuf::new(),
+            doc: text.parse().unwrap(),
+        }
     }
 
     pub fn output(&self, name: &str) -> OutputCfg {

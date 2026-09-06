@@ -316,6 +316,28 @@ fn build_row(state: &Rc<App>, row: &'static spec::Row) -> gtk::Widget {
             line.append(&switch);
         }
 
+        Kind::Bool { default } => {
+            let current = state
+                .config
+                .borrow()
+                .as_ref()
+                .and_then(|c| c.boolean(row.path, row.key))
+                .unwrap_or(*default);
+            let switch = gtk::Switch::builder()
+                .valign(Align::Center)
+                .active(current)
+                .build();
+
+            let state = state.clone();
+            switch.connect_active_notify(move |s| {
+                if let Some(c) = state.config.borrow_mut().as_mut() {
+                    c.set_boolean(row.path, row.key, s.is_active());
+                }
+                state.touch();
+            });
+            line.append(&switch);
+        }
+
         Kind::Number { min, max, step, digits, default } => {
             let current = state
                 .config

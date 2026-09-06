@@ -144,6 +144,27 @@ glass {
     specular 0.12
 }
 
+// The frost behind the glass.
+//
+// Glass is blur plus refraction plus a tint, and only the tint is under `glass`.
+// Turn blur off here and windows keep their bent rim and their tint over a sharp
+// backdrop, which is the closest the material comes to clear glass.
+blur {
+    // Each pass roughly doubles the radius. Three is a soft frost that still
+    // costs one dual-kawase chain per window that asks for it.
+    passes 3
+
+    // Sample distance within a pass. Lower is tighter and cleaner; higher
+    // spreads further for the same number of passes and starts to band.
+    offset 3
+
+    // Enough grain to break the banding a heavy blur leaves on a gradient.
+    noise 0.02
+
+    // Blur alone reads as frosted plastic. This is the lift that makes it glass.
+    saturation 1.5
+}
+
 // ZEN's welcome animation.
 //
 // A plain cover fills the screen with the ZEN mark on it, holds for a second,
