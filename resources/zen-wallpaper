@@ -3,42 +3,140 @@
 # ZEN's wallpaper: drop images in a folder, pick one, done.
 #
 #   zen-wallpaper                 pick one, with a preview-less fuzzel menu
-#   zen-wallpaper next            cycle to the next image
+#   zen-wallpaper next            cycle to the next wallpaper
 #   zen-wallpaper prev            cycle to the previous one
 #   zen-wallpaper random          pick at random
 #   zen-wallpaper set <path>      set a specific file
 #   zen-wallpaper restore         re-apply the last choice (run at startup)
 #   zen-wallpaper dir             print the wallpaper folder
+#   zen-wallpaper list            every wallpaper found, one per line
+#   zen-wallpaper volume [0-100]  read or set the volume for video wallpapers
 #
 # There is no daemon and no config format. The folder IS the config: anything you
 # drop in it shows up next time you open the picker. The current choice is one
 # line in a state file, so it survives a reboot without anything watching it.
+#
+# Renderers, in the order they are preferred:
+#
+#   video   mpvpaper   the only one of these that plays anything
+#   image   swww       has real crossfades, and a daemon to talk to
+#   image   swaybg     no transitions, so the fade is faked by overlapping
+#
+# Nothing here is required. A missing renderer downgrades the effect rather than
+# failing, except for video, which genuinely cannot be done without mpvpaper.
 
 set -u
 
 DIR="${ZEN_WALLPAPER_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/zen/wallpapers}"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/zen"
 STATE="$STATE_DIR/wallpaper"
+VOLUME_STATE="$STATE_DIR/wallpaper-volume"
+FADE_MS="${ZEN_WALLPAPER_FADE_MS:-500}"
 
 mkdir -p "$DIR" "$STATE_DIR"
 
 die() { printf 'zen-wallpaper: %s\n' "$*" >&2; exit 1; }
 
-# Every image in the folder, sorted, one per line.
+# Every wallpaper in the folder, sorted, one per line. Videos are listed alongside
+# images because from the picker's side they are the same thing.
 list() {
     find -L "$DIR" -maxdepth 1 -type f \
         \( -iname '*.jpg'  -o -iname '*.jpeg' -o -iname '*.png' \
-        -o -iname '*.webp' -o -iname '*.bmp'  -o -iname '*.gif' \) \
+        -o -iname '*.webp' -o -iname '*.bmp'  -o -iname '*.gif' \
+        -o -iname '*.mp4'  -o -iname '*.mkv'  -o -iname '*.webm' \
+        -o -iname '*.mov'  -o -iname '*.m4v'  -o -iname '*.avi' \) \
         2>/dev/null | sort
 }
 
-# swaybg is the renderer. One instance at a time: start the new one, then stop the
-# old, so there is no black frame in between.
-apply() {
-    local img="$1"
-    [ -f "$img" ] || die "no such file: $img"
+is_video() {
+    case "${1,,}" in
+        *.mp4|*.mkv|*.webm|*.mov|*.m4v|*.avi) return 0 ;;
+        *) return 1 ;;
+    esac
+}
 
-    command -v swaybg >/dev/null 2>&1 || die "swaybg is not installed (pacman -S swaybg)"
+# Volume for video wallpapers, 0 to 100. Kept out of the wallpaper state file so
+# that changing it does not read as changing the wallpaper.
+volume() {
+    local v
+    v=$(cat "$VOLUME_STATE" 2>/dev/null || true)
+    case "$v" in
+        ''|*[!0-9]*) echo 0 ;;
+        *) if [ "$v" -gt 100 ]; then echo 100; else echo "$v"; fi ;;
+    esac
+}
+
+set_volume() {
+    local v="$1"
+    case "$v" in
+        ''|*[!0-9]*) die "volume must be a whole number from 0 to 100" ;;
+    esac
+    [ "$v" -gt 100 ] && v=100
+    printf '%s\n' "$v" > "$VOLUME_STATE"
+
+    # Re-applied only when a video is actually on screen, so changing the volume
+    # with an image up does not restart anything.
+    local cur; cur=$(current)
+    if [ -n "$cur" ] && is_video "$cur" && pgrep -x mpvpaper >/dev/null 2>&1; then
+        apply "$cur"
+    fi
+}
+
+stop_renderers() {
+    pkill -x swaybg 2>/dev/null
+    pkill -x mpvpaper 2>/dev/null
+    true
+}
+
+# Puts a wallpaper on screen, and remembers it.
+#
+# Three renderers, picked by what the file is and what is installed. Whichever runs,
+# every other renderer is stopped afterwards rather than before, so there is no black
+# frame in the gap.
+apply() {
+    local wp="$1"
+    [ -f "$wp" ] || die "no such file: $wp"
+
+    if is_video "$wp"; then
+        apply_video "$wp"
+    elif command -v swww >/dev/null 2>&1; then
+        apply_swww "$wp"
+    else
+        apply_swaybg "$wp"
+    fi
+}
+
+# swww crossfades in the compositor for us, which is the only way to get a real
+# transition: nothing else here can draw two wallpapers at once.
+apply_swww() {
+    local img="$1"
+
+    if ! swww query >/dev/null 2>&1; then
+        swww-daemon >/dev/null 2>&1 &
+        local waited=0
+        while ! swww query >/dev/null 2>&1; do
+            sleep 0.1
+            waited=$((waited + 1))
+            [ "$waited" -gt 30 ] && break
+        done
+    fi
+
+    if swww img --transition-type fade --transition-duration "$(fade_seconds)" \
+             --transition-fps 60 "$img" >/dev/null 2>&1; then
+        pkill -x swaybg 2>/dev/null
+        pkill -x mpvpaper 2>/dev/null
+        printf '%s\n' "$img" > "$STATE"
+    else
+        apply_swaybg "$img"
+    fi
+}
+
+# swaybg cannot fade. Overlapping the two instances at least removes the black frame
+# the naive order would produce, and the new one covers the old the moment it draws.
+apply_swaybg() {
+    local img="$1"
+    command -v swaybg >/dev/null 2>&1 \
+        || die "install swaybg for images, or swww for images with a crossfade"
 
     local old
     old=$(pgrep -x swaybg 2>/dev/null | tr '\n' ' ')
@@ -46,14 +144,46 @@ apply() {
     swaybg --mode fill --image "$img" >/dev/null 2>&1 &
     local new=$!
 
-    # Give the new one a moment to put up its first frame before killing the old.
     sleep 0.35
     if kill -0 "$new" 2>/dev/null; then
         [ -n "$old" ] && kill $old 2>/dev/null
+        pkill -x mpvpaper 2>/dev/null
         printf '%s\n' "$img" > "$STATE"
     else
         die "swaybg failed to start for $img"
     fi
+}
+
+# mpvpaper is mpv rendered onto the background layer. Muted by default: a wallpaper
+# that makes noise the moment it is set is a surprise, not a feature.
+apply_video() {
+    local vid="$1"
+    command -v mpvpaper >/dev/null 2>&1 \
+        || die "video wallpapers need mpvpaper (pacman -S mpvpaper, or from the AUR)"
+
+    local vol; vol=$(volume)
+    local opts="--loop-file=inf --no-audio-display --panscan=1.0 --volume=$vol"
+    [ "$vol" -eq 0 ] && opts="$opts --mute=yes"
+
+    local old
+    old=$(pgrep -x mpvpaper 2>/dev/null | tr '\n' ' ')
+
+    mpvpaper -o "$opts" '*' "$vid" >/dev/null 2>&1 &
+    local new=$!
+
+    sleep 0.6
+    if kill -0 "$new" 2>/dev/null; then
+        [ -n "$old" ] && kill $old 2>/dev/null
+        pkill -x swaybg 2>/dev/null
+        printf '%s\n' "$vid" > "$STATE"
+    else
+        die "mpvpaper failed to start for $vid"
+    fi
+}
+
+# swww takes seconds; everything else here is in milliseconds.
+fade_seconds() {
+    awk -v ms="$FADE_MS" 'BEGIN { printf "%.2f", (ms < 0 ? 0 : ms) / 1000 }'
 }
 
 current() { [ -f "$STATE" ] && cat "$STATE" || true; }
@@ -115,7 +245,9 @@ case "${1:-pick}" in
              fi ;;
     dir)     printf '%s\n' "$DIR" ;;
     list)    list ;;
+    volume)  if [ $# -ge 2 ]; then set_volume "$2"; else volume; fi ;;
+    stop)    stop_renderers ;;
     -h|--help|help)
-             sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+             sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//' ;;
     *)       die "unknown command: $1 (try --help)" ;;
 esac

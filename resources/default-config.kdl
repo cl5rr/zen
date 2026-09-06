@@ -144,6 +144,17 @@ glass {
     specular 0.12
 }
 
+// Pointer gestures.
+gestures {
+    // Slamming the pointer into a screen corner used to open the overview. It fires
+    // on a single pixel, so it goes off while you are reaching for a window's close
+    // button or the top-left of a maximised app, and ZEN has no mode to get stuck in
+    // that would make it worth the surprise. Mod+O is the deliberate way in.
+    hot-corners {
+        off
+    }
+}
+
 // The frost behind the glass.
 //
 // Glass is blur plus refraction plus a tint, and only the tint is under `glass`.

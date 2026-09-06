@@ -2597,7 +2597,9 @@ impl State {
                     .with_grab(|_, grab| grab_allows_hot_corner(grab))
                     .unwrap_or(true)
             {
-                self.zen.layout.toggle_overview();
+                if self.zen.layout.camera_toggle_map() {
+                    self.zen.queue_redraw_all();
+                }
             }
             self.zen.pointer_inside_hot_corner = true;
         }
@@ -2680,7 +2682,9 @@ impl State {
                     .with_grab(|_, grab| grab_allows_hot_corner(grab))
                     .unwrap_or(true)
             {
-                self.zen.layout.toggle_overview();
+                if self.zen.layout.camera_toggle_map() {
+                    self.zen.queue_redraw_all();
+                }
             }
             self.zen.pointer_inside_hot_corner = true;
         }

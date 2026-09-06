@@ -219,6 +219,45 @@ button.flat:hover {
     background: transparent;
 }
 
+/* The grid is the picker: a tile is selected by clicking it, and FlowBox marks the
+   selection on its own child rather than on our frame, so the ring is drawn there. */
+.wallpaper-grid {
+    background: transparent;
+}
+
+.wallpaper-grid > flowboxchild {
+    padding: 0;
+    border-radius: 12px;
+    background: transparent;
+}
+
+.wallpaper-grid > flowboxchild:selected {
+    background: transparent;
+    outline: 2px solid #7fc8ff;
+    outline-offset: 1px;
+}
+
+.wallpaper-grid > flowboxchild:selected .thumb {
+    opacity: 1;
+    border-color: #7fc8ff;
+}
+
+.video-thumb,
+.video-preview {
+    color: rgba(255, 255, 255, 0.55);
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+.badge {
+    font-size: 9pt;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #0e1014;
+    background-color: rgba(207, 230, 255, 0.92);
+    border-radius: 6px;
+    padding: 1px 6px;
+}
+
 .thumb {
     border-radius: 10px;
     border: 1px solid rgba(255, 255, 255, 0.07);

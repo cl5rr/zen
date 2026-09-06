@@ -316,7 +316,24 @@ pub const PAGES: &[Page] = &[
                     key: "zoom-step",
                     kind: Kind::Number { min: 1.05, max: 2., step: 0.05, default: 1.1, digits: 2 },
                 },
+                Row {
+                    label: "Map scale",
+                    hint: "How far Mod+O pulls back. Islands draw as bubbles at or below this",
+                    path: &["camera"],
+                    key: "map-zoom",
+                    kind: Kind::Number { min: 0.1, max: 0.9, step: 0.01, default: 0.42, digits: 2 },
+                },
             ],
+        },
+        Group {
+            title: "SCREEN CORNERS",
+            rows: &[Row {
+                label: "Corner opens the map",
+                hint: "Off by default. It fires on a single pixel, so it goes off while                        you are reaching for something else",
+                path: &["gestures", "hot-corners"],
+                key: "off",
+                kind: Kind::Flag { invert: true },
+            }],
         }],
     },
     Page {

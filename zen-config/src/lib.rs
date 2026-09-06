@@ -2545,6 +2545,9 @@ mod tests {
         +                        damping_ratio: 0.85,
         +                        stiffness: 350,
 
+        -            off: false,
+        +            off: true,
+
         -                a: 0.85,
         +                a: 0.8509804,
 

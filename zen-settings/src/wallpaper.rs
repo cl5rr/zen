@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
 
@@ -9,17 +9,18 @@ use gtk::{Align, Orientation};
 use crate::config;
 use crate::App;
 
-const THUMB_W: i32 = 168;
-const THUMB_H: i32 = 96;
-const REEL_GAP: i32 = 12;
+const THUMB_W: i32 = 208;
+const THUMB_H: i32 = 117;
 
-struct Reel {
+const VIDEO_EXT: &[&str] = &["mp4", "mkv", "webm", "mov", "m4v", "avi"];
+const IMAGE_EXT: &[&str] = &["jpg", "jpeg", "png", "webp", "bmp", "gif"];
+
+struct Picker {
     files: Vec<PathBuf>,
-    index: RefCell<usize>,
-    strip: gtk::Box,
-    scroller: gtk::ScrolledWindow,
+    selected: RefCell<usize>,
     preview: gtk::Stack,
     caption: gtk::Label,
+    audio: gtk::Widget,
 }
 
 // page
@@ -36,7 +37,10 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
     );
     column.append(
         &gtk::Label::builder()
-            .label("The folder is the config. Anything you drop in it joins the cycle.")
+            .label(
+                "The folder is the config. Drop anything in it, images or video, \
+                 and it joins the grid.",
+            )
             .halign(Align::Start)
             .xalign(0.)
             .wrap(true)
@@ -45,12 +49,12 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
     );
 
     let dir = config::wallpaper_dir();
-    let files = images(&dir);
+    let files = wallpapers(&dir);
 
     if files.is_empty() {
         column.append(
             &gtk::Label::builder()
-                .label(format!("No images in {}", dir.display()))
+                .label(format!("Nothing in {}", dir.display()))
                 .halign(Align::Start)
                 .css_classes(["setting-hint"])
                 .build(),
@@ -68,122 +72,107 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
     preview.add_css_class("preview");
 
     for (i, file) in files.iter().enumerate() {
-        let picture = gtk::Picture::for_filename(file);
-        picture.set_content_fit(gtk::ContentFit::Cover);
-        preview.add_named(&picture, Some(&i.to_string()));
+        preview.add_named(&preview_for(file), Some(&i.to_string()));
     }
     preview.set_visible_child_name(&current.to_string());
 
     let caption = gtk::Label::builder()
-        .label(name_of(&files[current]))
+        .label(caption_for(&files[current]))
         .halign(Align::Start)
         .css_classes(["setting-hint"])
         .build();
 
-    let strip = gtk::Box::new(Orientation::Horizontal, REEL_GAP as i32);
-    strip.set_halign(Align::Start);
+    // Volume only means anything for a video, so the row goes away for an image
+    // rather than sitting there greyed out with nothing to explain it.
+    let (audio_row, volume_scale) = audio_controls();
 
-    for (i, file) in files.iter().enumerate() {
-        let picture = gtk::Picture::for_filename(file);
-        picture.set_content_fit(gtk::ContentFit::Cover);
-        picture.set_size_request(THUMB_W, THUMB_H);
-
-        let frame = gtk::Box::new(Orientation::Vertical, 0);
-        frame.add_css_class("thumb");
-        if i == current {
-            frame.add_css_class("current");
-        }
-        frame.append(&picture);
-        strip.append(&frame);
-    }
-
-    let scroller = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::External)
-        .vscrollbar_policy(gtk::PolicyType::Never)
-        .height_request(THUMB_H + 10)
-        .child(&strip)
-        .build();
-    scroller.add_css_class("reel");
-
-    let reel = Rc::new(Reel {
-        files,
-        index: RefCell::new(current),
-        strip,
-        scroller: scroller.clone(),
+    let picker = Rc::new(Picker {
+        files: files.clone(),
+        selected: RefCell::new(current),
         preview: preview.clone(),
         caption: caption.clone(),
+        audio: audio_row.clone(),
     });
 
-    let controls = gtk::Box::new(Orientation::Horizontal, 8);
-    controls.set_margin_top(4);
-
-    let back = button("Previous");
-    let next = button("Next");
-    let random = button("Random");
-    let apply = button("Set as wallpaper");
-
-    controls.append(&back);
-    controls.append(&next);
-    controls.append(&random);
-
-    let spacer = gtk::Box::new(Orientation::Horizontal, 0);
-    spacer.set_hexpand(true);
-    controls.append(&spacer);
-    controls.append(&apply);
-
     {
-        let reel = reel.clone();
-        back.connect_clicked(move |_| reel.step(-1));
-    }
-    {
-        let reel = reel.clone();
-        next.connect_clicked(move |_| reel.step(1));
-    }
-    {
-        let reel = reel.clone();
-        random.connect_clicked(move |_| {
-            let n = reel.files.len();
-            if n < 2 {
-                return;
-            }
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.subsec_nanos() as usize)
-                .unwrap_or(0);
-            let mut target = now % n;
-            if target == *reel.index.borrow() {
-                target = (target + 1) % n;
-            }
-            reel.go(target);
-        });
-    }
-    {
-        let reel = reel.clone();
         let state = state.clone();
-        apply.connect_clicked(move |_| {
-            let file = reel.files[*reel.index.borrow()].clone();
-            match Command::new("zen-wallpaper").arg("set").arg(&file).status() {
-                Ok(s) if s.success() => state.say(&format!("wallpaper: {}", name_of(&file)), "good"),
-                Ok(_) => state.say("zen-wallpaper could not set that image", "bad"),
+        volume_scale.connect_value_changed(move |s| {
+            let v = s.value().round() as i64;
+            match Command::new("zen-wallpaper")
+                .arg("volume")
+                .arg(v.to_string())
+                .status()
+            {
+                Ok(st) if st.success() => state.say(&format!("volume {v}"), ""),
+                Ok(_) => state.say("zen-wallpaper refused that volume", "bad"),
                 Err(_) => state.say("zen-wallpaper is not on PATH", "bad"),
             }
         });
     }
 
-    let caption_line = gtk::Box::new(Orientation::Horizontal, 12);
-    caption_line.append(&caption);
+    let grid = gtk::FlowBox::builder()
+        .selection_mode(gtk::SelectionMode::Single)
+        .homogeneous(true)
+        .row_spacing(12)
+        .column_spacing(12)
+        .min_children_per_line(3)
+        .max_children_per_line(6)
+        .build();
+    grid.add_css_class("wallpaper-grid");
+
+    for file in &files {
+        grid.append(&tile(file));
+    }
+
+    // Selecting is one click. Applying stays deliberate, because it restarts a
+    // renderer and, for a video, starts something that can make noise.
+    {
+        let picker = picker.clone();
+        grid.connect_selected_children_changed(move |g| {
+            let Some(child) = g.selected_children().first().cloned() else {
+                return;
+            };
+            picker.select(child.index() as usize);
+        });
+    }
+
+    let apply = gtk::Button::builder()
+        .label("Set as wallpaper")
+        .css_classes(["flat"])
+        .build();
+    {
+        let picker = picker.clone();
+        let state = state.clone();
+        apply.connect_clicked(move |_| picker.apply(&state));
+    }
+    {
+        let picker = picker.clone();
+        let state = state.clone();
+        grid.connect_child_activated(move |_, child| {
+            picker.select(child.index() as usize);
+            picker.apply(&state);
+        });
+    }
+
+    let controls = gtk::Box::new(Orientation::Horizontal, 8);
+    controls.set_margin_top(4);
+    let spacer = gtk::Box::new(Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    controls.append(&caption);
+    controls.append(&spacer);
+    controls.append(&apply);
 
     column.append(&preview);
-    column.append(&caption_line);
     column.append(&controls);
+    column.append(&audio_row);
     column.append(
         &gtk::Label::builder()
-            .label("UP NEXT")
+            .label("IN THE FOLDER")
             .halign(Align::Start)
             .css_classes(["group-label"])
             .build(),
     );
-    column.append(&scroller);
+    column.append(&grid);
     column.append(
         &gtk::Label::builder()
             .label(dir.display().to_string())
@@ -193,88 +182,141 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
             .build(),
     );
 
-    reel.scroll_to(current, false);
+    if let Some(child) = grid.child_at_index(current as i32) {
+        grid.select_child(&child);
+    }
+    picker.sync_audio();
+
     scrolled(&column)
 }
 
-impl Reel {
-    fn step(self: &Rc<Self>, delta: i32) {
-        let n = self.files.len() as i32;
-        if n < 2 {
+impl Picker {
+    fn select(self: &Rc<Self>, target: usize) {
+        if target >= self.files.len() || *self.selected.borrow() == target {
             return;
         }
-        let at = *self.index.borrow() as i32;
-        self.go((((at + delta) % n) + n) as usize % n as usize);
-    }
-
-    fn go(self: &Rc<Self>, target: usize) {
-        {
-            let mut index = self.index.borrow_mut();
-            if *index == target {
-                return;
-            }
-            mark(&self.strip, *index, false);
-            *index = target;
-        }
-        mark(&self.strip, target, true);
-
+        *self.selected.borrow_mut() = target;
         self.preview.set_visible_child_name(&target.to_string());
-        self.caption.set_label(&name_of(&self.files[target]));
-        self.scroll_to(target, true);
+        self.caption.set_label(&caption_for(&self.files[target]));
+        self.sync_audio();
     }
 
-    // A reel that jumps has no cycle to read ahead in, so the strip slides.
-    fn scroll_to(self: &Rc<Self>, index: usize, animate: bool) {
-        let adjustment = self.scroller.hadjustment();
-        let slot = (THUMB_W + REEL_GAP) as f64;
-        let visible = adjustment.page_size().max(slot);
-        let target = (slot * index as f64 - (visible - slot) / 2.)
-            .clamp(0., (adjustment.upper() - visible).max(0.));
+    fn sync_audio(self: &Rc<Self>) {
+        let is_video = is_video(&self.files[*self.selected.borrow()]);
+        self.audio.set_visible(is_video);
+    }
 
-        if !animate {
-            adjustment.set_value(target);
-            return;
+    fn apply(self: &Rc<Self>, state: &Rc<App>) {
+        let file = self.files[*self.selected.borrow()].clone();
+        match Command::new("zen-wallpaper").arg("set").arg(&file).status() {
+            Ok(s) if s.success() => {
+                state.say(&format!("wallpaper: {}", name_of(&file)), "good");
+            }
+            // The script says why on stderr, and the reasons differ: a missing
+            // mpvpaper for video, a missing swaybg for an image.
+            Ok(_) => state.say("zen-wallpaper could not set that, see its output", "bad"),
+            Err(_) => state.say("zen-wallpaper is not on PATH", "bad"),
         }
-
-        let from = adjustment.value();
-        let target_object = adw::CallbackAnimationTarget::new(move |value| {
-            adjustment.set_value(value);
-        });
-        let animation = adw::TimedAnimation::new(&self.scroller, from, target, 320, target_object);
-        animation.set_easing(adw::Easing::EaseOutCubic);
-
-        let keep = RefCell::new(Some(animation.clone()));
-        animation.connect_done(move |_| {
-            keep.borrow_mut().take();
-        });
-        animation.play();
     }
+}
+
+// tiles
+fn tile(file: &Path) -> gtk::Widget {
+    let frame = gtk::Box::new(Orientation::Vertical, 0);
+    frame.add_css_class("thumb");
+    frame.set_size_request(THUMB_W, THUMB_H);
+
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(&thumbnail(file)));
+
+    if is_video(file) {
+        let badge = gtk::Label::builder()
+            .label("VIDEO")
+            .halign(Align::End)
+            .valign(Align::End)
+            .margin_end(6)
+            .margin_bottom(6)
+            .css_classes(["badge"])
+            .build();
+        overlay.add_overlay(&badge);
+    }
+
+    frame.append(&overlay);
+    frame.upcast()
+}
+
+// GdkPixbuf will not decode a video, so one gets a placeholder rather than an empty
+// box. Pulling a real frame would mean shelling out to ffmpeg once per file.
+fn thumbnail(file: &Path) -> gtk::Widget {
+    if is_video(file) {
+        let icon = gtk::Image::from_icon_name("video-x-generic-symbolic");
+        icon.set_pixel_size(48);
+        icon.set_size_request(THUMB_W, THUMB_H);
+        icon.add_css_class("video-thumb");
+        return icon.upcast();
+    }
+
+    let picture = gtk::Picture::for_filename(file);
+    picture.set_content_fit(gtk::ContentFit::Cover);
+    picture.set_size_request(THUMB_W, THUMB_H);
+    picture.upcast()
+}
+
+fn preview_for(file: &Path) -> gtk::Widget {
+    if is_video(file) {
+        let stack = gtk::Box::new(Orientation::Vertical, 8);
+        stack.set_valign(Align::Center);
+        stack.add_css_class("video-preview");
+
+        let icon = gtk::Image::from_icon_name("video-x-generic-symbolic");
+        icon.set_pixel_size(64);
+        stack.append(&icon);
+        stack.append(
+            &gtk::Label::builder()
+                .label(name_of(file))
+                .css_classes(["setting-hint"])
+                .build(),
+        );
+        return stack.upcast();
+    }
+
+    let picture = gtk::Picture::for_filename(file);
+    picture.set_content_fit(gtk::ContentFit::Cover);
+    picture.upcast()
+}
+
+fn audio_controls() -> (gtk::Widget, gtk::Scale) {
+    let row = gtk::Box::new(Orientation::Horizontal, 14);
+    row.add_css_class("setting");
+
+    let text = gtk::Box::new(Orientation::Vertical, 2);
+    text.set_hexpand(true);
+    text.append(
+        &gtk::Label::builder()
+            .label("Volume")
+            .halign(Align::Start)
+            .build(),
+    );
+    text.append(
+        &gtk::Label::builder()
+            .label("Video wallpapers start muted. This applies straight away.")
+            .halign(Align::Start)
+            .css_classes(["setting-hint"])
+            .build(),
+    );
+    row.append(&text);
+
+    let scale = gtk::Scale::with_range(Orientation::Horizontal, 0., 100., 1.);
+    scale.set_value(current_volume());
+    scale.set_draw_value(true);
+    scale.set_size_request(200, -1);
+    scale.set_valign(Align::Center);
+    row.append(&scale);
+
+    (row.upcast(), scale)
 }
 
 // util
-fn mark(strip: &gtk::Box, index: usize, on: bool) {
-    let mut child = strip.first_child();
-    let mut i = 0;
-    while let Some(widget) = child {
-        if i == index {
-            if on {
-                widget.add_css_class("current");
-            } else {
-                widget.remove_css_class("current");
-            }
-        }
-        child = widget.next_sibling();
-        i += 1;
-    }
-}
-
-fn button(label: &str) -> gtk::Button {
-    gtk::Button::builder()
-        .label(label)
-        .css_classes(["flat"])
-        .build()
-}
-
 fn scrolled(child: &gtk::Box) -> gtk::Widget {
     gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -285,42 +327,64 @@ fn scrolled(child: &gtk::Box) -> gtk::Widget {
         .upcast()
 }
 
-fn images(dir: &PathBuf) -> Vec<PathBuf> {
+fn extension_is(path: &Path, list: &[&str]) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .is_some_and(|e| list.contains(&e.as_str()))
+}
+
+fn is_video(path: &Path) -> bool {
+    extension_is(path, VIDEO_EXT)
+}
+
+fn wallpapers(dir: &Path) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
         .into_iter()
         .flatten()
         .flatten()
         .map(|e| e.path())
-        .filter(|p| {
-            p.extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.to_ascii_lowercase())
-                .is_some_and(|e| {
-                    matches!(e.as_str(), "jpg" | "jpeg" | "png" | "webp" | "bmp" | "gif")
-                })
-        })
+        .filter(|p| extension_is(p, IMAGE_EXT) || extension_is(p, VIDEO_EXT))
         .collect();
     out.sort();
     out
 }
 
-fn current_index(files: &[PathBuf]) -> usize {
-    let state = std::env::var_os("XDG_STATE_HOME")
+fn state_file(name: &str) -> PathBuf {
+    std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
         .unwrap_or_default()
         .join("zen")
-        .join("wallpaper");
+        .join(name)
+}
 
-    let Ok(text) = std::fs::read_to_string(state) else {
+fn current_index(files: &[PathBuf]) -> usize {
+    let Ok(text) = std::fs::read_to_string(state_file("wallpaper")) else {
         return 0;
     };
     let wanted = PathBuf::from(text.trim());
     files.iter().position(|f| *f == wanted).unwrap_or(0)
 }
 
-fn name_of(path: &PathBuf) -> String {
+fn current_volume() -> f64 {
+    std::fs::read_to_string(state_file("wallpaper-volume"))
+        .ok()
+        .and_then(|t| t.trim().parse::<f64>().ok())
+        .unwrap_or(0.)
+        .clamp(0., 100.)
+}
+
+fn name_of(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+fn caption_for(path: &Path) -> String {
+    if is_video(path) {
+        format!("{}  ·  video", name_of(path))
+    } else {
+        name_of(path)
+    }
 }
