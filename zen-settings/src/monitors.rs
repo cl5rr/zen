@@ -20,6 +20,7 @@ pub struct Screen {
     pub w: f64,
     pub h: f64,
     pub scale: f64,
+    pub is_virtual: bool,
 }
 
 // discovery
@@ -67,6 +68,10 @@ fn detect() -> Vec<Screen> {
                 w: logical["width"].as_f64().unwrap_or(1920.),
                 h: logical["height"].as_f64().unwrap_or(1080.),
                 scale: logical["scale"].as_f64().unwrap_or(1.),
+                // VirtualOutput stamps these on the Output it makes, and nothing else
+                // reports itself this way, so it is how a headless one is recognised.
+                is_virtual: o["make"].as_str() == Some("ZEN")
+                    && o["model"].as_str() == Some("Virtual"),
             }
         })
         .collect();
@@ -133,7 +138,147 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
         column.append(&card(state, screen, i, &names));
     }
 
+    column.append(
+        &gtk::Label::builder()
+            .label("VIRTUAL MONITORS")
+            .halign(Align::Start)
+            .css_classes(["group-label"])
+            .build(),
+    );
+    column.append(&virtual_card(state, &screens));
+
     scrolled(&column)
+}
+
+// A display with no cable behind it. Made and destroyed over IPC rather than written to
+// the config, because it exists only for as long as the session does: there is nothing
+// to restore on the next boot, and a config entry would promise otherwise.
+fn virtual_card(state: &Rc<App>, screens: &[Screen]) -> gtk::Widget {
+    let card = gtk::Box::new(Orientation::Vertical, 0);
+    card.add_css_class("card");
+
+    let existing: Vec<&Screen> = screens.iter().filter(|s| s.is_virtual).collect();
+
+    if existing.is_empty() {
+        card.append(&row(
+            "None right now",
+            "A virtual monitor renders offscreen, so a screen share can pick it up              while nothing on your desk shows it",
+            gtk::Box::new(Orientation::Horizontal, 0).upcast(),
+        ));
+    } else {
+        for screen in existing {
+            let remove = gtk::Button::builder()
+                .label("Remove")
+                .valign(Align::Center)
+                .css_classes(["flat"])
+                .build();
+            {
+                let state = state.clone();
+                let name = screen.name.clone();
+                remove.connect_clicked(move |_| {
+                    run_output(&state, &name, &["destroy"], &format!("removed {name}"));
+                });
+            }
+            card.append(&row(
+                &screen.name,
+                &format!("{:.0}x{:.0}", screen.w, screen.h),
+                remove.upcast(),
+            ));
+            separator(&card);
+        }
+    }
+
+    let name = gtk::Entry::builder()
+        .placeholder_text("stream")
+        .valign(Align::Center)
+        .width_request(140)
+        .build();
+    card.append(&row("Name", "What it will be called in zen msg outputs", name.clone().upcast()));
+
+    separator(&card);
+
+    let width = spin(320., 7680., 1920.);
+    let height = spin(240., 4320., 1080.);
+    let size = gtk::Box::new(Orientation::Horizontal, 6);
+    size.set_valign(Align::Center);
+    size.append(&width);
+    size.append(&gtk::Label::new(Some("x")));
+    size.append(&height);
+    card.append(&row("Size", "In pixels", size.upcast()));
+
+    separator(&card);
+
+    let refresh = spin(1., 480., 60.);
+    card.append(&row("Refresh", "Hz", refresh.clone().upcast()));
+
+    separator(&card);
+
+    let create = gtk::Button::builder()
+        .label("Create")
+        .valign(Align::Center)
+        .css_classes(["flat"])
+        .build();
+    {
+        let state = state.clone();
+        let name = name.clone();
+        let width = width.clone();
+        let height = height.clone();
+        let refresh = refresh.clone();
+        create.connect_clicked(move |_| {
+            let chosen = name.text().trim().to_owned();
+            if chosen.is_empty() {
+                state.say("give it a name first", "bad");
+                return;
+            }
+            // The IPC takes millihertz, which is what every mode in ZEN is measured in.
+            let mhz = (refresh.value() * 1000.).round() as i64;
+            run_output(
+                &state,
+                &chosen,
+                &[
+                    "create",
+                    "--width",
+                    &format!("{}", width.value().round() as i64),
+                    "--height",
+                    &format!("{}", height.value().round() as i64),
+                    "--refresh",
+                    &format!("{mhz}"),
+                ],
+                &format!("created {chosen}"),
+            );
+        });
+    }
+    card.append(&row(
+        "Add one",
+        "It appears immediately, and is gone when the session ends",
+        create.upcast(),
+    ));
+
+    card.upcast()
+}
+
+fn spin(min: f64, max: f64, value: f64) -> gtk::SpinButton {
+    let spin = gtk::SpinButton::with_range(min, max, 1.);
+    spin.set_value(value);
+    spin.set_valign(Align::Center);
+    spin.set_width_chars(6);
+    spin
+}
+
+fn run_output(state: &Rc<App>, name: &str, args: &[&str], good: &str) {
+    let mut cmd = Command::new("zen");
+    cmd.args(["msg", "output", name]).args(args);
+    match cmd.output() {
+        Ok(out) if out.status.success() => {
+            state.say(&format!("{good}, reopen Monitors to refresh the list"), "good");
+        }
+        Ok(out) => {
+            let why = String::from_utf8_lossy(&out.stderr);
+            let why = why.lines().last().unwrap_or("zen msg refused that").trim();
+            state.say(why, "bad");
+        }
+        Err(_) => state.say("zen is not on PATH", "bad"),
+    }
 }
 
 // arrangement
