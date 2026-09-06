@@ -603,19 +603,59 @@ config_drift() {
     [ -f "$user" ] || return 0
     [ -f "$shipped" ] || return 0
 
-    local missing="" sec
-    for sec in $(grep -oE '^[a-z][a-z-]* \{' "$shipped" | sed 's/ {$//' | sort -u); do
-        grep -qE "^[[:space:]]*$sec[[:space:]]*\{" "$user" || missing="$missing $sec"
-    done
+    # Sections are only half the story. A config written by an older ZEN keeps every
+    # section it already had and carries stale values inside them, which then override
+    # the new defaults silently. So compare every node name, not just the top level.
+    local tmp_ship tmp_user
+    tmp_ship=$(mktemp) || return 0
+    tmp_user=$(mktemp) || { rm -f "$tmp_ship"; return 0; }
 
-    missing="${missing# }"
+    config_names "$shipped" > "$tmp_ship"
+    config_names "$user"    > "$tmp_user"
+
+    local missing
+    missing=$(comm -23 "$tmp_ship" "$tmp_user" | tr '\n' ' ')
+    rm -f "$tmp_ship" "$tmp_user"
+
+    missing="${missing%% }"
     [ -n "$missing" ] || return 0
 
+    local count
+    count=$(printf '%s\n' $missing | wc -l | tr -d ' ')
+
     printf '\n'
-    info "New config sections you do not have yet:"
-    info "  ${C_BOLD}$missing${C_RESET}"
-    dim "they are using their defaults; see resources/default-config.kdl"
-    dim "compare with: diff $user resources/default-config.kdl"
+    warn "your config does not have $count setting(s) that ZEN now ships"
+    dim "$(printf '%s' "$missing" | cut -c1-300)"
+    printf '\n'
+    info "Your config wins over the defaults, so those are simply not reaching you."
+    info "The look lives there too: shadows, corners, the glass material and the"
+    info "settings app bind are config, not binary."
+    printf '\n'
+    dim "diff:  diff $user resources/default-config.kdl"
+
+    if [ "$UI_TTY" != 1 ]; then
+        dim "run ./setup.sh --update from a terminal to be offered the new config"
+        return 0
+    fi
+
+    ui_menu "Take the config ZEN ships now?" \
+        "Yes, and keep mine as config.kdl.bak" \
+        "No, leave my config alone" || return 0
+    [ "$UI_CHOICE" = 0 ] || return 0
+
+    cp "$user" "$user.bak" || return 0
+    cp "$shipped" "$user"  || return 0
+    ok "installed the shipped config; yours is at $user.bak"
+    dim "carry anything of your own over from the backup: output position, keyboard layout"
+}
+
+# Every node name in a config, one per line, sorted. Comments stripped, "/-" ignored,
+# so a commented-out node does not count as present.
+config_names() {
+    sed 's|//.*||' "$1" \
+        | grep -oE '^[[:space:]]{0,8}[A-Za-z][A-Za-z0-9+-]*' \
+        | tr -d '[:blank:]' \
+        | sort -u
 }
 
 # Whether a ZEN session is running right now, so we can say when the update lands.
