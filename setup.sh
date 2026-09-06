@@ -1206,14 +1206,29 @@ remove_greetd_if_present() {
 
 greeter_epilogue() {
     local unit="$1"
+    local enable="$unit" disable=""
+
+    # Ly is a template unit: it runs on a specific tty, and the getty already sitting
+    # on that tty has to go or the two fight over it.
+    if [ "$unit" = ly ]; then
+        enable="ly@tty2.service"
+        disable="getty@tty2.service"
+    fi
     printf '
 '
     warn "NOT enabling it yet, on purpose."
     info "Test ZEN from a TTY first:  ${C_BOLD}zen${C_RESET}"
     info "If that works, enable the login screen with:"
-    info "  ${C_BOLD}sudo systemctl enable --now $unit${C_RESET}"
+    info "  ${C_BOLD}sudo systemctl enable --now $enable${C_RESET}"
+    if [ -n "$disable" ]; then
+        info "  ${C_BOLD}sudo systemctl disable --now $disable${C_RESET}"
+    fi
     info "If a login screen ever leaves you at a black screen, press"
-    info "  ${C_BOLD}Ctrl+Alt+F2${C_RESET} and run ${C_BOLD}sudo systemctl disable --now $unit${C_RESET}"
+    info "  ${C_BOLD}Ctrl+Alt+F2${C_RESET} and run:"
+    info "  ${C_BOLD}sudo systemctl disable --now $enable${C_RESET}"
+    if [ -n "$disable" ]; then
+        info "  ${C_BOLD}sudo systemctl enable --now $disable${C_RESET}"
+    fi
 }
 
 # ---------------------------------------------------------------- wizard ----

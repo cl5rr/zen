@@ -313,13 +313,13 @@ fn build_row(state: &Rc<App>, row: &'static spec::Row) -> gtk::Widget {
             line.append(&switch);
         }
 
-        Kind::Number { min, max, step, digits } => {
+        Kind::Number { min, max, step, digits, default } => {
             let current = state
                 .config
                 .borrow()
                 .as_ref()
                 .and_then(|c| c.number(row.path, row.key))
-                .unwrap_or(*min);
+                .unwrap_or(*default);
 
             let readout = gtk::Label::builder()
                 .label(format(current, *digits))
@@ -349,13 +349,13 @@ fn build_row(state: &Rc<App>, row: &'static spec::Row) -> gtk::Widget {
             line.append(&readout);
         }
 
-        Kind::Prop { prop, min, max } => {
+        Kind::Prop { prop, min, max, default } => {
             let current = state
                 .config
                 .borrow()
                 .as_ref()
                 .and_then(|c| c.prop(row.path, row.key, prop))
-                .unwrap_or(0.);
+                .unwrap_or(*default);
 
             let readout = gtk::Label::builder()
                 .label(format(current, 0))
@@ -383,6 +383,36 @@ fn build_row(state: &Rc<App>, row: &'static spec::Row) -> gtk::Widget {
 
             line.append(&scale);
             line.append(&readout);
+        }
+
+        Kind::Text { fallback, hint } => {
+            let current = state
+                .config
+                .borrow()
+                .as_ref()
+                .and_then(|c| c.string(row.path, row.key))
+                .unwrap_or_else(|| (*fallback).to_owned());
+
+            let field = gtk::Entry::builder()
+                .text(&current)
+                .placeholder_text(*hint)
+                .width_chars(18)
+                .valign(Align::Center)
+                .css_classes(["field"])
+                .build();
+
+            let state = state.clone();
+            field.connect_activate(move |field| {
+                let value = field.text().trim().to_owned();
+                if value.is_empty() {
+                    return;
+                }
+                if let Some(c) = state.config.borrow_mut().as_mut() {
+                    c.set_string(row.path, row.key, &value);
+                }
+                state.touch();
+            });
+            line.append(&field);
         }
 
         Kind::Color { fallback } => {

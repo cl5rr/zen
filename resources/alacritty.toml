@@ -34,7 +34,7 @@ cursor = "#cfe6ff"
 
 [colors.selection]
 text = "#ffffff"
-background = "#7fc8ff40"
+background = "#32506b"
 
 [colors.normal]
 black = "#1a1d24"

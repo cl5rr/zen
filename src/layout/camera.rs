@@ -18,7 +18,7 @@ struct PanDrive {
 }
 
 // zoom
-const ZOOM_WHILE_PANNING: f64 = 0.4;
+const ZOOM_WHILE_PANNING: f64 = 0.22;
 
 const PAN_START_SPEED: f64 = 260.;
 const PAN_MAX_SPEED: f64 = 3400.;
@@ -35,7 +35,7 @@ pub struct Camera {
 
     pan_anim: Option<(Animation, Animation)>,
     zoom_anim: Option<Animation>,
-    zoom_anchor: Option<(Point<f64, Logical>, Point<f64, Logical>)>,
+    zoom_anchor: Option<Point<f64, Logical>>,
 
     drive: Option<PanDrive>,
     last_advance: Option<Duration>,
@@ -140,11 +140,10 @@ impl Camera {
             None => self.zoom,
         };
 
-        let anchor_content = self.view_to_content(view_anchor);
         let target = self.band_zoom(current * factor);
 
         self.pan_anim = None;
-        self.zoom_anchor = Some((view_anchor, anchor_content));
+        self.zoom_anchor = Some(view_anchor);
         self.start_zoom_anim(target, config);
     }
 
@@ -289,15 +288,19 @@ impl Camera {
 
         if let Some(anim) = &self.zoom_anim {
             let done = anim.is_done();
-            self.zoom = if done { anim.to() } else { anim.value() };
-            if done {
-                self.zoom_anim = None;
+            let next = if done { anim.to() } else { anim.value() };
+
+            // Correct the pan by the zoom *change*, reading the pan as it stands after
+            // the drive has already moved it this frame. Assigning it outright would
+            // hold the anchor but silently undo panning for the length of the zoom.
+            if let Some(view_anchor) = self.zoom_anchor {
+                let under = (view_anchor - self.pan).downscale(self.zoom);
+                self.pan = view_anchor - under.upscale(next);
             }
 
-            if let Some((view_anchor, anchor_content)) = self.zoom_anchor {
-                self.pan = view_anchor - anchor_content.upscale(self.zoom);
-            }
+            self.zoom = next;
             if done {
+                self.zoom_anim = None;
                 self.zoom_anchor = None;
             }
         }
@@ -412,6 +415,39 @@ mod tests {
 
             assert!(c.zoom > 1.05, "zoom barely moved, ended at {}", c.zoom);
         }
+    }
+
+    #[test]
+    fn a_zoom_does_not_stall_a_pan_in_progress() {
+        let mut clock = Clock::with_time(Duration::ZERO);
+        let config = zen_config::animations::OverviewOpenCloseAnim::default().0;
+        let mut c = Camera::new(clock.clone(), Size::from((1280., 720.)), 0.1, 10.);
+
+        c.pan_drive(Point::from((-1., 0.)));
+
+        let mut now = 0u64;
+        let advance = |c: &mut Camera, clock: &mut Clock, now: &mut u64, frames: u64| {
+            for _ in 0..frames {
+                *now += 16;
+                clock.set_unadjusted(Duration::from_millis(*now));
+                c.pan_drive(Point::from((-1., 0.)));
+                c.advance_animations();
+            }
+        };
+
+        advance(&mut c, &mut clock, &mut now, 10);
+        let before_zoom = c.pan;
+
+        c.zoom_about(Point::from((640., 360.)), 1.6, config);
+        advance(&mut c, &mut clock, &mut now, 10);
+        let during_zoom = c.pan;
+
+        assert!(
+            (during_zoom.x - before_zoom.x).abs() > 1.,
+            "the pan stalled while zooming: {before_zoom:?} then {during_zoom:?}"
+        );
+        assert!(c.zoom > 1., "the zoom did not run, ended at {}", c.zoom);
+        c.verify_invariants();
     }
 
     #[test]

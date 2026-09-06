@@ -501,6 +501,12 @@ window-rule {
     geometry-corner-radius 12
     clip-to-geometry true
 
+    // Draw the focus ring and border *around* windows rather than as a rectangle
+    // behind them. Behind is the default for windows that keep their own
+    // decorations, and with translucent windows it shows through as a colour cast
+    // over the whole window instead of an outline.
+    draw-border-with-background false
+
     background-effect {
         glass true
         blur true
