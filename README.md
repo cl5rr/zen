@@ -92,7 +92,9 @@ The camera is the point of ZEN, so these matter most.
 | `Mod+arrows`, `Mod+HJKL` | Move focus, nearest window in that direction |
 | `Mod+Ctrl+arrows` | Move the window |
 | `Mod+left-drag` | Move the window with the mouse |
-| `Mod+X`, or drag an edge | Resize |
+| `Mod+right-drag` | Resize. Grab anywhere in the window, not just an edge |
+| `Mod+R`, `Mod+Shift+R` | Cycle preset widths |
+| `Mod+Ctrl+Shift+R` | Cycle preset heights |
 | `Mod+F` | Fullscreen |
 | `Mod+Q` | Close |
 | `Mod+Shift+arrows` | Move focus to another monitor |
@@ -133,6 +135,19 @@ rest of the file, comments included, exactly as you had it.
 
 It needs `gtk4` and `libadwaita`. Without them ZEN builds and runs the same;
 `./setup.sh` just skips the app.
+
+## The mouse
+
+Windows that draw their own decorations, like a terminal, let you drag their edges.
+Windows that do not, like Firefox under `prefer-no-csd`, have no edges to grab, so
+resizing them is the compositor's job:
+
+| Gesture | Action |
+|---|---|
+| `Mod+left-drag` | Move a window |
+| `Mod+right-drag` | Resize a window, from anywhere inside it |
+| `Mod+middle-drag` | Pan the camera |
+| `Mod+Alt+wheel` | Zoom about the pointer |
 
 ## Wallpapers
 

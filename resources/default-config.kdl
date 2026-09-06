@@ -197,7 +197,7 @@ camera {
     max-zoom 4.0
 
     // Multiplier per zoom-in step; its reciprocal per zoom-out step.
-    zoom-step 1.25
+    zoom-step 1.1
 
     // Whether floating windows may live outside the viewport. This is ZEN's
     // whole premise, so it is on by default; turning it off pins every floating
@@ -642,8 +642,8 @@ binds {
     // No resize, no configure, nothing to restore -- pan away and it is still
     // exactly where it was. Mod+Shift+M, since Mod+M is zen's real maximize.
     Mod+Shift+M { camera-maximize; }
-    Mod+Alt+WheelScrollUp cooldown-ms=20 { zoom-in; }
-    Mod+Alt+WheelScrollDown cooldown-ms=20 { zoom-out; }
+    Mod+Alt+WheelScrollUp cooldown-ms=60 { zoom-in; }
+    Mod+Alt+WheelScrollDown cooldown-ms=60 { zoom-out; }
 
     Mod+Q repeat=false { close-window; }
 

@@ -1648,7 +1648,7 @@ mod tests {
             camera: Camera {
                 min_zoom: 0.2,
                 max_zoom: 4.0,
-                zoom_step: 1.25,
+                zoom_step: 1.1,
                 infinite_canvas: true,
                 open_on_canvas: true,
             },
