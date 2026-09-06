@@ -12,6 +12,9 @@
 
 set -euo pipefail
 
+# Kept for the re-exec in update_zen: inside a function "$@" is the function's args.
+ZEN_ARGV=("$@")
+
 PREFIX="${PREFIX:-/usr/local}"
 ASSUME_YES=0
 DO_DEPS=1
@@ -687,9 +690,9 @@ update_zen() {
         confirm || return 1
     fi
 
-    local before after
+    local before after self_before self_after
     before=$(git rev-parse HEAD)
-
+    self_before=$(cksum < "$0" 2>/dev/null)
     info "fetching"
     if ! git pull --ff-only; then
         printf '\n'
@@ -701,6 +704,16 @@ update_zen() {
     fi
 
     after=$(git rev-parse HEAD)
+    self_after=$(cksum < "$0" 2>/dev/null)
+
+    # bash reads a script as it runs, so the copy executing right now is the one that
+    # was on disk before the pull. Without this, any step added by the very commit we
+    # just fetched is skipped, and the next run is the first that has it.
+    if [ "$self_before" != "$self_after" ] && [ "${ZEN_SETUP_REEXEC:-0}" != 1 ]; then
+        ok "setup.sh itself changed; restarting with the new one"
+        ZEN_SETUP_REEXEC=1 export ZEN_SETUP_REEXEC
+        exec bash "$0" ${ZEN_ARGV[@]+"${ZEN_ARGV[@]}"}
+    fi
 
     if [ "$before" = "$after" ]; then
         # Deliberately still building and installing. "The pull fetched nothing" is not the
