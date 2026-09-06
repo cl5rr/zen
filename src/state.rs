@@ -4068,6 +4068,9 @@ impl Zen {
 
             if in_overview {
                 for (ws, geo) in mon.workspaces_with_render_geo() {
+                    if mon.is_spare_workspace(ws) {
+                        continue;
+                    }
                     let ns = Some(ws.id().get() as usize);
                     let xray_pos = XrayPos::new(geo.loc, zoom);
                     push_popups_from_layer!(Layer::Bottom, ns, xray_pos, process!(geo));
@@ -4082,6 +4085,9 @@ impl Zen {
 
             if in_overview {
                 for (ws, geo) in mon.workspaces_with_render_geo() {
+                    if mon.is_spare_workspace(ws) {
+                        continue;
+                    }
                     let ns = Some(ws.id().get() as usize);
                     let xray_pos = XrayPos::new(geo.loc, zoom);
                     push_normal_from_layer!(Layer::Bottom, ns, xray_pos, process!(geo));

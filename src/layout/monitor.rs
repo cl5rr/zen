@@ -1712,6 +1712,16 @@ impl<W: LayoutElement> Monitor<W> {
         (InsertWorkspace::NewAt(last_idx + 1), dummy)
     }
 
+    // The layout keeps a spare empty workspace at the end so a window can be dragged
+    // into a new one. On the canvas there is nothing to switch between, so drawing it
+    // just puts a permanently blank page under the overview. Rendering skips it; the
+    // layout still has it, because switching and window-moving are built on it.
+    pub fn is_spare_workspace(&self, ws: &Workspace<W>) -> bool {
+        self.options.camera.open_on_canvas
+            && !ws.has_windows_or_name()
+            && ws.id() != self.active_workspace_ref().id()
+    }
+
     pub fn in_overview(&self) -> bool {
         self.overview_open || self.overview_progress.is_some()
     }
@@ -1793,6 +1803,10 @@ impl<W: LayoutElement> Monitor<W> {
                 };
 
             for (ws, geo) in self.workspaces_with_render_geo_cull(cull) {
+                if self.in_overview() && self.is_spare_workspace(ws) {
+                    continue;
+                }
+
                 macro_rules! push {
                     () => {{
                         &mut |elem| {
@@ -1883,6 +1897,10 @@ impl<W: LayoutElement> Monitor<W> {
         let zoom = self.overview_zoom();
 
         for (ws, geo) in self.workspaces_with_render_geo() {
+            if self.is_spare_workspace(ws) {
+                continue;
+            }
+
             ws.render_shadow(renderer, &mut |elem| {
                 let elem = elem.with_alpha(alpha);
                 let elem = MonitorInnerRenderElement::Shadow(elem);
