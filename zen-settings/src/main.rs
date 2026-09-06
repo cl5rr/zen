@@ -1,4 +1,5 @@
 mod config;
+mod lists;
 mod spec;
 mod wallpaper;
 
@@ -17,13 +18,13 @@ const APP_ID: &str = "org.zen.Settings";
 
 // state
 pub struct App {
-    config: RefCell<Option<Config>>,
+    pub config: RefCell<Option<Config>>,
     status: gtk::Label,
     pending: RefCell<u64>,
 }
 
 impl App {
-    fn touch(self: &Rc<Self>) {
+    pub fn touch(self: &Rc<Self>) {
         let mut pending = self.pending.borrow_mut();
         *pending += 1;
         let generation = *pending;
@@ -50,7 +51,7 @@ impl App {
         }
     }
 
-    fn say(&self, text: &str, class: &str) {
+    pub fn say(&self, text: &str, class: &str) {
         self.status.set_text(text);
         self.status.set_css_classes(&["status", class]);
     }
@@ -108,6 +109,8 @@ fn build(app: &adw::Application) {
     for page in PAGES {
         stack.add_named(&build_page(&state, page), Some(page.name));
     }
+    stack.add_named(&lists::binds_page(&state), Some("Keybinds"));
+    stack.add_named(&lists::startup_page(&state), Some("Startup apps"));
     stack.add_named(&wallpaper::page(&state), Some("Wallpaper"));
 
     let sidebar = build_sidebar(&stack);
@@ -157,6 +160,8 @@ fn build_sidebar(stack: &gtk::Stack) -> gtk::Widget {
         .build();
 
     let mut names: Vec<&str> = PAGES.iter().map(|p| p.name).collect();
+    names.push("Keybinds");
+    names.push("Startup apps");
     names.push("Wallpaper");
 
     for name in &names {

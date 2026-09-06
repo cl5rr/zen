@@ -273,6 +273,80 @@ mod tests {
     }
 
     #[test]
+    fn reads_the_binds_it_ships() {
+        let c = shipped();
+        let binds = c.binds();
+        assert!(binds.len() > 40, "only found {} binds", binds.len());
+
+        let terminal = binds.iter().find(|b| b.key == "Mod+T").expect("Mod+T");
+        assert_eq!(terminal.action, "spawn");
+        assert_eq!(terminal.args, vec!["alacritty".to_owned()]);
+        assert_eq!(terminal.title.as_deref(), Some("Terminal"));
+    }
+
+    #[test]
+    fn rebinding_moves_the_key_and_keeps_the_action() {
+        let mut c = shipped();
+        c.rebind("Mod+T", "Mod+Shift+T").unwrap();
+
+        let back = from(&c.doc.to_string());
+        let moved = back
+            .binds()
+            .into_iter()
+            .find(|b| b.key == "Mod+Shift+T")
+            .expect("the rebound key");
+
+        assert_eq!(moved.action, "spawn");
+        assert_eq!(moved.args, vec!["alacritty".to_owned()]);
+        assert!(!back.binds().iter().any(|b| b.key == "Mod+T"));
+    }
+
+    #[test]
+    fn rebinding_onto_a_taken_chord_is_refused() {
+        let mut c = shipped();
+        assert!(c.rebind("Mod+T", "Mod+W").is_err());
+
+        // and the config is untouched by the attempt
+        let back = from(&c.doc.to_string());
+        assert!(back.binds().iter().any(|b| b.key == "Mod+T"));
+        assert!(back.binds().iter().any(|b| b.key == "Mod+W"));
+    }
+
+    #[test]
+    fn changing_what_a_bind_launches() {
+        let mut c = shipped();
+        c.set_bind_args("Mod+T", &["kitty".to_owned()]).unwrap();
+
+        let back = from(&c.doc.to_string());
+        let terminal = back.binds().into_iter().find(|b| b.key == "Mod+T").unwrap();
+        assert_eq!(terminal.args, vec!["kitty".to_owned()]);
+        assert_eq!(terminal.title.as_deref(), Some("Terminal"));
+    }
+
+    #[test]
+    fn startup_commands_round_trip() {
+        let mut c = shipped();
+        assert_eq!(
+            c.startup(),
+            vec![vec!["zen-wallpaper".to_owned(), "restore".to_owned()]]
+        );
+
+        c.set_startup(&[
+            vec!["waybar".to_owned()],
+            vec!["zen-wallpaper".to_owned(), "restore".to_owned()],
+        ]);
+
+        let back = from(&c.doc.to_string());
+        assert_eq!(
+            back.startup(),
+            vec![
+                vec!["waybar".to_owned()],
+                vec!["zen-wallpaper".to_owned(), "restore".to_owned()]
+            ]
+        );
+    }
+
+    #[test]
     fn writes_sections_that_are_missing() {
         let mut c = from("");
         c.set_number(&["glass"], "opacity", 0.2, 2);
@@ -283,5 +357,134 @@ mod tests {
         assert_eq!(back.number(&["glass"], "opacity"), Some(0.2));
         assert!(back.flag(&["layout", "shadow"], "on"));
         assert_eq!(back.prop(&["layout", "shadow"], "offset", "y"), Some(4.));
+    }
+}
+
+// lists
+//
+// Keybinds and startup commands are repeated nodes, not keyed values, so they need
+// their own accessors. A bind is `Mod+T { spawn "alacritty"; }`: the node name is the
+// chord and its one child is the action.
+pub struct Entry {
+    pub key: String,
+    pub action: String,
+    pub args: Vec<String>,
+    pub title: Option<String>,
+}
+
+impl Config {
+    pub fn binds(&self) -> Vec<Entry> {
+        let Some(binds) = self.doc.get("binds").and_then(KdlNode::children) else {
+            return Vec::new();
+        };
+
+        binds
+            .nodes()
+            .iter()
+            .filter_map(|node| {
+                let action = node.children()?.nodes().first()?;
+                Some(Entry {
+                    key: node.name().value().to_owned(),
+                    action: action.name().value().to_owned(),
+                    args: action
+                        .entries()
+                        .iter()
+                        .filter(|e| e.name().is_none())
+                        .filter_map(|e| e.value().as_string().map(str::to_owned))
+                        .collect(),
+                    title: node
+                        .get("hotkey-overlay-title")
+                        .and_then(|e| e.value().as_string())
+                        .map(str::to_owned),
+                })
+            })
+            .collect()
+    }
+
+    // Renaming the node is the whole edit: the action underneath is untouched, so a
+    // rebind cannot lose what the bind does.
+    pub fn rebind(&mut self, from: &str, to: &str) -> anyhow::Result<()> {
+        if from == to {
+            return Ok(());
+        }
+        if self.binds().iter().any(|b| b.key == to) {
+            bail!("{to} is already bound");
+        }
+
+        let Some(binds) = self
+            .doc
+            .get_mut("binds")
+            .and_then(|n| n.children_mut().as_mut())
+        else {
+            bail!("this config has no binds section");
+        };
+        let Some(node) = binds.nodes_mut().iter_mut().find(|n| n.name().value() == from) else {
+            bail!("{from} is not bound");
+        };
+
+        node.set_name(to);
+        Ok(())
+    }
+
+    // Only the arguments of a spawn change; the action stays whatever it was.
+    pub fn set_bind_args(&mut self, key: &str, args: &[String]) -> anyhow::Result<()> {
+        let Some(binds) = self
+            .doc
+            .get_mut("binds")
+            .and_then(|n| n.children_mut().as_mut())
+        else {
+            bail!("this config has no binds section");
+        };
+        let Some(node) = binds.nodes_mut().iter_mut().find(|n| n.name().value() == key) else {
+            bail!("{key} is not bound");
+        };
+        let Some(children) = node.children_mut().as_mut() else {
+            bail!("{key} has no action");
+        };
+        let Some(action) = children.nodes_mut().first_mut() else {
+            bail!("{key} has no action");
+        };
+
+        action.entries_mut().retain(|e| e.name().is_some());
+        for arg in args {
+            let mut entry = KdlEntry::new(KdlValue::String(arg.clone()));
+            entry.set_value_repr(format!("{arg:?}"));
+            action.entries_mut().push(entry);
+        }
+        Ok(())
+    }
+
+    pub fn startup(&self) -> Vec<Vec<String>> {
+        self.doc
+            .nodes()
+            .iter()
+            .filter(|n| matches!(n.name().value(), "spawn-at-startup" | "spawn-sh-at-startup"))
+            .map(|n| {
+                n.entries()
+                    .iter()
+                    .filter(|e| e.name().is_none())
+                    .filter_map(|e| e.value().as_string().map(str::to_owned))
+                    .collect()
+            })
+            .collect()
+    }
+
+    pub fn set_startup(&mut self, commands: &[Vec<String>]) {
+        self.doc
+            .nodes_mut()
+            .retain(|n| !matches!(n.name().value(), "spawn-at-startup" | "spawn-sh-at-startup"));
+
+        for command in commands {
+            if command.is_empty() {
+                continue;
+            }
+            let mut node = fresh("spawn-at-startup", 0);
+            for arg in command {
+                let mut entry = KdlEntry::new(KdlValue::String(arg.clone()));
+                entry.set_value_repr(format!("{arg:?}"));
+                node.entries_mut().push(entry);
+            }
+            self.doc.nodes_mut().push(node);
+        }
     }
 }
