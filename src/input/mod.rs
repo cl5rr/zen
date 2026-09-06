@@ -2784,6 +2784,25 @@ impl State {
             self.zen.pointer_visibility = PointerVisibility::Visible;
             self.zen.tablet_cursor_location = None;
 
+            // On the map, a plain left click is not aimed at whatever window happens to
+            // be a few pixels wide under the pointer: it is aimed at the bubble. Taken
+            // before anything else looks at the click, and only when it lands on one, so
+            // clicking the empty canvas still behaves normally.
+            if button == Some(MouseButton::Left)
+                && !mod_down
+                && !pointer.is_grabbed()
+                && !self.zen.screenshot_ui.is_open()
+            {
+                let location = pointer.current_location();
+                if let Some((_, pos_within_output)) = self.zen.output_under(location) {
+                    if self.zen.layout.travel_to_island_at(pos_within_output) {
+                        self.zen.suppressed_buttons.insert(button_code);
+                        self.zen.queue_redraw_all();
+                        return;
+                    }
+                }
+            }
+
             let is_overview_open = self.zen.layout.is_overview_open();
 
             if is_overview_open && !pointer.is_grabbed() && button == Some(MouseButton::Right) {

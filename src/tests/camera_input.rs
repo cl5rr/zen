@@ -218,3 +218,86 @@ fn pan_does_not_disturb_surface_coordinates() {
         );
     }
 }
+
+// The map is a menu of places, so a click on a bubble has to resolve to the island the
+// render put under the pointer. The mapping from view to canvas goes through the
+// camera's pan, the zoom, and the centring offset, and getting any of the three wrong
+// still travels somewhere, just to the wrong island.
+#[test]
+fn clicking_a_bubble_on_the_map_travels_to_that_island() {
+    let mut f = fixture_with_window();
+
+    // Islands are the floating layer's partition, so a tiled window has none.
+    f.zen().layout.set_window_floating(None, true);
+    f.zen_complete_animations();
+
+    f.zen().layout.set_camera_zoom(0.42);
+    f.zen_complete_animations();
+
+    let island = f
+        .zen()
+        .layout
+        .active_monitor_ref()
+        .unwrap()
+        .active_workspace_ref()
+        .floating()
+        .islands()
+        .islands()
+        .next()
+        .map(|i| i.rect())
+        .expect("the window should be in an island");
+
+    // The centre of that island, mapped forward into the view the same way the render
+    // does, is where a person would actually click.
+    let mon = f.zen().layout.active_monitor_ref().unwrap();
+    let centre = Point::from((
+        island.loc.x + island.size.w / 2.,
+        island.loc.y + island.size.h / 2.,
+    ));
+    let zoom = mon.camera_zoom();
+    let view_size = mon.camera_view_size();
+    let ws_size = view_size.upscale(zoom);
+    let offset = (view_size.to_point() - ws_size.to_point()).downscale(2.);
+    let click = mon.camera_pan_offset_view() + offset + centre.upscale(zoom);
+
+    let before = f.zen().layout.active_monitor_ref().unwrap().camera_zoom();
+    assert!(f.zen().layout.travel_to_island_at(click), "the click missed the island");
+    f.zen_complete_animations();
+
+    let after = f.zen().layout.active_monitor_ref().unwrap().camera_zoom();
+    assert!(
+        after > before,
+        "travelling should leave the map, zoom went {before} -> {after}"
+    );
+
+    // And the island should now be roughly centred rather than merely closer.
+    let mon = f.zen().layout.active_monitor_ref().unwrap();
+    let landed = mon.view_to_workspace(Point::from((
+        mon.camera_view_size().w / 2.,
+        mon.camera_view_size().h / 2.,
+    )));
+    assert!(
+        (landed.x - centre.x).abs() < 2. && (landed.y - centre.y).abs() < 2.,
+        "island centre {centre:?} did not land under the view centre, got {landed:?}"
+    );
+}
+
+#[test]
+fn clicking_empty_canvas_on_the_map_is_not_a_travel() {
+    let mut f = fixture_with_window();
+    f.zen().layout.set_window_floating(None, true);
+    f.zen_complete_animations();
+    f.zen().layout.set_camera_zoom(0.42);
+    f.zen_complete_animations();
+
+    // Far from any window, so the ordinary click handling must still get the event.
+    assert!(!f.zen().layout.travel_to_island_at(Point::from((4., 4.))));
+}
+
+#[test]
+fn travel_does_nothing_when_not_on_the_map() {
+    let mut f = fixture_with_window();
+    f.zen_complete_animations();
+    assert!(!f.zen().layout.is_at_map_zoom());
+    assert!(!f.zen().layout.travel_to_island_at(Point::from((640., 360.))));
+}

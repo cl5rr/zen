@@ -28,7 +28,10 @@ use crate::zen_render_elements;
 use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
 use crate::render_helpers::renderer::ZenRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
-use crate::render_helpers::solid_color::SolidColorRenderElement;
+use smithay::backend::renderer::element::Kind;
+use smithay::backend::renderer::Color32F;
+
+use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
 use crate::render_helpers::xray::XrayPos;
 use crate::render_helpers::RenderCtx;
 use crate::rubber_band::RubberBand;
@@ -45,6 +48,18 @@ const WORKSPACE_GESTURE_RUBBER_BAND: RubberBand = RubberBand {
 };
 
 const WORKSPACE_DND_EDGE_SCROLL_MOVEMENT: f64 = 1500.;
+
+// The map is meant to be a different picture, not a smaller one: the wallpaper drops
+// away behind a scrim so the island bubbles are what the eye lands on.
+//
+// The scrim fades in across the last stretch of the zoom rather than snapping on at the
+// threshold, so pulling back by hand arrives at the same place as Mod+O.
+const MAP_SCRIM_COLOR: Color32F = Color32F::new(0.031, 0.039, 0.055, 1.);
+const MAP_SCRIM_ALPHA: f32 = 0.88;
+const MAP_SCRIM_FADE_FROM: f64 = 2.2;
+
+// Breathing room left around an island after travelling to it.
+const TRAVEL_PADDING: f64 = 64.;
 
 #[derive(Debug)]
 pub struct Monitor<W: LayoutElement> {
@@ -65,6 +80,9 @@ pub struct Monitor<W: LayoutElement> {
     camera_focus: Option<(W::Id, Rectangle<f64, Logical>)>,
 
     canvas_clock: CanvasClock,
+    // The map's backdrop. Sized to the view rather than the canvas because it is a
+    // property of looking at the space, not a thing in it.
+    map_scrim: SolidColorBuffer,
     pub(super) camera: Camera,
     pub(super) clock: Clock,
     pub(super) base_options: Rc<Options>,
@@ -311,6 +329,7 @@ impl<W: LayoutElement> Monitor<W> {
             overview_progress: None,
             camera_focus: None,
             canvas_clock: CanvasClock::new(options.widgets.clock.clone()),
+            map_scrim: SolidColorBuffer::new(view_size, MAP_SCRIM_COLOR),
             camera: Camera::new(
                 clock.clone(),
                 view_size,
@@ -1317,6 +1336,25 @@ impl<W: LayoutElement> Monitor<W> {
         self.camera.animate_pan_to(pan, config);
     }
 
+    // The inverse of the mapping fit_camera_to builds, so a click in the view resolves
+    // to the workspace point the render actually put under the pointer.
+    pub fn view_to_workspace(&self, view: Point<f64, Logical>) -> Point<f64, Logical> {
+        let zoom = self.camera.zoom();
+        if zoom <= 0. {
+            return view;
+        }
+        let ws_size = self.workspace_size(zoom);
+        let static_offset = (self.view_size.to_point() - ws_size.to_point()).downscale(2.);
+        (view - self.camera.pan_offset_view() - static_offset).downscale(zoom)
+    }
+
+    // Capped at 1:1 so travelling to a small island frames it without magnifying it
+    // into a wall of pixels.
+    pub fn travel_to(&mut self, rect: Rectangle<f64, Logical>, config: zen_config::Animation) {
+        self.clear_camera_focus();
+        self.fit_camera_to(rect, TRAVEL_PADDING, 1., config);
+    }
+
     pub fn set_camera_focus(&mut self, config: zen_config::Animation) -> bool {
         let Some(rect) = self.active_window_visual_rectangle() else {
             return false;
@@ -1880,6 +1918,59 @@ impl<W: LayoutElement> Monitor<W> {
                 }
             }
         }
+
+        // Pushed last, so it lands behind every window and in front of the wallpaper.
+        // Not run through scale_relocate: the scrim covers the view, and scaling it with
+        // the canvas would shrink it away from the edges exactly when it is needed.
+        let darkness = self.map_darkness();
+        if darkness > 0. {
+            let elem = SolidColorRenderElement::from_buffer(
+                &self.map_scrim,
+                Point::from((0., 0.)),
+                darkness,
+                Kind::Unspecified,
+            );
+            push(RelocateRenderElement::from_element(
+                RescaleRenderElement::from_element(
+                    MonitorInnerRenderElement::SolidColor(elem),
+                    Point::from((0, 0)),
+                    1.,
+                ),
+                Point::from((0, 0)),
+                Relocate::Relative,
+            ));
+        }
+    }
+
+    // How dark the map backdrop is, from the camera alone, so that pulling back with a
+    // gesture arrives at the same picture as the bind rather than a different one.
+    pub fn camera_zoom(&self) -> f64 {
+        self.camera.zoom()
+    }
+
+    pub fn camera_view_size(&self) -> Size<f64, Logical> {
+        self.camera.view_size()
+    }
+
+    pub fn camera_pan_offset_view(&self) -> Point<f64, Logical> {
+        self.camera.pan_offset_view()
+    }
+
+    pub fn map_darkness(&self) -> f32 {
+        let threshold = self.options.camera.map_zoom;
+        if threshold <= 0. {
+            return 0.;
+        }
+
+        let from = threshold * MAP_SCRIM_FADE_FROM;
+        let zoom = self.camera.zoom();
+        if zoom >= from {
+            return 0.;
+        }
+
+        let t = ((from - zoom) / (from - threshold)).clamp(0., 1.);
+        // Eased so the backdrop is barely there until the pull-back is committed.
+        (t * t) as f32 * MAP_SCRIM_ALPHA
     }
 
     pub fn render_workspace_shadows<R: ZenRenderer>(

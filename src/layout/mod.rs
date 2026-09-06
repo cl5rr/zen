@@ -4388,6 +4388,39 @@ impl<W: LayoutElement> Layout<W> {
         mon.camera.reset(config);
     }
 
+    // Clicking an island bubble on the map travels to it. This is the map's whole
+    // point as an interface: it is a menu of places, not just a smaller view.
+    //
+    // Returns false when the click was not on a bubble, so the caller can fall back to
+    // the ordinary click handling rather than swallowing it.
+    pub fn travel_to_island_at(&mut self, view_pos: Point<f64, Logical>) -> bool {
+        if !self.is_at_map_zoom() {
+            return false;
+        }
+
+        let config = self.options.animations.overview_open_close.0;
+        let Some(mon) = self.active_monitor() else {
+            return false;
+        };
+
+        let local = mon.view_to_workspace(view_pos);
+        let rect = {
+            let floating = mon.active_workspace_ref().floating();
+            let canvas = floating.logical_to_canvas(local);
+            floating.islands().island_at(canvas).map(|island| island.rect())
+        };
+        let Some(rect) = rect else {
+            return false;
+        };
+
+        let rect = Rectangle::new(
+            Point::from((rect.loc.x, rect.loc.y)),
+            Size::from((rect.size.w, rect.size.h)),
+        );
+        mon.travel_to(rect, config);
+        true
+    }
+
     pub fn camera_pan_by(&mut self, delta: Point<f64, Logical>) {
         let Some(mon) = self.active_monitor() else {
             return;
