@@ -362,6 +362,42 @@ entry.field:focus {
     background-color: rgba(127, 200, 255, 0.08);
 }
 
+/* A SpinButton is an entry with two buttons welded on, and none of the three inherit
+   entry.field, so without this they arrive in the toolkit's light default: black text
+   on a dark card. */
+spinbutton {
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 9px;
+    color: #e8eaed;
+    min-height: 22px;
+}
+
+spinbutton:focus-within {
+    border-color: #7fc8ff;
+    background-color: rgba(127, 200, 255, 0.08);
+}
+
+spinbutton > text {
+    color: #e8eaed;
+    caret-color: #7fc8ff;
+    padding: 5px 8px;
+}
+
+spinbutton > button {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    color: #9aa2b1;
+    min-width: 22px;
+    padding: 0 4px;
+}
+
+spinbutton > button:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+    color: #ffffff;
+}
+
 entry.chord {
     font-family: monospace;
     font-size: 12px;

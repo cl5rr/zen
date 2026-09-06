@@ -192,6 +192,7 @@ fn virtual_card(state: &Rc<App>, screens: &[Screen]) -> gtk::Widget {
         .placeholder_text("stream")
         .valign(Align::Center)
         .width_request(140)
+        .css_classes(["field"])
         .build();
     card.append(&row("Name", "What it will be called in zen msg outputs", name.clone().upcast()));
 

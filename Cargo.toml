@@ -83,6 +83,7 @@ pango = { version = "0.21.5", features = ["v1_44"] }
 pangocairo = "0.21.5"
 pipewire = { version = "0.10.0", optional = true, features = ["v0_3_33"] }
 png = "0.18.1"
+resvg = { version = "0.45", default-features = false }
 portable-atomic = "1"
 profiling = "1.0.18"
 sd-notify = "0.5.0"
@@ -123,6 +124,7 @@ insta.workspace = true
 proptest = "1.11.0"
 proptest-derive = { version = "0.8.0", features = ["boxed_union"] }
 rayon = "1.12.0"
+tempfile = "3"
 wayland-client = "0.31.15"
 xshell = "0.2.7"
 

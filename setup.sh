@@ -343,11 +343,15 @@ gtk_packages_for() {
 # no X11 apps, no file picker, no fonts. Checked by command name, because that is what
 # actually has to be on PATH.
 #
-#   Xwayland             every X11 app, which is still Discord, Steam and Electron
+#   Xwayland             the X server itself
+#   xwayland-satellite   what actually starts it. ZEN does not run Xwayland directly;
+#                        without this binary there is no $DISPLAY and every X11 app
+#                        fails with "Missing X server or $DISPLAY"
 #   xdg-desktop-portal   file pickers, screen sharing, and the "open with" dialog
 #   dbus-daemon          the session bus nearly every desktop app talks to
 #   fc-list              font discovery; with no fonts nothing draws text at all
-RUNTIME_PROGS="Xwayland|X11 apps: Discord, Steam, older Electron
+RUNTIME_PROGS="Xwayland|the X server, for Discord, Steam and older Electron apps
+xwayland-satellite|what starts it. With no satellite there is no X server at all
 xdg-desktop-portal|file pickers, screen sharing and app portals
 dbus-daemon|the session bus nearly every desktop app needs
 fc-list|font discovery, without which nothing draws text"
@@ -356,23 +360,28 @@ runtime_package_for() {
     local mgr="$1" cmd="$2"
     case "$mgr" in
     pacman) case "$cmd" in
-        Xwayland) echo xorg-xwayland ;; xdg-desktop-portal) echo xdg-desktop-portal ;;
+        Xwayland) echo xorg-xwayland ;; xwayland-satellite) echo xwayland-satellite ;;
+        xdg-desktop-portal) echo xdg-desktop-portal ;;
         dbus-daemon) echo dbus ;; fc-list) echo fontconfig ;;
         esac ;;
     apt) case "$cmd" in
-        Xwayland) echo xwayland ;; xdg-desktop-portal) echo xdg-desktop-portal ;;
+        Xwayland) echo xwayland ;; xwayland-satellite) echo xwayland-satellite ;;
+        xdg-desktop-portal) echo xdg-desktop-portal ;;
         dbus-daemon) echo dbus ;; fc-list) echo fontconfig ;;
         esac ;;
     dnf) case "$cmd" in
-        Xwayland) echo xorg-x11-server-Xwayland ;; xdg-desktop-portal) echo xdg-desktop-portal ;;
+        Xwayland) echo xorg-x11-server-Xwayland ;; xwayland-satellite) echo xwayland-satellite ;;
+        xdg-desktop-portal) echo xdg-desktop-portal ;;
         dbus-daemon) echo dbus ;; fc-list) echo fontconfig ;;
         esac ;;
     apk) case "$cmd" in
-        Xwayland) echo xwayland ;; xdg-desktop-portal) echo xdg-desktop-portal ;;
+        Xwayland) echo xwayland ;; xwayland-satellite) echo xwayland-satellite ;;
+        xdg-desktop-portal) echo xdg-desktop-portal ;;
         dbus-daemon) echo dbus ;; fc-list) echo fontconfig ;;
         esac ;;
     zypper) case "$cmd" in
-        Xwayland) echo xwayland ;; xdg-desktop-portal) echo xdg-desktop-portal ;;
+        Xwayland) echo xwayland ;; xwayland-satellite) echo xwayland-satellite ;;
+        xdg-desktop-portal) echo xdg-desktop-portal ;;
         dbus-daemon) echo dbus ;; fc-list) echo fontconfig ;;
         esac ;;
     esac

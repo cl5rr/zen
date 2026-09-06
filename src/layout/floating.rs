@@ -1197,12 +1197,19 @@ impl<W: LayoutElement> FloatingSpace<W> {
         }
 
         if on_map && layer.is_normal() {
-            self.render_map_icons(ctx.r(), xray_pos.zoom, push);
+            // Computed once here and handed down, so the icons and the bubbles of a
+            // single frame cannot be laid out from two different answers.
+            let map_at = self.gathered_positions();
+            self.render_map_icons(ctx.r(), xray_pos.zoom, &map_at, push);
 
             // Pushed after the icons, so the bubbles sit behind them.
-            for (island, (fill, ring)) in self.islands.islands().zip(self.bubbles.iter()) {
+            for ((island, (fill, ring)), centre) in self
+                .islands
+                .islands()
+                .zip(self.bubbles.iter())
+                .zip(map_at.iter())
+            {
                 let (_, _, bubble_radius) = cluster_geometry(island.items().len());
-                let centre = self.island_centre(island);
                 let at = Point::from((centre.x - bubble_radius, centre.y - bubble_radius));
                 push(ring.clone().with_location(at).into());
                 push(fill.clone().with_location(at).into());
@@ -1219,9 +1226,10 @@ impl<W: LayoutElement> FloatingSpace<W> {
         &self,
         mut ctx: RenderCtx<R>,
         zoom: f64,
+        map_at: &[Point<f64, Logical>],
         push: &mut dyn FnMut(FloatingSpaceRenderElement<R>),
     ) {
-        for island in self.islands.islands() {
+        for (island, centre) in self.islands.islands().zip(map_at.iter()) {
             let members: Vec<&Tile<W>> = island
                 .items()
                 .iter()
@@ -1231,7 +1239,6 @@ impl<W: LayoutElement> FloatingSpace<W> {
                 continue;
             }
 
-            let centre = self.island_centre(island);
             let (diameter, spread, _) = cluster_geometry(members.len());
             let px = (diameter * zoom * self.scale).round().max(16.) as u32;
 
@@ -1266,6 +1273,117 @@ impl<W: LayoutElement> FloatingSpace<W> {
         let rect = island.rect();
         let loc = self.canvas_to_logical(rect.loc);
         Point::from((loc.x + rect.size.w / 2., loc.y + rect.size.h / 2.))
+    }
+
+    // What everything is pulled toward on the map: the middle of all the islands, so
+    // the gathered cluster sits where the content is rather than at some fixed origin.
+    fn map_anchor(&self) -> Point<f64, Logical> {
+        let mut n = 0.;
+        let mut sum = Point::from((0., 0.));
+        for island in self.islands.islands() {
+            sum += self.island_centre(island);
+            n += 1.;
+        }
+        if n == 0. {
+            return Point::from((0., 0.));
+        }
+        sum.downscale(n)
+    }
+
+    // Where the bubbles sit on the map.
+    //
+    // Two steps. First everything contracts toward the anchor, because islands are
+    // spread over a canvas much larger than the screen and drawing them where they
+    // really are puts the bubbles exactly where the windows already were, which is no
+    // more legible than the windows.
+    //
+    // Contracting alone collapses islands that were already close into one another, so
+    // a relaxation pass then pushes any overlapping pair apart along the line between
+    // them until they only touch. The result reads as a cluster pulled together and
+    // held just short of collision, and it keeps every bubble separately clickable.
+    fn gathered_positions(&self) -> Vec<Point<f64, Logical>> {
+        let gather = self.options.camera.map_gather.clamp(0.01, 1.);
+        let anchor = self.map_anchor();
+
+        let mut out: Vec<Point<f64, Logical>> = Vec::new();
+        let mut radii: Vec<f64> = Vec::new();
+        for island in self.islands.islands() {
+            let real = self.island_centre(island);
+            out.push(anchor + (real - anchor).upscale(gather));
+            radii.push(cluster_geometry(island.items().len()).2);
+        }
+
+        // Deterministic and bounded: the same islands always relax to the same place, so
+        // nothing jitters between frames.
+        for _ in 0..24 {
+            let mut moved = false;
+            for i in 0..out.len() {
+                for j in (i + 1)..out.len() {
+                    let dx = out[j].x - out[i].x;
+                    let dy = out[j].y - out[i].y;
+                    let want = radii[i] + radii[j];
+                    let mut distance = (dx * dx + dy * dy).sqrt();
+
+                    // Exactly coincident centres have no line to push along, so they are
+                    // nudged onto one before the usual correction takes over.
+                    let (ux, uy) = if distance < 1e-6 {
+                        distance = 0.;
+                        let angle = i as f64 * 2.399_963_229_728_653;
+                        (angle.cos(), angle.sin())
+                    } else {
+                        (dx / distance, dy / distance)
+                    };
+
+                    if distance >= want {
+                        continue;
+                    }
+
+                    let push = (want - distance) / 2.;
+                    out[i].x -= ux * push;
+                    out[i].y -= uy * push;
+                    out[j].x += ux * push;
+                    out[j].y += uy * push;
+                    moved = true;
+                }
+            }
+            if !moved {
+                break;
+            }
+        }
+
+        out
+    }
+
+    // The island under a point on the map, hit against the drawn bubble rather than the
+    // window geometry: on the map the bubble is the only thing there is to click.
+    pub fn map_bubble_at(&self, local: Point<f64, Logical>) -> Option<Rectangle<f64, Logical>> {
+        let mut best: Option<(f64, Rectangle<f64, Logical>)> = None;
+
+        // Recomputed rather than read from a cache the render fills in: a click can
+        // arrive before the first map frame has been built, and a stale or empty cache
+        // would silently make every bubble unclickable.
+        let map_at = self.gathered_positions();
+
+        for (island, centre) in self.islands.islands().zip(map_at.iter()) {
+            let (_, _, radius) = cluster_geometry(island.items().len());
+            let dx = local.x - centre.x;
+            let dy = local.y - centre.y;
+            let distance = (dx * dx + dy * dy).sqrt();
+            if distance > radius {
+                continue;
+            }
+
+            // Bubbles can overlap when islands are close, so the nearest centre wins
+            // rather than whichever comes first.
+            if best.as_ref().is_none_or(|(d, _)| distance < *d) {
+                let rect = island.rect();
+                let loc = self.canvas_to_logical(rect.loc);
+                let size = Size::from((rect.size.w, rect.size.h));
+                best = Some((distance, Rectangle::new(loc, size)));
+            }
+        }
+
+        best.map(|(_, rect)| rect)
     }
 
     pub fn interactive_resize_begin(&mut self, window: W::Id, edges: ResizeEdge) -> bool {

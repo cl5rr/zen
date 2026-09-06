@@ -227,6 +227,12 @@ camera {
     // to here and back. It is a zoom level, not a mode; the wheel crosses it too.
     map-zoom 0.42
 
+    // How far the map pulls the islands together. 1 leaves them exactly where they are
+    // on the canvas, which puts the bubbles right where the windows already were and
+    // tells you nothing new. Lower gathers them into a cluster while keeping their
+    // relative arrangement, so the map still says which one is where.
+    map-gather 0.34
+
     // How far out the camera can go.
     min-zoom 0.2
 

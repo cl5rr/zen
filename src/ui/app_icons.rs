@@ -69,13 +69,39 @@ impl AppIcons {
         if let Some(cached) = self.paths.borrow().get(app_id) {
             return cached.clone();
         }
-        let found = icon_name_for(app_id).and_then(|name| find_icon_file(&name));
+        let found = resolve(app_id);
         self.paths.borrow_mut().insert(app_id.to_owned(), found.clone());
         found
     }
 }
 
 // lookup
+//
+// The desktop file is the correct route, because Icon= is the only thing that knows an
+// app's icon is named differently from the app. But plenty of packages ship an icon
+// named exactly after the app_id and no desktop entry that matches it, so the app_id is
+// tried directly afterwards rather than falling straight through to a letter.
+fn resolve(app_id: &str) -> Option<PathBuf> {
+    if let Some(path) = icon_name_for(app_id).and_then(|name| find_icon_file(&name)) {
+        return Some(path);
+    }
+
+    let lower = app_id.to_ascii_lowercase();
+    // The last component of a reverse-DNS id: org.gnome.Nautilus ships nautilus.png.
+    let tail = app_id.rsplit('.').next().unwrap_or(app_id).to_ascii_lowercase();
+
+    for name in [app_id, lower.as_str(), tail.as_str()] {
+        if name.is_empty() {
+            continue;
+        }
+        if let Some(path) = find_icon_file(name) {
+            return Some(path);
+        }
+    }
+
+    None
+}
+
 fn data_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
 
@@ -97,13 +123,19 @@ fn data_dirs() -> Vec<PathBuf> {
 // Matched by filename first, because that is what most Wayland apps set their app_id
 // to, then by StartupWMClass, which is how the rest of them declare it.
 fn icon_name_for(app_id: &str) -> Option<String> {
+    icon_name_in(&data_dirs(), app_id)
+}
+
+// Split from icon_name_for so it can be tested against a directory the test built,
+// rather than against whatever happens to be installed on the machine.
+fn icon_name_in(dirs: &[PathBuf], app_id: &str) -> Option<String> {
     if app_id.is_empty() {
         return None;
     }
 
     let mut fallback = None;
 
-    for dir in data_dirs() {
+    for dir in dirs {
         let apps = dir.join("applications");
 
         for candidate in [
@@ -168,51 +200,166 @@ fn read_icon_key(path: &Path) -> Option<String> {
         .map(|v| v.trim().to_owned())
 }
 
-// An icon name resolved to a PNG on disk.
+// An icon name resolved to a file on disk.
 //
-// Only PNG: ZEN has a png decoder already and no SVG rasteriser, and pulling one in for
-// this would be a bigger dependency than the feature. Themes that ship only SVG fall
-// through to the lettered disc, which is why that fallback is not an error path.
+// The freedesktop lookup, done properly, because the shortcut version finds almost
+// nothing on a real system: most themes ship SVG, the sizes are not a fixed list, and
+// the interesting theme is whichever one the user actually picked.
+//
+// Themes are tried in order, and within a theme the largest raster wins; an SVG beats
+// every raster because it rasterises at exactly the size the map wants.
 fn find_icon_file(name: &str) -> Option<PathBuf> {
     if name.starts_with('/') {
         let path = PathBuf::from(name);
         return path.exists().then_some(path);
     }
 
-    // Biggest first: the map scales them down, and downscaling beats upscaling.
-    const SIZES: &[&str] = &[
-        "512x512", "256x256", "192x192", "128x128", "96x96", "64x64", "48x48", "32x32",
-    ];
-
-    let themes = ["hicolor", "Adwaita", "breeze", "Papirus", "gnome"];
-
-    for dir in data_dirs() {
-        let icons = dir.join("icons");
-        for theme in themes {
-            for size in SIZES {
-                for sub in ["apps", "devices", "places"] {
-                    let path = icons
-                        .join(theme)
-                        .join(size)
-                        .join(sub)
-                        .join(format!("{name}.png"));
-                    if path.exists() {
-                        return Some(path);
-                    }
-                }
+    for theme in theme_search_order() {
+        for dir in data_dirs() {
+            let root = dir.join("icons").join(&theme);
+            if !root.is_dir() {
+                continue;
+            }
+            if let Some(found) = best_in_theme(&root, name) {
+                return Some(found);
             }
         }
+    }
 
-        // The flat directories, which is where most third-party installers drop things.
-        for flat in [dir.join("pixmaps"), icons.clone()] {
-            let path = flat.join(format!("{name}.png"));
-            if path.exists() {
-                return Some(path);
+    // The flat directories, which is where most third-party installers drop things.
+    for dir in data_dirs() {
+        for flat in [dir.join("pixmaps"), dir.join("icons")] {
+            for ext in ["png", "svg"] {
+                let path = flat.join(format!("{name}.{ext}"));
+                if path.exists() {
+                    return Some(path);
+                }
             }
         }
     }
 
     None
+}
+
+// The user's chosen theme first, then whatever it inherits, then the two every system
+// has. Without this an app whose icon lives only in Papirus or Breeze is invisible.
+fn theme_search_order() -> Vec<String> {
+    let mut order = Vec::new();
+    let mut push = |name: String| {
+        if !name.is_empty() && !order.contains(&name) {
+            order.push(name);
+        }
+    };
+
+    if let Some(theme) = configured_theme() {
+        push(theme.clone());
+        for parent in inherited_themes(&theme) {
+            push(parent);
+        }
+    }
+    push("Adwaita".to_owned());
+    push("breeze".to_owned());
+    push("hicolor".to_owned());
+    order
+}
+
+fn configured_theme() -> Option<String> {
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+
+    for rel in ["gtk-4.0/settings.ini", "gtk-3.0/settings.ini"] {
+        let Ok(text) = std::fs::read_to_string(config.join(rel)) else {
+            continue;
+        };
+        if let Some(name) = text
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("gtk-icon-theme-name="))
+        {
+            return Some(name.trim().to_owned());
+        }
+    }
+    None
+}
+
+fn inherited_themes(theme: &str) -> Vec<String> {
+    inherited_themes_in(&data_dirs(), theme)
+}
+
+fn inherited_themes_in(dirs: &[PathBuf], theme: &str) -> Vec<String> {
+    for dir in dirs {
+        let index = dir.join("icons").join(theme).join("index.theme");
+        let Ok(text) = std::fs::read_to_string(index) else {
+            continue;
+        };
+        if let Some(line) = text.lines().find_map(|l| l.trim().strip_prefix("Inherits=")) {
+            return line
+                .split(',')
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+// Walks one theme for a named icon. Themes nest as <size>/<category>/ or
+// <category>/<size>/, and there is no reliable way to know which without reading
+// index.theme, so this looks at both by walking a bounded depth.
+fn best_in_theme(root: &Path, name: &str) -> Option<PathBuf> {
+    let png = format!("{name}.png");
+    let svg = format!("{name}.svg");
+
+    let mut best_png: Option<(u32, PathBuf)> = None;
+
+    let mut stack = vec![(root.to_path_buf(), 0u32)];
+    while let Some((dir, depth)) = stack.pop() {
+        if depth > 3 {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push((path, depth + 1));
+                continue;
+            }
+
+            let Some(file) = path.file_name().and_then(|f| f.to_str()) else {
+                continue;
+            };
+
+            // Scalable wins outright, so there is no point ranking the rasters after it.
+            if file == svg {
+                return Some(path);
+            }
+            if file == png {
+                let score = size_hint(&path);
+                if best_png.as_ref().is_none_or(|(best, _)| score > *best) {
+                    best_png = Some((score, path));
+                }
+            }
+        }
+    }
+
+    best_png.map(|(_, path)| path)
+}
+
+// The pixel size a theme path implies, from the "48x48" or "48" component in it.
+// Symbolic icons are a single flat colour meant to be recoloured by the toolkit, which
+// is not something the map can do, so they rank below everything.
+fn size_hint(path: &Path) -> u32 {
+    let text = path.to_string_lossy();
+    if text.contains("symbolic") {
+        return 0;
+    }
+    path.components()
+        .filter_map(|c| c.as_os_str().to_str())
+        .filter_map(|part| part.split('x').next().and_then(|n| n.parse::<u32>().ok()))
+        .max()
+        .unwrap_or(1)
 }
 
 // drawing
@@ -228,7 +375,16 @@ fn render_icon(
     let surface = ImageSurface::create(cairo::Format::ARgb32, size, size)?;
     let cr = cairo::Context::new(&surface)?;
 
-    let drawn = path.and_then(|p| draw_png(&cr, p, size).ok()).is_some();
+    let drawn = path
+        .and_then(|p| {
+            let is_svg = p.extension().and_then(|e| e.to_str()) == Some("svg");
+            if is_svg {
+                draw_svg(&cr, p, size).ok()
+            } else {
+                draw_png(&cr, p, size).ok()
+            }
+        })
+        .is_some();
     if !drawn {
         draw_initial(&cr, app_id, size)?;
     }
@@ -246,6 +402,43 @@ fn render_icon(
         Vec::new(),
     )?;
     Ok(buffer)
+}
+
+// Rasterised at exactly the size the map asked for, which is the whole reason an SVG
+// is preferred over a raster: no resampling, crisp at any zoom.
+fn draw_svg(cr: &cairo::Context, path: &Path, size: i32) -> anyhow::Result<()> {
+    let data = std::fs::read(path)?;
+    let tree = resvg::usvg::Tree::from_data(&data, &resvg::usvg::Options::default())?;
+
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(size as u32, size as u32)
+        .ok_or_else(|| anyhow::anyhow!("could not allocate a {size}px pixmap"))?;
+
+    let tree_size = tree.size();
+    let scale = size as f32 / tree_size.width().max(tree_size.height()).max(1.);
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+
+    // tiny-skia gives premultiplied RGBA; cairo wants premultiplied BGRA.
+    let stride = cairo::Format::ARgb32.stride_for_width(size as u32)?;
+    let mut argb = vec![0u8; (stride * size) as usize];
+    for y in 0..size as usize {
+        for x in 0..size as usize {
+            let src = (y * size as usize + x) * 4;
+            let dst = y * stride as usize + x * 4;
+            argb[dst] = pixmap.data()[src + 2];
+            argb[dst + 1] = pixmap.data()[src + 1];
+            argb[dst + 2] = pixmap.data()[src];
+            argb[dst + 3] = pixmap.data()[src + 3];
+        }
+    }
+
+    let icon = ImageSurface::create_for_data(argb, cairo::Format::ARgb32, size, size, stride)?;
+    cr.set_source_surface(&icon, 0., 0.)?;
+    cr.paint()?;
+    Ok(())
 }
 
 fn draw_png(cr: &cairo::Context, path: &Path, size: i32) -> anyhow::Result<()> {
@@ -396,5 +589,117 @@ mod tests {
     #[test]
     fn an_empty_app_id_has_no_desktop_file() {
         assert_eq!(icon_name_for(""), None);
+    }
+}
+
+#[cfg(test)]
+mod lookup_tests {
+    use super::*;
+
+    // A synthetic icon theme, because the machine running the tests has no guarantee
+    // of having any particular app installed.
+    fn theme(root: &Path) {
+        for rel in [
+            "icons/Fake/16x16/apps",
+            "icons/Fake/256x256/apps",
+            "icons/Fake/48x48/apps",
+            "icons/Fake/scalable/apps",
+            "icons/Fake/symbolic/apps",
+            "applications",
+        ] {
+            std::fs::create_dir_all(root.join(rel)).unwrap();
+        }
+        std::fs::write(root.join("icons/Fake/index.theme"), "[Icon Theme]\nInherits=hicolor\n")
+            .unwrap();
+    }
+
+
+    #[test]
+    fn the_biggest_raster_wins_and_symbolic_never_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        theme(root);
+        for rel in ["16x16", "48x48", "256x256", "symbolic"] {
+            std::fs::write(root.join(format!("icons/Fake/{rel}/apps/thing.png")), b"x").unwrap();
+        }
+
+        let found = best_in_theme(&root.join("icons/Fake"), "thing").unwrap();
+        assert!(
+            found.to_string_lossy().contains("256x256"),
+            "picked {found:?} instead of the 256px one"
+        );
+    }
+
+    // This is the bug the user hit: nearly every Arch icon is scalable, and a search
+    // that only looked at fixed raster sizes found nothing and fell back to a letter.
+    #[test]
+    fn a_scalable_icon_is_found_and_preferred() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        theme(root);
+        std::fs::write(root.join("icons/Fake/48x48/apps/thing.png"), b"x").unwrap();
+        std::fs::write(root.join("icons/Fake/scalable/apps/thing.svg"), b"<svg/>").unwrap();
+
+        let found = best_in_theme(&root.join("icons/Fake"), "thing").unwrap();
+        assert_eq!(found.extension().unwrap(), "svg", "found {found:?}");
+    }
+
+    #[test]
+    fn a_desktop_file_gives_up_its_icon_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        theme(root);
+        std::fs::write(
+            root.join("applications/thing.desktop"),
+            "[Desktop Entry]\nName=Thing\nIcon=thing-icon\n",
+        )
+        .unwrap();
+
+        let found = icon_name_in(&[root.to_path_buf()], "thing");
+        assert_eq!(found.as_deref(), Some("thing-icon"));
+    }
+
+    // Electron apps and anything reverse-DNS named set an app_id that is not the
+    // desktop file's name, and declare the match with StartupWMClass instead.
+    #[test]
+    fn startup_wm_class_is_matched_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        theme(root);
+        std::fs::write(
+            root.join("applications/some-vendor-app.desktop"),
+            "[Desktop Entry]\nName=App\nIcon=vendor-app\nStartupWMClass=VendorApp\n",
+        )
+        .unwrap();
+
+        let found = icon_name_in(&[root.to_path_buf()], "VendorApp");
+        assert_eq!(found.as_deref(), Some("vendor-app"));
+    }
+
+    #[test]
+    fn a_theme_declares_what_it_inherits() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        theme(root);
+        let found = inherited_themes_in(&[root.to_path_buf()], "Fake");
+        assert_eq!(found, vec!["hicolor".to_owned()]);
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+
+    // The gap this closes: a package that ships hicolor/scalable/apps/<app_id>.svg but
+    // no desktop entry naming it. Before, that fell all the way through to a letter.
+    #[test]
+    fn an_icon_named_after_the_app_is_found_without_a_desktop_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let apps = dir.path().join("icons/hicolor/scalable/apps");
+        std::fs::create_dir_all(&apps).unwrap();
+        std::fs::write(apps.join("thing.svg"), b"<svg/>").unwrap();
+
+        let found = best_in_theme(&dir.path().join("icons/hicolor"), "thing");
+        assert!(found.is_some(), "an icon named after the app should be found");
     }
 }

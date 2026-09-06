@@ -4410,19 +4410,12 @@ impl<W: LayoutElement> Layout<W> {
         };
 
         let local = mon.view_to_workspace(view_pos);
-        let rect = {
-            let floating = mon.active_workspace_ref().floating();
-            let canvas = floating.logical_to_canvas(local);
-            floating.islands().island_at(canvas).map(|island| island.rect())
-        };
-        let Some(rect) = rect else {
+        // Hit against the bubble where it is drawn, not where the island really is: the
+        // map gathers the arrangement, so those are two different places.
+        let Some(rect) = mon.active_workspace_ref().floating().map_bubble_at(local) else {
             return false;
         };
 
-        let rect = Rectangle::new(
-            Point::from((rect.loc.x, rect.loc.y)),
-            Size::from((rect.size.w, rect.size.h)),
-        );
         mon.travel_to(rect, config);
         true
     }

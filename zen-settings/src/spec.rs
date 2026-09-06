@@ -323,6 +323,13 @@ pub const PAGES: &[Page] = &[
                     key: "map-zoom",
                     kind: Kind::Number { min: 0.1, max: 0.9, step: 0.01, default: 0.42, digits: 2 },
                 },
+                Row {
+                    label: "Gather",
+                    hint: "How far the map pulls the islands together. 1 leaves them                            exactly where they are on the canvas",
+                    path: &["camera"],
+                    key: "map-gather",
+                    kind: Kind::Number { min: 0.05, max: 1., step: 0.01, default: 0.34, digits: 2 },
+                },
             ],
         },
         Group {
