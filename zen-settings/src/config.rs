@@ -36,16 +36,17 @@ impl Config {
         Ok(Self { path, doc })
     }
 
-    pub fn save(&self) -> anyhow::Result<()> {
+    pub fn save(&self) -> anyhow::Result<bool> {
         let tmp = self.path.with_extension("kdl.new");
         fs::write(&tmp, self.doc.to_string())?;
 
-        if let Ok(out) = Command::new("zen")
+        let checked = match Command::new("zen")
             .args(["validate", "--config"])
             .arg(&tmp)
             .output()
         {
-            if !out.status.success() {
+            Ok(out) if out.status.success() => true,
+            Ok(out) => {
                 let text = String::from_utf8_lossy(&out.stderr).into_owned();
                 let why = text
                     .lines()
@@ -56,10 +57,11 @@ impl Config {
                 let _ = fs::remove_file(&tmp);
                 bail!("rejected: {why}");
             }
-        }
+            Err(_) => false,
+        };
 
         fs::rename(&tmp, &self.path)?;
-        Ok(())
+        Ok(checked)
     }
 
     // read

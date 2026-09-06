@@ -45,7 +45,8 @@ impl App {
         };
 
         match config.save() {
-            Ok(()) => self.say("saved", "good"),
+            Ok(true) => self.say("saved", "good"),
+            Ok(false) => self.say("saved, but zen is not on PATH to check it", "bad"),
             Err(err) => self.say(&format!("{err}"), "bad"),
         }
     }
