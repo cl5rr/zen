@@ -621,18 +621,27 @@ config_drift() {
     rm -f "$tmp_ship" "$tmp_user"
 
     missing="${missing%% }"
-    [ -n "$missing" ] || return 0
 
-    local count
-    count=$(printf '%s\n' $missing | wc -l | tr -d ' ')
+    # Missing node names are only the loud half. A changed *value* on a node you
+    # already have is silent, and that is how a whole visual change goes missing.
+    local changed
+    changed=$(diff "$user" "$shipped" 2>/dev/null | grep -c '^[<>]')
+    [ -n "$missing" ] || [ "${changed:-0}" -gt 0 ] || return 0
 
     printf '\n'
-    warn "your config does not have $count setting(s) that ZEN now ships"
-    dim "$(printf '%s' "$missing" | cut -c1-300)"
+    if [ -n "$missing" ]; then
+        local count
+        count=$(printf '%s\n' $missing | wc -l | tr -d ' ')
+        warn "your config does not have $count setting(s) that ZEN now ships"
+        dim "$(printf '%s' "$missing" | cut -c1-300)"
+    else
+        warn "your config differs from the one ZEN ships"
+    fi
+    dim "$changed line(s) differ in total, values included"
     printf '\n'
-    info "Your config wins over the defaults, so those are simply not reaching you."
+    info "Your config wins over the defaults, so anything newer is not reaching you."
     info "The look lives there too: shadows, corners, the glass material and the"
-    info "settings app bind are config, not binary."
+    info "window transparency are config, not binary."
     printf '\n'
     dim "diff:  diff $user resources/default-config.kdl"
 
@@ -894,6 +903,39 @@ install_desktop_apps() {
 
     dim "media and brightness keys: wpctl, playerctl, brightnessctl"
     pacman_install $MEDIA_APPS && ok "media keys will work"
+}
+
+# What the shipped keybinds spawn, as "command:package" pairs. Checked by command
+# because that is what a bind actually needs to find on PATH.
+BIND_APPS="alacritty:alacritty fuzzel:fuzzel swaybg:swaybg swaylock:swaylock wpctl:wireplumber playerctl:playerctl brightnessctl:brightnessctl xdg-open:xdg-utils firefox:firefox nautilus:nautilus mako:mako"
+
+# An update can add a bind that spawns something new, and the package for it would
+# otherwise never be offered: --update does not run the app install step.
+apps_drift() {
+    local missing="" pair cmd pkg
+    for pair in $BIND_APPS; do
+        cmd="${pair%%:*}"
+        pkg="${pair##*:}"
+        have "$cmd" || missing="$missing $pkg"
+    done
+
+    missing="${missing# }"
+    [ -n "$missing" ] || return 0
+
+    printf '
+'
+    warn "keybinds that spawn something you do not have installed"
+    dim "$missing"
+
+    if [ "$UI_TTY" != 1 ] || [ "$PKG_MGR" != pacman ]; then
+        dim "install them with: sudo pacman -S --needed $missing"
+        return 0
+    fi
+
+    ui_menu "Install them?" "Yes" "No, leave it" || return 0
+    [ "$UI_CHOICE" = 0 ] || return 0
+    # shellcheck disable=SC2086
+    pacman_install $missing && ok "installed"
 }
 
 install_extra_apps() {
@@ -1189,7 +1231,7 @@ main() {
     fi
 
     if [ "$DO_UPDATE" = 1 ]; then update_zen || exit 1; fi
-    if [ "$DO_UPDATE" = 1 ]; then theme_all; fi
+    if [ "$DO_UPDATE" = 1 ]; then theme_all; apps_drift; fi
     if [ "$DO_DEPS" = 1 ]; then check_deps; install_deps; fi
     if [ "$W_APPS" = 1 ]; then install_desktop_apps; fi
     if [ "$W_EXTRAS" = 1 ]; then install_extra_apps; fi
