@@ -252,7 +252,8 @@ egl|OpenGL ES context creation
 libseat|seat and session management (seatd/logind)
 libdisplay-info|EDID parsing for monitor identification
 pangocairo|text rendering for on-screen UI
-dbus-1|desktop integration"
+dbus-1|desktop integration
+libpipewire-0.3|screencasting and the screen-share portal"
 
 # Provider package for a given pkg-config name, per package manager.
 provider_for() {
@@ -264,6 +265,7 @@ provider_for() {
         xkbcommon) echo libxkbcommon ;; gbm|egl) echo mesa ;;
         libseat) echo seatd ;; libdisplay-info) echo libdisplay-info ;;
         pangocairo) echo pango ;; dbus-1) echo dbus ;;
+        libpipewire-0.3) echo pipewire ;;
         esac ;;
     apt) case "$lib" in
         wayland-server|wayland-client) echo libwayland-dev ;;
@@ -272,6 +274,7 @@ provider_for() {
         egl) echo libegl1-mesa-dev ;; libseat) echo libseat-dev ;;
         libdisplay-info) echo libdisplay-info-dev ;;
         pangocairo) echo libpango1.0-dev ;; dbus-1) echo libdbus-1-dev ;;
+        libpipewire-0.3) echo libpipewire-0.3-dev ;;
         esac ;;
     dnf) case "$lib" in
         wayland-server|wayland-client) echo wayland-devel ;;
@@ -280,6 +283,7 @@ provider_for() {
         egl) echo mesa-libEGL-devel ;; libseat) echo libseat-devel ;;
         libdisplay-info) echo libdisplay-info-devel ;;
         pangocairo) echo pango-devel ;; dbus-1) echo dbus-devel ;;
+        libpipewire-0.3) echo pipewire-devel ;;
         esac ;;
     apk) case "$lib" in
         wayland-server|wayland-client) echo wayland-dev ;;
@@ -287,6 +291,7 @@ provider_for() {
         xkbcommon) echo libxkbcommon-dev ;; gbm|egl) echo mesa-dev ;;
         libseat) echo libseat-dev ;; libdisplay-info) echo libdisplay-info-dev ;;
         pangocairo) echo pango-dev ;; dbus-1) echo dbus-dev ;;
+        libpipewire-0.3) echo pipewire-dev ;;
         esac ;;
     zypper) case "$lib" in
         wayland-server|wayland-client) echo wayland-devel ;;
@@ -295,6 +300,7 @@ provider_for() {
         egl) echo Mesa-libEGL-devel ;; libseat) echo libseat-devel ;;
         libdisplay-info) echo libdisplay-info-devel ;;
         pangocairo) echo pango-devel ;; dbus-1) echo dbus-1-devel ;;
+        libpipewire-0.3) echo pipewire-devel ;;
         esac ;;
     esac
 }
@@ -329,6 +335,71 @@ gtk_packages_for() {
         pacman) echo "gtk4 libadwaita" ;; apt) echo "libgtk-4-dev libadwaita-1-dev" ;;
         dnf)    echo "gtk4-devel libadwaita-devel" ;; apk) echo "gtk4.0-dev libadwaita-dev" ;;
         zypper) echo "gtk4-devel libadwaita-devel" ;;
+    esac
+}
+
+# What a session needs at runtime, as opposed to what the build needs. None of this
+# is linked into the binary, so a build can succeed and the session still be unusable:
+# no X11 apps, no file picker, no fonts. Checked by command name, because that is what
+# actually has to be on PATH.
+#
+#   Xwayland             every X11 app, which is still Discord, Steam and Electron
+#   xdg-desktop-portal   file pickers, screen sharing, and the "open with" dialog
+#   dbus-daemon          the session bus nearly every desktop app talks to
+#   fc-list              font discovery; with no fonts nothing draws text at all
+RUNTIME_PROGS="Xwayland|X11 apps: Discord, Steam, older Electron
+xdg-desktop-portal|file pickers, screen sharing and app portals
+dbus-daemon|the session bus nearly every desktop app needs
+fc-list|font discovery, without which nothing draws text"
+
+runtime_package_for() {
+    local mgr="$1" cmd="$2"
+    case "$mgr" in
+    pacman) case "$cmd" in
+        Xwayland) echo xorg-xwayland ;; xdg-desktop-portal) echo xdg-desktop-portal ;;
+        dbus-daemon) echo dbus ;; fc-list) echo fontconfig ;;
+        esac ;;
+    apt) case "$cmd" in
+        Xwayland) echo xwayland ;; xdg-desktop-portal) echo xdg-desktop-portal ;;
+        dbus-daemon) echo dbus ;; fc-list) echo fontconfig ;;
+        esac ;;
+    dnf) case "$cmd" in
+        Xwayland) echo xorg-x11-server-Xwayland ;; xdg-desktop-portal) echo xdg-desktop-portal ;;
+        dbus-daemon) echo dbus ;; fc-list) echo fontconfig ;;
+        esac ;;
+    apk) case "$cmd" in
+        Xwayland) echo xwayland ;; xdg-desktop-portal) echo xdg-desktop-portal ;;
+        dbus-daemon) echo dbus ;; fc-list) echo fontconfig ;;
+        esac ;;
+    zypper) case "$cmd" in
+        Xwayland) echo xwayland ;; xdg-desktop-portal) echo xdg-desktop-portal ;;
+        dbus-daemon) echo dbus ;; fc-list) echo fontconfig ;;
+        esac ;;
+    esac
+}
+
+# A portal with no backend answers nothing, which is the usual reason a file picker
+# never opens and a screen share hangs at a blank chooser. Any one of these will do.
+portal_backend_package_for() {
+    case "$1" in
+        pacman) echo xdg-desktop-portal-gtk ;; apt) echo xdg-desktop-portal-gtk ;;
+        dnf)    echo xdg-desktop-portal-gtk ;; apk) echo xdg-desktop-portal-gtk ;;
+        zypper) echo xdg-desktop-portal-gtk ;;
+    esac
+}
+
+font_package_for() {
+    case "$1" in
+        pacman) echo ttf-dejavu ;; apt) echo fonts-dejavu-core ;;
+        dnf)    echo dejavu-sans-fonts ;; apk) echo font-dejavu ;;
+        zypper) echo dejavu-fonts ;;
+    esac
+}
+
+git_package_for() {
+    case "$1" in
+        pacman) echo git ;; apt) echo git ;; dnf) echo git ;;
+        apk)    echo git ;; zypper) echo git ;;
     esac
 }
 
@@ -387,12 +458,34 @@ check_deps() {
         N_MISSING=$((N_MISSING + 1))
     fi
 
+    # This script updates itself with git, so an install without git can be built
+    # once and then never updated again.
+    if have git; then
+        row_ok "git" "$(git --version 2>/dev/null)"
+        N_OK=$((N_OK + 1))
+    else
+        row_miss "git" "required by ./setup.sh --update"
+        add_missing "$(git_package_for "$PKG_MGR")"
+        N_MISSING=$((N_MISSING + 1))
+    fi
+
     # Rust is reported here but installed separately, via rustup.
     local PATH_SAVE="$PATH"
     [ -d "$HOME/.cargo/bin" ] && PATH="$HOME/.cargo/bin:$PATH"
     if have cargo; then
-        row_ok "Rust" "$(cargo --version 2>/dev/null)"
-        N_OK=$((N_OK + 1))
+        # Presence is not enough: a distro rust a few releases behind fails deep in a
+        # dependency with an error that says nothing about the version.
+        local rust_ver rust_major rust_minor
+        rust_ver="$(cargo --version 2>/dev/null | awk '{print $2}')"
+        rust_major="${rust_ver%%.*}"
+        rust_minor="${rust_ver#*.}"; rust_minor="${rust_minor%%.*}"
+        if [ "${rust_major:-0}" -gt 1 ] 2>/dev/null             || { [ "${rust_major:-0}" -eq 1 ] && [ "${rust_minor:-0}" -ge 87 ]; } 2>/dev/null; then
+            row_ok "Rust" "$(cargo --version 2>/dev/null)"
+            N_OK=$((N_OK + 1))
+        else
+            row_miss "Rust" "$rust_ver is too old, ZEN needs >= 1.87 (rustup update)"
+            N_MISSING=$((N_MISSING + 1))
+        fi
     else
         row_miss "Rust" "needed >= 1.87; installed via rustup, no root required"
         N_MISSING=$((N_MISSING + 1))
@@ -444,15 +537,8 @@ EOF
         N_MISSING=$((N_MISSING + 1))
     fi
 
-    # PipeWire is only needed for the default screencast feature.
-    case "$CARGO_FEATURES" in
-        *--no-default-features*) : ;;
-        *)
-            if ! pkg-config --exists libpipewire-0.3 2>/dev/null; then
-                for pkg in $(optional_packages_for "$PKG_MGR"); do add_missing "$pkg"; done
-            fi
-            ;;
-    esac
+    check_runtime
+    check_system
 
     printf '\n'
     if [ "$N_MISSING" -eq 0 ] && [ "$N_UNKNOWN" -eq 0 ] && [ -z "${MISSING_PKGS# }" ]; then
@@ -464,6 +550,139 @@ EOF
             "$C_BOLD" "$N_OK" "$N_MISSING" "$N_UNKNOWN" "$C_RESET"
     else
         printf '    %s%s present, %s missing.%s\n' "$C_BOLD" "$N_OK" "$N_MISSING" "$C_RESET"
+    fi
+}
+
+# Everything a session needs once ZEN is running. A build can succeed and leave you
+# with no X11 apps, no file picker and no fonts, and none of that shows up as a build
+# error, so it gets its own pass.
+check_runtime() {
+    printf '\n    %sruntime programs%s\n' "$C_BOLD" "$C_RESET"
+
+    local cmd desc pkg
+    while IFS='|' read -r cmd desc; do
+        [ -n "$cmd" ] || continue
+        if have "$cmd"; then
+            row_ok "$cmd" ""
+            N_OK=$((N_OK + 1))
+        else
+            row_miss "$cmd" "$desc"
+            add_missing "$(runtime_package_for "$PKG_MGR" "$cmd")"
+            N_MISSING=$((N_MISSING + 1))
+        fi
+    done <<EOF
+$RUNTIME_PROGS
+EOF
+
+    # Checked whether or not the portal itself is present: installing xdg-desktop-portal
+    # alone leaves you in exactly the broken state this row is about. ZEN's shipped
+    # zen-portals.conf asks for the gnome backend, then the gtk one.
+    if have xdg-desktop-portal-gtk || have xdg-desktop-portal-wlr ||
+        have xdg-desktop-portal-gnome || have xdg-desktop-portal-kde ||
+        ls /usr/libexec/xdg-desktop-portal-* /usr/lib/xdg-desktop-portal-* >/dev/null 2>&1
+    then
+        row_ok "portal backend" ""
+        N_OK=$((N_OK + 1))
+    else
+        row_miss "portal backend" "a portal with no backend never answers a file picker"
+        add_missing "$(portal_backend_package_for "$PKG_MGR")"
+        N_MISSING=$((N_MISSING + 1))
+    fi
+
+    # fontconfig being installed says nothing about there being a font to find.
+    if have fc-list; then
+        local nfonts nmono
+        nfonts="$(fc-list 2>/dev/null | wc -l)"
+        nmono="$(fc-list :spacing=100 2>/dev/null | wc -l)"
+        if [ "${nfonts:-0}" -eq 0 ]; then
+            row_miss "fonts" "fontconfig is installed but finds no font at all"
+            add_missing "$(font_package_for "$PKG_MGR")"
+            N_MISSING=$((N_MISSING + 1))
+        elif [ "${nmono:-0}" -eq 0 ]; then
+            row_miss "monospace font" "the shipped terminal themes ask for one by name"
+            add_missing "$(font_package_for "$PKG_MGR")"
+            N_MISSING=$((N_MISSING + 1))
+        else
+            row_ok "fonts" "$nfonts installed, $nmono monospace"
+            N_OK=$((N_OK + 1))
+        fi
+    fi
+
+    printf '\n    %swhat the keybinds spawn%s\n' "$C_BOLD" "$C_RESET"
+    local pair
+    for pair in $BIND_APPS; do
+        cmd="${pair%%:*}"
+        pkg="${pair##*:}"
+        if have "$cmd"; then
+            row_ok "$cmd" ""
+            N_OK=$((N_OK + 1))
+        else
+            row_miss "$cmd" "$pkg"
+            add_missing "$pkg"
+            N_MISSING=$((N_MISSING + 1))
+        fi
+    done
+}
+
+# Conditions that no package can fix, so these report rather than add to the install
+# list. Each one is something that makes ZEN fail to start in a way whose error
+# message does not name the cause.
+check_system() {
+    printf '\n    %ssystem%s\n' "$C_BOLD" "$C_RESET"
+
+    # No render node means no GPU to draw with, and the TTY backend simply exits.
+    if ls /dev/dri/card* >/dev/null 2>&1; then
+        row_ok "GPU" "$(ls -d /dev/dri/card* 2>/dev/null | tr '\n' ' ')"
+        N_OK=$((N_OK + 1))
+    else
+        row_miss "GPU" "no /dev/dri/card*; ZEN can run nested but not on a TTY"
+        N_MISSING=$((N_MISSING + 1))
+    fi
+
+    # Seat management hands over the GPU and the input devices. With neither, ZEN
+    # starts and then cannot open a single device.
+    if [ -d /run/systemd/system ]; then
+        row_ok "seat" "systemd-logind"
+        N_OK=$((N_OK + 1))
+    elif have seatd; then
+        if pgrep -x seatd >/dev/null 2>&1; then
+            row_ok "seat" "seatd running"
+            N_OK=$((N_OK + 1))
+        else
+            row_miss "seat" "seatd is installed but not running (systemctl enable --now seatd)"
+            N_MISSING=$((N_MISSING + 1))
+        fi
+    else
+        row_miss "seat" "no logind and no seatd; nothing can hand ZEN the GPU"
+        add_missing "seatd"
+        N_MISSING=$((N_MISSING + 1))
+    fi
+
+    # Without logind, device access is group membership and nothing else.
+    if [ ! -d /run/systemd/system ]; then
+        local groups; groups="$(id -nG 2>/dev/null)"
+        local want missing_groups=""
+        for want in video input seat; do
+            case " $groups " in *" $want "*) ;; *) missing_groups="$missing_groups $want" ;; esac
+        done
+        if [ -n "$missing_groups" ]; then
+            row_miss "groups" "add yourself:sudo usermod -aG$(echo "$missing_groups" | tr ' ' ',') $USER"
+            N_MISSING=$((N_MISSING + 1))
+        else
+            row_ok "groups" "video input seat"
+            N_OK=$((N_OK + 1))
+        fi
+    fi
+
+    # Audio and screencasting both ride on PipeWire at runtime, separately from the
+    # headers the build needs.
+    if have pipewire; then
+        row_ok "pipewire" "$(pipewire --version 2>/dev/null | head -1)"
+        N_OK=$((N_OK + 1))
+    else
+        row_miss "pipewire" "audio and screen sharing at runtime"
+        add_missing "pipewire"
+        N_MISSING=$((N_MISSING + 1))
     fi
 }
 
@@ -543,13 +762,27 @@ build() {
 
     # The settings app needs gtk4 and libadwaita, which the compositor does not.
     # It is a nicety, so a missing toolkit is a note rather than a failure.
+    #
+    # The binary is removed first on purpose. install_zen installs whatever is at that
+    # path, so a build that fails here would leave the previous one in place and get it
+    # reinstalled: the update reports success and the app silently stays old. That is
+    # exactly what happened with the settings pages added after the first install.
+    local settings="target/$BUILD_PROFILE/zen-settings"
+    local had_settings=no
+    [ -x "$settings" ] && had_settings=yes
+    rm -f "$settings"
+
     if pkg-config --exists gtk4 libadwaita-1 2>/dev/null; then
         # shellcheck disable=SC2086
         if cargo $args -p zen-settings; then
-            ok "target/$BUILD_PROFILE/zen-settings"
+            ok "$settings"
         else
-            warn "the settings app did not build; ZEN itself is unaffected"
+            warn "the settings app did not build, so it will NOT be updated this run"
+            warn "ZEN itself is unaffected. Send the cargo error above if you want it fixed"
         fi
+    elif [ "$had_settings" = yes ]; then
+        warn "gtk4/libadwaita are gone, so the settings app cannot be rebuilt"
+        warn "install them and run this again: sudo pacman -S gtk4 libadwaita"
     else
         dim "gtk4/libadwaita missing, skipping the settings app (pacman -S gtk4 libadwaita)"
     fi
@@ -583,6 +816,8 @@ install_zen() {
         $SUDO install -Dm755 "target/$BUILD_PROFILE/zen-settings" "$PREFIX/bin/zen-settings"
         $SUDO install -Dm644 resources/zen-settings.desktop                                                     "$PREFIX/share/applications/zen-settings.desktop"
         dim "settings app installed; ${C_BOLD}Mod+,${C_RESET} opens it"
+    elif [ -x "$PREFIX/bin/zen-settings" ]; then
+        warn "$PREFIX/bin/zen-settings is left at its old version; see the build warning above"
     fi
 
     if have systemctl; then
@@ -959,35 +1194,6 @@ install_desktop_apps() {
 # because that is what a bind actually needs to find on PATH.
 BIND_APPS="alacritty:alacritty fuzzel:fuzzel swaybg:swaybg swaylock:swaylock wpctl:wireplumber playerctl:playerctl brightnessctl:brightnessctl xdg-open:xdg-utils firefox:firefox nautilus:nautilus mako:mako"
 
-# An update can add a bind that spawns something new, and the package for it would
-# otherwise never be offered: --update does not run the app install step.
-apps_drift() {
-    local missing="" pair cmd pkg
-    for pair in $BIND_APPS; do
-        cmd="${pair%%:*}"
-        pkg="${pair##*:}"
-        have "$cmd" || missing="$missing $pkg"
-    done
-
-    missing="${missing# }"
-    [ -n "$missing" ] || return 0
-
-    printf '
-'
-    warn "keybinds that spawn something you do not have installed"
-    dim "$missing"
-
-    if [ "$UI_TTY" != 1 ] || [ "$PKG_MGR" != pacman ]; then
-        dim "install them with: sudo pacman -S --needed $missing"
-        return 0
-    fi
-
-    ui_menu "Install them?" "Yes" "No, leave it" || return 0
-    [ "$UI_CHOICE" = 0 ] || return 0
-    # shellcheck disable=SC2086
-    pacman_install $missing && ok "installed"
-}
-
 install_extra_apps() {
     step "Installing optional extras"
     dim "Mod+W browser, Mod+E files, and a notification daemon"
@@ -1082,10 +1288,34 @@ theme_lock() {
     theme_file "$base/swaylock/config" resources/swaylock.conf "swaylock"
 }
 
+# True when the file on disk is byte-identical to some version ZEN has shipped, so
+# it is a copy we installed that has never been edited. That is the only case where
+# overwriting is safe, and it is what lets a fix to a shipped theme reach someone who
+# already has the broken copy. resources/theme-history.txt is generated by
+# scripts/theme-history.sh from git history.
+is_unmodified_zen_theme() {
+    local dst="$1" src="$2" history="resources/theme-history.txt"
+    [ -f "$history" ] || return 1
+    command -v sha256sum >/dev/null 2>&1 || return 1
+    local have
+    have=$(sha256sum < "$dst" | cut -d' ' -f1)
+    grep -q "^$src $have\$" "$history"
+}
+
 theme_file() {
     local dst="$1" src="$2" what="$3"
     if [ -f "$dst" ]; then
+        if cmp -s "$src" "$dst"; then
+            dim "$what theme already current: $dst"
+            return 0
+        fi
+        if is_unmodified_zen_theme "$dst" "$src"; then
+            cp "$src" "$dst" || return 0
+            ok "updated the $what theme ZEN installed: $dst"
+            return 0
+        fi
         dim "you already have a $what config, left alone: $dst"
+        dim "ZEN ships a newer one at $src if you want to compare"
         return 0
     fi
     mkdir -p "$(dirname "$dst")"
@@ -1338,8 +1568,11 @@ main() {
     fi
 
     if [ "$DO_UPDATE" = 1 ]; then update_zen || exit 1; fi
-    if [ "$DO_UPDATE" = 1 ]; then theme_all; apps_drift; fi
-    if [ "$DO_DEPS" = 1 ]; then check_deps; install_deps; fi
+    # An update runs the full audit too. A pull can add a bind that spawns something
+    # new, or a library a new feature links against, and neither would ever be offered
+    # otherwise: --update does not go through the install steps.
+    if [ "$DO_UPDATE" = 1 ]; then theme_all; check_deps; install_deps; fi
+    if [ "$DO_DEPS" = 1 ] && [ "$DO_UPDATE" = 0 ]; then check_deps; install_deps; fi
     if [ "$W_APPS" = 1 ]; then install_desktop_apps; fi
     if [ "$W_EXTRAS" = 1 ]; then install_extra_apps; fi
     if [ "$DO_BUILD" = 1 ]; then ensure_rust; build; fi
