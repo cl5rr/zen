@@ -494,6 +494,20 @@ impl LayoutElement for Mapped {
         &self.window
     }
 
+    fn app_id(&self) -> String {
+        let Some(toplevel) = self.window.toplevel() else {
+            return String::new();
+        };
+        smithay::wayland::compositor::with_states(toplevel.wl_surface(), |states| {
+            states
+                .data_map
+                .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
+                .and_then(|d| d.lock().ok())
+                .and_then(|d| d.app_id.clone())
+                .unwrap_or_default()
+        })
+    }
+
     fn update_config(&mut self, blur_config: zen_config::Blur, glass_config: zen_config::Glass) {
         self.blur_config = blur_config;
         self.glass_config = glass_config;

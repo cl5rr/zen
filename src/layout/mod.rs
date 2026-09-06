@@ -100,6 +100,12 @@ pub trait LayoutElement {
 
     fn id(&self) -> &Self::Id;
 
+    // The app_id the client set, used to find an icon for it on the map. Defaulted
+    // rather than required so the test element does not have to invent one.
+    fn app_id(&self) -> String {
+        String::new()
+    }
+
     fn update_config(&mut self, blur_config: zen_config::Blur, glass_config: zen_config::Glass) {
         let _ = (blur_config, glass_config);
     }

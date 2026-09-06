@@ -25,7 +25,12 @@ use crate::layout::RenderLayer;
 use crate::zen_render_elements;
 use zen_config::{Color, CornerRadius, GradientInterpolation};
 
+use smithay::backend::renderer::element::Kind;
+
 use crate::render_helpers::border::BorderRenderElement;
+use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
+use crate::render_helpers::texture::TextureRenderElement;
+use crate::ui::app_icons::AppIcons;
 
 // map
 // Bubbles have to be on when the map settles at exactly map-zoom, and reading a
@@ -33,9 +38,11 @@ use crate::render_helpers::border::BorderRenderElement;
 // also fades them in a frame or two early instead of popping at the stop.
 const BUBBLE_ZOOM_SLACK: f64 = 1.08;
 
+// The size of one app icon on the map, in canvas pixels. A cluster divides this down.
+const ICON_SIZE: f64 = 132.;
+
 const BUBBLE_PAD: f64 = 56.;
 
-const BUBBLE_RADIUS: f32 = 64.;
 
 const BUBBLE_FILL: Color = Color::new_unpremul(1., 1., 1., 0.10);
 
@@ -73,6 +80,7 @@ pub struct FloatingSpace<W: LayoutElement> {
 
     islands: IslandSpace<W::Id>,
     bubbles: Vec<(BorderRenderElement, BorderRenderElement)>,
+    icons: AppIcons,
 
     view_size: Size<f64, Logical>,
 
@@ -90,6 +98,7 @@ zen_render_elements! {
         Tile = TileRenderElement<R>,
         ClosingWindow = ClosingWindowRenderElement,
         Bubble = BorderRenderElement,
+        Icon = PrimaryGpuTextureRenderElement,
     }
 }
 
@@ -238,6 +247,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
             spawn_center: None,
             islands: IslandSpace::new(),
             bubbles: Vec::new(),
+            icons: AppIcons::new(),
             view_size,
             working_area,
             scale,
@@ -297,37 +307,29 @@ impl<W: LayoutElement> FloatingSpace<W> {
     // not, which is the whole reason the map is a different picture and not just a
     // smaller one.
     fn update_bubbles(&mut self) {
-        let rects: Vec<Rectangle<f64, Logical>> = self
-            .islands
-            .islands()
-            .map(|island| {
-                let r = island.rect();
-                let loc = self.canvas_to_logical(r.loc);
-                Rectangle::new(loc, Size::from((r.size.w, r.size.h)))
-            })
-            .collect();
+        // Sized to the icon cluster, not to the windows. On the map the windows are not
+        // drawn at all, so a bubble shaped to their geometry would be a big empty box
+        // with a few icons rattling around in the middle of it.
+        let counts: Vec<usize> = self.islands.islands().map(|i| i.items().len()).collect();
 
         self.bubbles.clear();
-        for rect in rects {
-            let padded = Rectangle::new(
-                Point::from((rect.loc.x - BUBBLE_PAD, rect.loc.y - BUBBLE_PAD)),
-                Size::from((
-                    rect.size.w + BUBBLE_PAD * 2.,
-                    rect.size.h + BUBBLE_PAD * 2.,
-                )),
-            );
+        for count in counts {
+            let (_, _, bubble_radius) = cluster_geometry(count);
+            let side = bubble_radius * 2.;
+            let size = Size::from((side, side));
 
             let bubble = |color, width| {
                 BorderRenderElement::new(
-                    padded.size,
-                    Rectangle::from_size(padded.size),
+                    size,
+                    Rectangle::from_size(size),
                     GradientInterpolation::default(),
                     color,
                     color,
                     0.,
-                    Rectangle::from_size(padded.size),
+                    Rectangle::from_size(size),
                     width,
-                    CornerRadius::from(BUBBLE_RADIUS),
+                    // Half the side is a circle, which is what a bubble is.
+                    CornerRadius::from(bubble_radius as f32),
                     self.scale as f32,
                     1.,
                 )
@@ -1170,9 +1172,19 @@ impl<W: LayoutElement> FloatingSpace<W> {
             }
         }
 
+        // On the map the windows themselves are a few unreadable pixels, so they are
+        // replaced outright by the icons of the apps they belong to, clustered inside
+        // the island they are in. That is the whole difference between the map and a
+        // small view of the canvas.
+        let on_map = xray_pos.zoom <= self.options.camera.map_zoom * BUBBLE_ZOOM_SLACK;
+
         let active = self.active_window_id.clone();
         for (tile, tile_pos) in self.tiles_with_render_positions() {
             if layer.is_normal() == tile.is_moving_between_workspaces() {
+                continue;
+            }
+
+            if on_map && layer.is_normal() {
                 continue;
             }
 
@@ -1184,15 +1196,76 @@ impl<W: LayoutElement> FloatingSpace<W> {
             });
         }
 
-        // Pushed after the tiles, so they sit behind them.
-        if layer.is_normal() && xray_pos.zoom <= self.options.camera.map_zoom * BUBBLE_ZOOM_SLACK {
+        if on_map && layer.is_normal() {
+            self.render_map_icons(ctx.r(), xray_pos.zoom, push);
+
+            // Pushed after the icons, so the bubbles sit behind them.
             for (island, (fill, ring)) in self.islands.islands().zip(self.bubbles.iter()) {
-                let loc = self.canvas_to_logical(island.rect().loc);
-                let at = Point::from((loc.x - BUBBLE_PAD, loc.y - BUBBLE_PAD));
+                let (_, _, bubble_radius) = cluster_geometry(island.items().len());
+                let centre = self.island_centre(island);
+                let at = Point::from((centre.x - bubble_radius, centre.y - bubble_radius));
                 push(ring.clone().with_location(at).into());
                 push(fill.clone().with_location(at).into());
             }
         }
+    }
+
+    // The icons of everything in an island, pulled into a cluster at its centre.
+    //
+    // Laid out on a phyllotaxis spiral rather than a grid: it packs evenly at any count,
+    // stays centred, and adding a window nudges the others outward instead of reflowing
+    // the whole thing into a different shape.
+    fn render_map_icons<R: ZenRenderer>(
+        &self,
+        mut ctx: RenderCtx<R>,
+        zoom: f64,
+        push: &mut dyn FnMut(FloatingSpaceRenderElement<R>),
+    ) {
+        for island in self.islands.islands() {
+            let members: Vec<&Tile<W>> = island
+                .items()
+                .iter()
+                .filter_map(|id| self.tiles.iter().find(|t| t.window().id() == id))
+                .collect();
+            if members.is_empty() {
+                continue;
+            }
+
+            let centre = self.island_centre(island);
+            let (diameter, spread, _) = cluster_geometry(members.len());
+            let px = (diameter * zoom * self.scale).round().max(16.) as u32;
+
+            for (i, tile) in members.iter().enumerate() {
+                let offset = spiral_offset(i, spread);
+                let at = Point::from((
+                    centre.x + offset.x - diameter / 2.,
+                    centre.y + offset.y - diameter / 2.,
+                ));
+
+                let app_id = tile.window().app_id();
+                let Some(buffer) = self.icons.get::<R>(ctx.r().renderer, &app_id, px) else {
+                    continue;
+                };
+
+                push(
+                    PrimaryGpuTextureRenderElement(TextureRenderElement::from_texture_buffer(
+                        buffer,
+                        at,
+                        1.,
+                        None,
+                        Some(Size::from((diameter, diameter))),
+                        Kind::Unspecified,
+                    ))
+                    .into(),
+                );
+            }
+        }
+    }
+
+    fn island_centre(&self, island: &crate::layout::island::Island<W::Id>) -> Point<f64, Logical> {
+        let rect = island.rect();
+        let loc = self.canvas_to_logical(rect.loc);
+        Point::from((loc.x + rect.size.w / 2., loc.y + rect.size.h / 2.))
     }
 
     pub fn interactive_resize_begin(&mut self, window: W::Id, edges: ResizeEdge) -> bool {
@@ -1854,5 +1927,76 @@ fn resolve_preset_size(preset: PresetSize, view_size: f64) -> ResolvedSize {
     match preset {
         PresetSize::Proportion(proportion) => ResolvedSize::Tile(view_size * proportion),
         PresetSize::Fixed(width) => ResolvedSize::Window(f64::from(width)),
+    }
+}
+
+
+// One icon size, the radius the cluster spreads over, and the radius of the bubble
+// around it. Shared by the bubble and the icons so the two cannot drift apart.
+//
+// The cluster grows as the square root of the count, which is what keeps the icons at a
+// constant size while the bubble grows: area per icon stays the same.
+fn cluster_geometry(count: usize) -> (f64, f64, f64) {
+    // A sunflower's radius grows as sqrt(index), so the outermost icon of a cluster of
+    // n sits at sqrt(n-1) times the step. The step is a little under one icon width,
+    // which is what makes them touch and overlap rather than sit in tidy rings.
+    let step = ICON_SIZE * 0.72;
+    let outermost = (count.max(1) - 1) as f64;
+    let spread = step * outermost.sqrt();
+    let bubble = spread + ICON_SIZE / 2. + BUBBLE_PAD;
+    (ICON_SIZE, step, bubble)
+}
+
+// A point on the phyllotaxis spiral, which is how a sunflower packs seeds: evenly, from
+// the middle out, with no ring boundaries to fall on. Index 0 is dead centre, so a lone
+// window sits in the middle of its bubble instead of off to one side.
+fn spiral_offset(index: usize, step: f64) -> Point<f64, Logical> {
+    if index == 0 {
+        return Point::from((0., 0.));
+    }
+
+    const GOLDEN_ANGLE: f64 = 2.399_963_229_728_653;
+    let r = step * (index as f64).sqrt();
+    let angle = index as f64 * GOLDEN_ANGLE;
+    Point::from((r * angle.cos(), r * angle.sin()))
+}
+
+#[cfg(test)]
+mod map_cluster_tests {
+    use super::*;
+
+    // The bubble is drawn from cluster_geometry and the icons are placed from
+    // spiral_offset. If those two ever disagree the icons hang outside their bubble,
+    // which looks like a bug in the layout rather than in the arithmetic.
+    #[test]
+    fn every_icon_fits_inside_its_bubble() {
+        for count in 1..40usize {
+            let (diameter, step, bubble) = cluster_geometry(count);
+            for i in 0..count {
+                let offset = spiral_offset(i, step);
+                let reach = (offset.x * offset.x + offset.y * offset.y).sqrt() + diameter / 2.;
+                assert!(
+                    reach <= bubble + 0.001,
+                    "count {count}, icon {i}: reaches {reach} but the bubble is {bubble}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_lone_icon_sits_in_the_middle() {
+        let (_, step, _) = cluster_geometry(1);
+        let at = spiral_offset(0, step);
+        assert_eq!((at.x, at.y), (0., 0.));
+    }
+
+    // Constant icon size is the point of the sqrt growth: a busy island gets a bigger
+    // bubble, not smaller icons.
+    #[test]
+    fn the_bubble_grows_but_the_icons_do_not() {
+        let (small_icon, _, small_bubble) = cluster_geometry(2);
+        let (big_icon, _, big_bubble) = cluster_geometry(20);
+        assert_eq!(small_icon, big_icon);
+        assert!(big_bubble > small_bubble);
     }
 }
