@@ -639,7 +639,14 @@ update_zen() {
     before=$(git rev-parse HEAD)
 
     info "fetching"
-    git pull --ff-only || die "pull failed. If it says 'diverged', your local commits and the remote have both moved; sort that out by hand."
+    if ! git pull --ff-only; then
+        printf '\n'
+        warn "the pull did not fast-forward"
+        dim "if it says 'diverged', the remote history was rewritten and yours no longer"
+        dim "matches it. Check ${C_BOLD}git status${C_RESET} for work of your own, then take the remote:"
+        dim "    ${C_BOLD}git fetch origin && git reset --hard origin/main${C_RESET}"
+        die "not pulling over a diverged history on my own"
+    fi
 
     after=$(git rev-parse HEAD)
 
