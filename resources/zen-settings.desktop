@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=ZEN Settings
+Comment=Customize the ZEN compositor
+Exec=zen-settings
+Icon=zen
+Terminal=false
+Categories=Settings;DesktopSettings;
+Keywords=zen;compositor;wayland;appearance;glass;wallpaper;

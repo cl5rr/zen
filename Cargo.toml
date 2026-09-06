@@ -2,6 +2,7 @@
 members = [
     "zen-config",
     "zen-ipc",
+    "zen-settings",
     "zen-visual-tests",
 ]
 

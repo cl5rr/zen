@@ -315,7 +315,7 @@ optional_packages_for() {
     esac
 }
 
-visual_test_packages_for() {
+gtk_packages_for() {
     case "$1" in
         pacman) echo "gtk4 libadwaita" ;; apt) echo "libgtk-4-dev libadwaita-1-dev" ;;
         dnf)    echo "gtk4-devel libadwaita-devel" ;; apk) echo "gtk4.0-dev libadwaita-dev" ;;
@@ -430,8 +430,8 @@ EOF
             row_ok "gtk4 + libadwaita" "$(pkg-config --modversion gtk4 2>/dev/null)"
             N_OK=$((N_OK + 1))
         else
-            row_miss "gtk4 + libadwaita" "shader iteration harness"
-            for pkg in $(visual_test_packages_for "$PKG_MGR"); do add_missing "$pkg"; done
+            row_miss "gtk4 + libadwaita" "settings app, shader harness"
+            for pkg in $(gtk_packages_for "$PKG_MGR"); do add_missing "$pkg"; done
             N_MISSING=$((N_MISSING + 1))
         fi
     fi
@@ -530,6 +530,19 @@ build() {
     local bin="target/$BUILD_PROFILE/zen"
     [ -x "$bin" ] || die "build reported success but $bin is missing"
     ok "$bin"
+
+    # The settings app needs gtk4 and libadwaita, which the compositor does not.
+    # It is a nicety, so a missing toolkit is a note rather than a failure.
+    if pkg-config --exists gtk4 libadwaita-1 2>/dev/null; then
+        # shellcheck disable=SC2086
+        if cargo $args -p zen-settings; then
+            ok "target/$BUILD_PROFILE/zen-settings"
+        else
+            warn "the settings app did not build; ZEN itself is unaffected"
+        fi
+    else
+        dim "gtk4/libadwaita missing, skipping the settings app (pacman -S gtk4 libadwaita)"
+    fi
 }
 
 # --------------------------------------------------------------- install ----
@@ -551,6 +564,12 @@ install_zen() {
     $SUDO install -Dm644 resources/zen-portals.conf "$PREFIX/share/xdg-desktop-portal/zen-portals.conf"
     $SUDO install -Dm644 resources/zen.png          "$PREFIX/share/pixmaps/zen.png"
     $SUDO install -Dm644 resources/zen.png          "$PREFIX/share/icons/hicolor/512x512/apps/zen.png"
+
+    if [ -x "target/$BUILD_PROFILE/zen-settings" ]; then
+        $SUDO install -Dm755 "target/$BUILD_PROFILE/zen-settings" "$PREFIX/bin/zen-settings"
+        $SUDO install -Dm644 resources/zen-settings.desktop                                                     "$PREFIX/share/applications/zen-settings.desktop"
+        dim "settings app installed; ${C_BOLD}Mod+,${C_RESET} opens it"
+    fi
 
     if have systemctl; then
         $SUDO install -Dm644 resources/zen.service         "$PREFIX/lib/systemd/user/zen.service"

@@ -198,13 +198,13 @@ camera {
 
     // Whether floating windows may live outside the viewport. This is ZEN's
     // whole premise, so it is on by default; turning it off pins every floating
-    // window to its output, the way zen does.
+    // window to its output.
     infinite-canvas true
 
     // Whether new windows open onto the canvas, where islands live, rather
-    // than into the inherited 1D scrolling strip. This is what makes ZEN ZEN,
-    // so it is on by default. Set it to false for zen's scrolling layout, or
-    // send individual windows either way with a window rule:
+    // than into the 1D scrolling strip. This is what makes ZEN ZEN, so it is
+    // on by default. Set it to false for the scrolling layout, or send
+    // individual windows either way with a window rule:
     //
     //     window-rule {
     //         match app-id="^Emacs$"
@@ -539,6 +539,9 @@ binds {
     // Discord, so the launcher lives on Mod+Space.
     Mod+Space hotkey-overlay-title="Run an Application" { spawn "fuzzel"; }
 
+    // Settings. Edits this file; ZEN reloads it as you drag a slider.
+    Mod+Comma hotkey-overlay-title="Settings" { spawn "zen-settings"; }
+
     // Wallpaper. Drop images into ~/.config/zen/wallpapers and pick between
     // them; the folder is the whole configuration.
     Mod+Shift+W hotkey-overlay-title="Pick a Wallpaper" { spawn "zen-wallpaper" "pick"; }
@@ -796,6 +799,7 @@ binds {
 
     // Scrolling-layout only, both do nothing on the canvas. The island equivalents
     // are Mod+BracketLeft / Mod+BracketRight to merge and Mod+Backslash to split.
+    // Mod+Comma would also shadow the settings bind above.
     // Mod+Comma  { consume-window-into-column; }
     // Mod+Period { expel-window-from-column; }
 

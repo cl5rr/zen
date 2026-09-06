@@ -113,12 +113,26 @@ Clusters that tile internally and move as one.
 | Keybind | Action |
 |---|---|
 | `Mod+Space`, or tap `Mod` | App launcher |
+| `Mod+,` | Settings |
 | `Mod+T` | Terminal |
 | `Mod+W` | Browser |
 | `Mod+Shift+W` | Pick a wallpaper |
 | `Mod+Ctrl+W` | Next wallpaper |
 | `Print` | Screenshot |
 | `Mod+Shift+/` | Show every binding, live from your config |
+
+## Settings
+
+`Mod+,` opens a settings app: the glass material, window spacing, edges and
+depth, the camera, the welcome animation, and the wallpaper reel. It edits
+`~/.config/zen/config.kdl` directly and ZEN reloads as you drag a slider, so
+you see the change on the windows behind it.
+
+It refuses to write a config the compositor would reject, and it leaves the
+rest of the file, comments included, exactly as you had it.
+
+It needs `gtk4` and `libadwaita`. Without them ZEN builds and runs the same;
+`./setup.sh` just skips the app.
 
 ## Wallpapers
 
