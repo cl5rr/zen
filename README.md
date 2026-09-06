@@ -1,17 +1,18 @@
-<h1 align="center">
-  <img alt="ZEN" src="resources/zen.png" width="140">
-  <br>
-  ZEN
-</h1>
-<p align="center">A spatial Wayland compositor built around an infinite 2D canvas.</p>
+<p align="center">
+  <img alt="ZEN" src="resources/zen-banner.png" width="620">
+</p>
+
+<p align="center">
+  A spatial Wayland compositor built around an infinite 2D canvas,<br>
+  where maximizing a window moves the camera instead of the window.
+</p>
 
 ---
 
 > [!WARNING]
-> **ZEN is in early development.** The canvas, the camera and the island layout
-> work and are tested, but this has only ever run nested under WSLg with software
-> rendering - never on real hardware, a real GPU, or DRM/KMS. There are no
-> releases. Do not expect to daily-drive it yet.
+> **ZEN is in early development.** It runs on real hardware and is being used
+> daily on Arch, but it is young: expect rough edges, expect to read the config,
+> and keep a TTY (`Ctrl+Alt+F2`) in reach. There are no releases yet.
 
 ## The idea
 
@@ -37,34 +38,36 @@ per-output virtual monitors.
 
 ## What works today
 
-- **The infinite canvas.** Absolute coordinates, bounded only at ±1e6 logical
-  pixels. Drag a window off the edge of the screen and it stays there; pan and
-  it is still there. `Mod+Alt+0` frames everything if you get lost.
-- **The camera.** Per-output, so two monitors can sit at different zoom levels
-  simultaneously. Zoom is applied about the pointer, springs rather than eases,
-  hands velocity over when you interrupt it, and rubber-bands at its limits.
-- **Camera-maximize.** `Mod+Shift+M`. As described above.
-- **Crisp magnification.** At zoom > 1 clients are asked for more pixels via
-  fractional scale, quantized to quarter steps and only once the camera settles,
-  so magnified text is sharp rather than an upscaled 1x buffer.
-- **Islands.** Clusters that tile internally and move as one. New windows open
-  where you are looking; merge with `Mod+BracketLeft`/`Mod+BracketRight`, split
-  out with `Mod+Backslash`, jump between clusters with `Mod+Alt+HJKL`.
-- **Spatial navigation.** Direction keys do a real 2D nearest-neighbour search
-  that prefers the window actually beside you over a nearer diagonal one.
-- **A canvas clock.** Compositor-drawn, positioned in canvas space, re-rasterized
-  at the camera's zoom so it stays crisp when magnified. Off by default.
+- **The camera.** Pan, zoom about the pointer, frame a window, frame everything,
+  return to origin. Panning is a velocity: hold longer and it winds up. Zoom is a
+  spring that holds the point under your cursor still while it animates.
+- **The canvas.** Windows live at absolute coordinates and stay where you put
+  them. Drag one off the edge, pan away, come back, it is there.
+- **Islands.** Windows group into islands that tile internally and move together.
+  Navigation is a spatial search for the nearest island in a direction, not index
+  arithmetic.
+- **Camera-maximize.** `Mod+Shift+M` frames a window without resizing it. No
+  configure is sent, so `stty size` does not change and you can pan away instantly.
+- **The map.** Pull the camera back past `map-zoom` and islands draw as bubbles.
+  It is a zoom level, not a mode, so there is no state to get stuck in.
+- **Glass.** A real material: blurred and saturation-lifted backdrop, squircle
+  corners, a specular rim, and refraction that bends the backdrop at the edge and
+  leaves the middle alone.
+- **A settings app** on `Mod+,` covering the material, windows, camera, input,
+  monitors, keybinds, startup commands and wallpapers.
+- **Wallpapers.** Drop images in a folder; that folder is the whole configuration.
 
 ## What does not work yet
 
-- Real hardware. DRM/KMS, multi-monitor and GPU performance are unexercised.
-- Virtual monitors - runtime headless outputs with a per-window visibility mask.
-- Canvas widgets: relocating layer-shell surfaces into canvas space so any
-  existing Wayland widget toolkit works unmodified.
-- The glass material. The shader compiles and its configuration is settled, but
-  nothing feeds it a backdrop yet, so it has never actually been seen.
-- Tabbed islands. The geometry and hit-testing are correct, but nothing hides
-  the members underneath the active one, so no action exposes them.
+- **Virtual monitors are experimental.** They can be created and destroyed at
+  runtime and they render offscreen, but nothing consumes that texture yet and
+  the per-window visibility mask is not built. Treat them as a foundation.
+- **Canvas widgets** are not started.
+- **The workspace grid** is still underneath the canvas. It is invisible now, but
+  it has not been retired, and it is why some layout code has more cases than the
+  model needs.
+- **Only tested on one machine.** Multi-GPU, fractional scaling and unusual
+  hardware are unexplored.
 
 ## Keybinds
 
@@ -150,6 +153,23 @@ resizing them is the compositor's job:
 | `Mod+right-drag` | Resize a window, from anywhere inside it |
 | `Mod+middle-drag` | Pan the camera |
 | `Mod+Alt+wheel` | Zoom about the pointer |
+
+## Virtual monitors
+
+A display with nothing behind it: no connector, no cable. It renders into a
+texture, so it exists for the layout, the IPC and the settings app without
+anything showing it.
+
+```sh
+zen msg output stream create --width 1920 --height 1080
+zen msg outputs                      # it is there, like any other monitor
+zen msg output stream destroy
+```
+
+Experimental, and honestly so: creating, destroying and rendering work, but
+nothing consumes the texture yet, so there is no screencast of it and no way to
+hide a window from your real screen while keeping it on this one. That mask is
+the next piece.
 
 ## Wallpapers
 
