@@ -3313,12 +3313,25 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
+        let mut found = false;
         for ws in self.workspaces_mut() {
             if ws.has_window(id) {
                 ws.set_fullscreen(id, is_fullscreen);
-                return;
+                found = true;
+                break;
             }
         }
+
+        if found {
+            self.settle_camera_for_fullscreen();
+        }
+    }
+
+    // A fullscreen window is sized to the output, so it only actually fills the screen
+    // when the camera is at 1:1 over that output. Left where it was, the window and the
+    // camera disagree and the frame chases itself until they settle.
+    fn settle_camera_for_fullscreen(&mut self) {
+        self.camera_reset();
     }
 
     pub fn toggle_fullscreen(&mut self, id: &W::Id) {
@@ -3328,11 +3341,17 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
+        let mut found = false;
         for ws in self.workspaces_mut() {
             if ws.has_window(id) {
                 ws.toggle_fullscreen(id);
-                return;
+                found = true;
+                break;
             }
+        }
+
+        if found {
+            self.settle_camera_for_fullscreen();
         }
     }
 
