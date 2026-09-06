@@ -1,5 +1,5 @@
 <p align="center">
-  <img alt="ZEN" src="resources/zen-banner.png" width="620">
+  <img alt="ZEN" src="resources/zen-thumbnail.png" width="560">
 </p>
 
 <p align="center">
