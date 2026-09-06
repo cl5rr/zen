@@ -23,6 +23,17 @@ use super::{
 use crate::animation::{Animation, Clock};
 use crate::layout::RenderLayer;
 use crate::zen_render_elements;
+use zen_config::{Color, CornerRadius, GradientInterpolation};
+
+use crate::render_helpers::border::BorderRenderElement;
+
+// map
+const BUBBLE_PAD: f64 = 18.;
+
+const BUBBLE_RADIUS: f32 = 22.;
+
+const BUBBLE_FILL: Color = Color::new_unpremul(1., 1., 1., 0.07);
+
 use crate::render_helpers::renderer::ZenRenderer;
 use crate::render_helpers::xray::XrayPos;
 use crate::render_helpers::RenderCtx;
@@ -50,6 +61,7 @@ pub struct FloatingSpace<W: LayoutElement> {
     spawn_center: Option<Point<f64, Canvas>>,
 
     islands: IslandSpace<W::Id>,
+    bubbles: Vec<BorderRenderElement>,
 
     view_size: Size<f64, Logical>,
 
@@ -66,6 +78,7 @@ zen_render_elements! {
     FloatingSpaceRenderElement<R> => {
         Tile = TileRenderElement<R>,
         ClosingWindow = ClosingWindowRenderElement,
+        Bubble = BorderRenderElement,
     }
 }
 
@@ -213,6 +226,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
             closing_windows: Vec::new(),
             spawn_center: None,
             islands: IslandSpace::new(),
+            bubbles: Vec::new(),
             view_size,
             working_area,
             scale,
@@ -267,12 +281,55 @@ impl<W: LayoutElement> FloatingSpace<W> {
         self.tiles.iter().any(Tile::are_transitions_ongoing) || !self.closing_windows.is_empty()
     }
 
+    // Pulled far enough back, a window is a few unreadable pixels. Drawing the island
+    // it belongs to as a container keeps the grouping legible when the contents are
+    // not, which is the whole reason the map is a different picture and not just a
+    // smaller one.
+    fn update_bubbles(&mut self) {
+        let rects: Vec<Rectangle<f64, Logical>> = self
+            .islands
+            .islands()
+            .map(|island| {
+                let r = island.rect();
+                let loc = self.canvas_to_logical(r.loc);
+                Rectangle::new(loc, Size::from((r.size.w, r.size.h)))
+            })
+            .collect();
+
+        self.bubbles.clear();
+        for rect in rects {
+            let padded = Rectangle::new(
+                Point::from((rect.loc.x - BUBBLE_PAD, rect.loc.y - BUBBLE_PAD)),
+                Size::from((
+                    rect.size.w + BUBBLE_PAD * 2.,
+                    rect.size.h + BUBBLE_PAD * 2.,
+                )),
+            );
+
+            self.bubbles.push(BorderRenderElement::new(
+                padded.size,
+                Rectangle::from_size(padded.size),
+                GradientInterpolation::default(),
+                BUBBLE_FILL,
+                BUBBLE_FILL,
+                0.,
+                Rectangle::from_size(padded.size),
+                0.,
+                CornerRadius::from(BUBBLE_RADIUS),
+                self.scale as f32,
+                1.,
+            ));
+        }
+    }
+
     pub fn update_render_elements(
         &mut self,
         is_active: bool,
         view_rect: Rectangle<f64, Logical>,
         layer: RenderLayer,
     ) {
+        self.update_bubbles();
+
         let active = self.active_window_id.clone();
         for (tile, offset) in self.tiles_with_offsets_mut() {
             if layer.is_normal() == tile.is_moving_between_workspaces() {
@@ -1107,6 +1164,19 @@ impl<W: LayoutElement> FloatingSpace<W> {
             tile.render(ctx.r(), tile_pos, xray_pos, focus_ring, &mut |elem| {
                 push(elem.into())
             });
+        }
+
+        // Pushed after the tiles, so they sit behind them.
+        if layer.is_normal() && xray_pos.zoom <= self.options.camera.map_zoom {
+            for (island, bubble) in self.islands.islands().zip(self.bubbles.iter()) {
+                let loc = self.canvas_to_logical(island.rect().loc);
+                push(
+                    bubble
+                        .clone()
+                        .with_location(Point::from((loc.x - BUBBLE_PAD, loc.y - BUBBLE_PAD)))
+                        .into(),
+                );
+            }
         }
     }
 

@@ -4412,6 +4412,40 @@ impl<W: LayoutElement> Layout<W> {
         mon.set_camera_focus(config)
     }
 
+    // Mod+O is a zoom level, not a mode. Far enough out, islands draw as bubbles and
+    // the canvas reads as a map; there is no separate state to get stuck in.
+    pub fn camera_toggle_map(&mut self) -> bool {
+        let config = self.options.animations.overview_open_close.0;
+        let threshold = self.options.camera.map_zoom;
+
+        let zoomed_out = self
+            .active_monitor_ref()
+            .is_some_and(|mon| mon.camera.zoom() <= threshold * 1.02);
+
+        if zoomed_out {
+            self.camera_reset();
+            return true;
+        }
+
+        if self.camera_fit_all() {
+            return true;
+        }
+
+        // Nothing to fit: still go out to map scale so the gesture always does something.
+        let Some(mon) = self.active_monitor() else {
+            return false;
+        };
+        mon.clear_camera_focus();
+        mon.camera.animate_zoom_to(threshold, config);
+        true
+    }
+
+    pub fn is_at_map_zoom(&self) -> bool {
+        let threshold = self.options.camera.map_zoom;
+        self.active_monitor_ref()
+            .is_some_and(|mon| mon.camera.zoom() <= threshold)
+    }
+
     pub fn camera_fit_all(&mut self) -> bool {
         let config = self.options.animations.overview_open_close.0;
         let Some(mon) = self.active_monitor() else {

@@ -154,6 +154,7 @@ impl MergeWith<OverviewPart> for Overview {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
+    pub map_zoom: f64,
     pub min_zoom: f64,
     pub max_zoom: f64,
     pub zoom_step: f64,
@@ -164,6 +165,7 @@ pub struct Camera {
 impl Default for Camera {
     fn default() -> Self {
         Self {
+            map_zoom: 0.42,
             min_zoom: 0.2,
             max_zoom: 4.0,
             zoom_step: 1.1,
@@ -175,6 +177,8 @@ impl Default for Camera {
 
 #[derive(knuffel::Decode, Debug, Clone, Copy, PartialEq)]
 pub struct CameraPart {
+    #[knuffel(child, unwrap(argument))]
+    pub map_zoom: Option<FloatOrInt<0, 1>>,
     #[knuffel(child, unwrap(argument))]
     pub min_zoom: Option<FloatOrInt<0, 1>>,
     #[knuffel(child, unwrap(argument))]
@@ -189,7 +193,7 @@ pub struct CameraPart {
 
 impl MergeWith<CameraPart> for Camera {
     fn merge_with(&mut self, part: &CameraPart) {
-        merge!((self, part), min_zoom, max_zoom, zoom_step);
+        merge!((self, part), map_zoom, min_zoom, max_zoom, zoom_step);
         merge_clone!((self, part), infinite_canvas, open_on_canvas);
     }
 }

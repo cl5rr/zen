@@ -1646,6 +1646,7 @@ mod tests {
                 },
             },
             camera: Camera {
+                map_zoom: 0.42,
                 min_zoom: 0.2,
                 max_zoom: 4.0,
                 zoom_step: 1.1,

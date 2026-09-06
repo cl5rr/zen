@@ -190,6 +190,11 @@ widgets {
 // Zoom is applied about the pointer, so whatever is under the cursor stays
 // under it. Overshooting the limits rubber-bands and springs back.
 camera {
+    // The zoom at which the canvas becomes a map: islands draw as bubbles so a
+    // group stays legible once its windows are too small to read. Mod+O pulls out
+    // to here and back. It is a zoom level, not a mode; the wheel crosses it too.
+    map-zoom 0.42
+
     // How far out the camera can go.
     min-zoom 0.2
 
@@ -617,7 +622,7 @@ binds {
     // Open/close the Overview: a zoomed-out view of workspaces and windows.
     // You can also move the mouse into the top-left hot corner,
     // or do a four-finger swipe up on a touchpad.
-    Mod+O repeat=false { toggle-overview; }
+    Mod+O repeat=false hotkey-overlay-title="Map: pull back to see every island" { toggle-overview; }
 
     // Camera zoom. Zooms about the pointer, so whatever is under the cursor stays
     // under it. Limits and step size are configurable in the camera {} section.

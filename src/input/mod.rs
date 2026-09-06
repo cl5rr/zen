@@ -2224,8 +2224,9 @@ impl State {
                 self.zen.stop_cast(CastSessionId::from(session_id));
             }
             Action::ToggleOverview => {
-                self.zen.layout.toggle_overview();
-                self.zen.queue_redraw_all();
+                if self.zen.layout.camera_toggle_map() {
+                    self.zen.queue_redraw_all();
+                }
             }
             Action::OpenOverview => {
                 if self.zen.layout.open_overview() {
