@@ -1645,6 +1645,54 @@ mod tests {
                     },
                 },
             },
+            camera: Camera {
+                min_zoom: 0.2,
+                max_zoom: 4.0,
+                zoom_step: 1.25,
+                infinite_canvas: true,
+                open_on_canvas: true,
+            },
+            widgets: Widgets {
+                clock: Clock {
+                    off: true,
+                    position: (
+                        48.0,
+                        48.0,
+                    ),
+                    format: "%H:%M",
+                    font: "sans 48px",
+                    color: Color {
+                        r: 1.0,
+                        g: 1.0,
+                        b: 1.0,
+                        a: 0.85,
+                    },
+                },
+            },
+            welcome: Welcome {
+                off: false,
+                color: Color {
+                    r: 0.043,
+                    g: 0.047,
+                    b: 0.055,
+                    a: 1.0,
+                },
+            },
+            glass: Glass {
+                off: true,
+                opacity: 0.15,
+                tint: Color {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                    a: 1.0,
+                },
+                refraction: 12.0,
+                falloff: 18.0,
+                squircle: 4.5,
+                saturation: 1.3,
+                specular: 0.12,
+            },
             environment: Environment(
                 [
                     EnvironmentVariable {
@@ -1833,6 +1881,7 @@ mod tests {
                     background_effect: BackgroundEffectRule {
                         xray: None,
                         blur: None,
+                        glass: None,
                         noise: None,
                         saturation: None,
                     },
@@ -1842,6 +1891,7 @@ mod tests {
                         background_effect: BackgroundEffectRule {
                             xray: None,
                             blur: None,
+                            glass: None,
                             noise: None,
                             saturation: None,
                         },
@@ -1884,6 +1934,7 @@ mod tests {
                     background_effect: BackgroundEffectRule {
                         xray: None,
                         blur: None,
+                        glass: None,
                         noise: None,
                         saturation: None,
                     },
@@ -1893,6 +1944,7 @@ mod tests {
                         background_effect: BackgroundEffectRule {
                             xray: None,
                             blur: None,
+                            glass: None,
                             noise: None,
                             saturation: None,
                         },
@@ -2405,16 +2457,105 @@ mod tests {
         +    spawn_at_startup: [
         +        SpawnAtStartup {
         +            command: [
-        +                "waybar",
+        +                "zen-wallpaper",
+        +                "restore",
         +            ],
         +        },
         +    ],
+
+        -            width: 4.0,
+        +            width: 2.0,
+
+        -                r: 0.49803922,
+        -                g: 0.78431374,
+        +                r: 0.8117647,
+        +                g: 0.9019608,
+
+        -                a: 1.0,
+        +                a: 0.8,
+
+        -                r: 0.3137255,
+        -                g: 0.3137255,
+        -                b: 0.3137255,
+        -                a: 1.0,
+        +                r: 1.0,
+        +                g: 1.0,
+        +                b: 1.0,
+        +                a: 0.12156863,
+
+        -            on: false,
+        +            on: true,
+
+        -                    5.0,
+        +                    10.0,
+
+        -            softness: 30.0,
+        -            spread: 5.0,
+        -            draw_behind_window: false,
+        +            softness: 34.0,
+        +            spread: 2.0,
+        +            draw_behind_window: true,
+
+        -                a: 0.46666667,
+        +                a: 0.6,
 
         -                0.3333333333333333,
         +                0.33333,
 
         -                0.6666666666666666,
         +                0.66667,
+
+        -        gaps: 16.0,
+        +        gaps: 20.0,
+
+        -    prefer_no_csd: false,
+        +    prefer_no_csd: true,
+
+        -        skip_at_startup: false,
+        +        skip_at_startup: true,
+
+        -                kind: Easing(
+        -                    EasingParams {
+        -                        duration_ms: 150,
+        -                        curve: EaseOutExpo,
+        +                kind: Spring(
+        +                    SpringParams {
+        +                        damping_ratio: 0.85,
+        +                        stiffness: 800,
+        +                        epsilon: 0.0001,
+
+        -                kind: Easing(
+        -                    EasingParams {
+        -                        duration_ms: 150,
+        -                        curve: EaseOutQuad,
+        +                kind: Spring(
+        +                    SpringParams {
+        +                        damping_ratio: 1.0,
+        +                        stiffness: 900,
+        +                        epsilon: 0.0001,
+
+        -                        damping_ratio: 1.0,
+        -                        stiffness: 800,
+        +                        damping_ratio: 0.9,
+        +                        stiffness: 700,
+
+        -                        damping_ratio: 1.0,
+        -                        stiffness: 800,
+        +                        damping_ratio: 0.85,
+        +                        stiffness: 350,
+
+        -                a: 0.85,
+        +                a: 0.8509804,
+
+        -            r: 0.043,
+        -            g: 0.047,
+        -            b: 0.055,
+        +            r: 0.043137256,
+        +            g: 0.047058824,
+        +            b: 0.05490196,
+
+        -        off: true,
+        +        off: false,
         "#,
         );
     }

@@ -55,10 +55,10 @@ fn extract_kdl_from_file(file_contents: &str, filename: &str) -> Vec<KdlCodeBloc
 }
 
 #[test]
-fn wiki_docs_parses() {
-    let wiki_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../docs/wiki");
+fn documented_kdl_parses() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
 
-    let code_blocks = fs::read_dir(wiki_dir)
+    let code_blocks = fs::read_dir(root)
         .unwrap()
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.file_type().is_ok_and(|ft| ft.is_file()))
@@ -87,7 +87,7 @@ fn wiki_docs_parses() {
         if let Err(error) = zen_config::Config::parse(Path::new(&filename), &code).config {
             if !must_fail {
                 errors.push(format!(
-                    "Error parsing wiki KDL code block at {}:{}: {:?}",
+                    "Error parsing KDL code block at {}:{}: {:?}",
                     filename,
                     line_number,
                     miette::Report::new(error)
@@ -95,7 +95,7 @@ fn wiki_docs_parses() {
             }
         } else if must_fail {
             errors.push(format!(
-                "Expected error parsing wiki KDL code block at {filename}:{line_number}",
+                "Expected error parsing KDL code block at {filename}:{line_number}",
             ));
         }
     }
