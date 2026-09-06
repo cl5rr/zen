@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn reads_the_shipped_config() {
         let c = shipped();
-        assert_eq!(c.number(&["glass"], "opacity"), Some(0.15));
+        assert_eq!(c.number(&["glass"], "opacity"), Some(0.30));
         assert_eq!(c.number(&["layout"], "gaps"), Some(20.));
         assert!(c.flag(&["layout", "shadow"], "on"));
         assert!(c.flag(&["layout", "border"], "off"));

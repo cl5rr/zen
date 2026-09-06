@@ -2555,7 +2555,9 @@ mod tests {
         +            b: 0.05490196,
 
         -        off: true,
+        -        opacity: 0.15,
         +        off: false,
+        +        opacity: 0.3,
         "#,
         );
     }
