@@ -387,6 +387,16 @@ pub const PAGES: &[Page] = &[
                 ],
             },
             Group {
+                title: "MONITOR EDGES",
+                rows: &[Row {
+                    label: "Breakthrough",
+                    hint: "How hard to push before the pointer crosses to the next                            monitor. 0 lets it cross freely",
+                    path: &["input"],
+                    key: "monitor-breakthrough",
+                    kind: Kind::Number { min: 0., max: 200., step: 1., default: 24., digits: 0 },
+                }],
+            },
+            Group {
                 title: "POINTER",
                 rows: &[
                     Row {

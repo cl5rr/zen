@@ -310,6 +310,8 @@ pub struct Zen {
     pub pointer_inactivity_timer_got_reset: bool,
     pub notified_activity_this_iteration: bool,
     pub pointer_inside_hot_corner: bool,
+    // Motion pushed into a shared monitor edge that has not yet been enough to cross.
+    pub pointer_edge_pressure: f64,
     pub pointer_constraint_position_hint: Option<Point<f64, Logical>>,
     pub tablet_cursor_location: Option<Point<f64, Logical>>,
     pub gesture_swipe_3f_cumulative: Option<(f64, f64)>,
@@ -2442,6 +2444,7 @@ impl Zen {
             pointer_inactivity_timer_got_reset: false,
             notified_activity_this_iteration: false,
             pointer_inside_hot_corner: false,
+            pointer_edge_pressure: 0.,
             pointer_constraint_position_hint: None,
             tablet_cursor_location: None,
             gesture_swipe_3f_cumulative: None,

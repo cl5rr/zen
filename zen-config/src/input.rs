@@ -21,6 +21,8 @@ pub struct Input {
     pub warp_mouse_to_focus: Option<WarpMouseToFocus>,
     pub focus_follows_mouse: Option<FocusFollowsMouse>,
     pub workspace_auto_back_and_forth: bool,
+    // How hard the pointer has to be pushed at a shared monitor edge before it crosses.
+    pub monitor_breakthrough: f64,
     pub mod_key: Option<ModKey>,
     pub mod_key_nested: Option<ModKey>,
 }
@@ -49,6 +51,8 @@ pub struct InputPart {
     pub focus_follows_mouse: Option<FocusFollowsMouse>,
     #[knuffel(child)]
     pub workspace_auto_back_and_forth: Option<Flag>,
+    #[knuffel(child, unwrap(argument))]
+    pub monitor_breakthrough: Option<FloatOrInt<0, 2000>>,
     #[knuffel(child, unwrap(argument, str))]
     pub mod_key: Option<ModKey>,
     #[knuffel(child, unwrap(argument, str))]
@@ -62,6 +66,7 @@ impl MergeWith<InputPart> for Input {
             keyboard,
             disable_power_key_handling,
             workspace_auto_back_and_forth,
+            monitor_breakthrough,
         );
 
         merge_clone!(

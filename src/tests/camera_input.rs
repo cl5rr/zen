@@ -374,3 +374,60 @@ fn zooming_back_out_lands_where_it_started() {
         "in and back out did not return: {before:?} -> {after:?}"
     );
 }
+
+mod edge_resistance {
+    use smithay::utils::{Logical, Point, Rectangle, Size};
+
+    use crate::input::resist_edge;
+
+    fn screen() -> Rectangle<f64, Logical> {
+        Rectangle::new(Point::from((0., 0.)), Size::from((1920., 1080.)))
+    }
+
+    #[test]
+    fn a_nudge_past_the_edge_is_held_back() {
+        let (held, pressure) = resist_edge(screen(), Point::from((1925., 500.)), 0., 40.);
+        assert_eq!(held.x, 1919., "the pointer should stay on this screen");
+        assert!(pressure > 0., "the push should have registered");
+    }
+
+    #[test]
+    fn pushing_long_enough_lets_it_through() {
+        let mut pressure = 0.;
+        let mut crossed = false;
+        // Ten frames of a steady push, the way a hand actually moves.
+        for _ in 0..10 {
+            let (held, next) = resist_edge(screen(), Point::from((1925., 500.)), pressure, 40.);
+            pressure = next;
+            if held.x > 1919. {
+                crossed = true;
+                break;
+            }
+        }
+        assert!(crossed, "a sustained push never got through");
+        assert_eq!(pressure, 0., "the meter should reset after crossing");
+    }
+
+    #[test]
+    fn a_threshold_of_zero_is_off() {
+        let (held, pressure) = resist_edge(screen(), Point::from((3000., 500.)), 0., 0.);
+        assert_eq!(held.x, 3000., "resistance is off, nothing should be held");
+        assert_eq!(pressure, 0.);
+    }
+
+    // A big jump is a deliberate throw across the screen, not a slip, so it should not
+    // need several frames of pushing.
+    #[test]
+    fn one_large_movement_crosses_immediately() {
+        let (held, _) = resist_edge(screen(), Point::from((2100., 500.)), 0., 40.);
+        assert_eq!(held.x, 2100.);
+    }
+
+    #[test]
+    fn the_top_and_left_edges_resist_too() {
+        let (held, _) = resist_edge(screen(), Point::from((-5., 500.)), 0., 40.);
+        assert_eq!(held.x, 0.);
+        let (held, _) = resist_edge(screen(), Point::from((500., -5.)), 0., 40.);
+        assert_eq!(held.y, 0.);
+    }
+}

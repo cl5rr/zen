@@ -7,6 +7,16 @@
 // Find the full list of options on the wiki:
 // https://github.com/cl5rr/zen
 input {
+    // Resistance where two monitors meet.
+    //
+    // Side by side, a window's edge and a screen's edge land in the same place, so
+    // reaching for a close button or a scrollbar throws the pointer onto the other
+    // screen. This is how far you have to push into the boundary before it gives: the
+    // motion accumulates, so a deliberate shove crosses at once and a slip does not.
+    //
+    // In logical pixels. 0 turns it off entirely.
+    monitor-breakthrough 24
+
     keyboard {
         xkb {
             // You can set rules, model, layout, variant and options.

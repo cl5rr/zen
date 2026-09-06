@@ -2493,6 +2493,45 @@ impl State {
             }
         }
 
+        // Resistance at a shared monitor edge.
+        //
+        // Two monitors side by side put a window edge and a screen edge in the same
+        // place, so aiming at a close button or a scrollbar throws the pointer onto the
+        // other screen. Pushing has to be deliberate: motion into the boundary
+        // accumulates, and only once enough has built up does the pointer cross.
+        let breakthrough = self.zen.config.borrow().input.monitor_breakthrough;
+        if breakthrough > 0. {
+            let from = self
+                .zen
+                .global_space
+                .output_under(pos)
+                .next()
+                .and_then(|o| self.zen.global_space.output_geometry(o));
+
+            if let Some(from) = from {
+                let crossing = self
+                    .zen
+                    .global_space
+                    .output_under(new_pos)
+                    .next()
+                    .and_then(|o| self.zen.global_space.output_geometry(o))
+                    .is_some_and(|to| to != from);
+
+                if crossing {
+                    let (held, pressure) = resist_edge(
+                        from.to_f64(),
+                        new_pos,
+                        self.zen.pointer_edge_pressure,
+                        breakthrough,
+                    );
+                    self.zen.pointer_edge_pressure = pressure;
+                    new_pos = held;
+                } else {
+                    self.zen.pointer_edge_pressure = 0.;
+                }
+            }
+        }
+
         if self
             .zen
             .global_space
@@ -5490,4 +5529,40 @@ mod tests {
             None,
         );
     }
+}
+
+
+// How far the pointer has been pushed past a monitor edge, and where it may sit until
+// that adds up to enough.
+//
+// Split out as a plain function because the interesting part is arithmetic, and the
+// alternative is only being able to check it by dragging a mouse across two screens.
+pub(crate) fn resist_edge(
+    from: Rectangle<f64, Logical>,
+    new_pos: Point<f64, Logical>,
+    pressure: f64,
+    threshold: f64,
+) -> (Point<f64, Logical>, f64) {
+    if threshold <= 0. {
+        return (new_pos, 0.);
+    }
+
+    let right = from.loc.x + from.size.w;
+    let bottom = from.loc.y + from.size.h;
+
+    let over_x = (from.loc.x - new_pos.x).max(new_pos.x - (right - 1.)).max(0.);
+    let over_y = (from.loc.y - new_pos.y).max(new_pos.y - (bottom - 1.)).max(0.);
+    let overshoot = over_x.max(over_y);
+
+    let pressure = pressure + overshoot;
+    if pressure >= threshold {
+        // Through, and the meter resets so the next edge starts from nothing.
+        return (new_pos, 0.);
+    }
+
+    let held = Point::from((
+        new_pos.x.clamp(from.loc.x, right - 1.),
+        new_pos.y.clamp(from.loc.y, bottom - 1.),
+    ));
+    (held, pressure)
 }

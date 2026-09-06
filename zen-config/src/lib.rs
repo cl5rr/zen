@@ -1082,6 +1082,7 @@ mod tests {
                     },
                 ),
                 workspace_auto_back_and_forth: true,
+                monitor_breakthrough: 0.0,
                 mod_key: Some(
                     IsoLevel3Shift,
                 ),
@@ -2454,6 +2455,9 @@ mod tests {
 
         -            natural_scroll: false,
         +            natural_scroll: true,
+
+        -        monitor_breakthrough: 0.0,
+        +        monitor_breakthrough: 24.0,
 
         -    spawn_at_startup: [],
         -    spawn_sh_at_startup: [],
