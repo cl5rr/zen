@@ -339,3 +339,48 @@ textview.editor text {
 textview.editor text selection {
     background-color: rgba(127, 200, 255, 0.28);
 }
+
+/* dropdown */
+dropdown > button {
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.11);
+    border-radius: 9px;
+    color: #e8eaed;
+    padding: 5px 10px;
+    min-height: 24px;
+}
+
+dropdown > button:hover {
+    background-color: rgba(255, 255, 255, 0.11);
+}
+
+dropdown > button label,
+dropdown > button arrow {
+    color: #e8eaed;
+}
+
+popover > contents {
+    background-color: #171a21;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 12px;
+    color: #e8eaed;
+    padding: 4px;
+}
+
+popover listview > row {
+    border-radius: 8px;
+    padding: 6px 10px;
+    color: #d6dae2;
+}
+
+popover listview > row:selected,
+popover listview > row:hover {
+    background-color: rgba(127, 200, 255, 0.18);
+    color: #ffffff;
+}
+
+scale value {
+    color: #9aa2b1;
+    font-size: 12px;
+    font-feature-settings: "tnum";
+}

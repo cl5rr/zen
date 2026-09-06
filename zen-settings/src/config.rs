@@ -347,6 +347,56 @@ mod tests {
     }
 
     #[test]
+    fn output_blocks_round_trip() {
+        let mut c = shipped();
+        assert!(c.output("DP-1").mode.is_none(), "nothing configured yet");
+
+        c.set_output_text("DP-1", "mode", "2560x1440@144.000");
+        c.set_output_scale("DP-1", 1.25);
+        c.set_output_position("DP-1", 1920, -120);
+        c.set_output_off("DP-1", false);
+
+        let back = from(&c.doc.to_string());
+        let cfg = back.output("DP-1");
+        assert_eq!(cfg.mode.as_deref(), Some("2560x1440@144.000"));
+        assert_eq!(cfg.scale, Some(1.25));
+        assert_eq!(cfg.position, Some((1920, -120)));
+        assert!(!cfg.off);
+    }
+
+    #[test]
+    fn turning_an_output_off_and_on_again_leaves_no_trace() {
+        let mut c = shipped();
+        c.set_output_off("HDMI-A-1", true);
+        assert!(from(&c.doc.to_string()).output("HDMI-A-1").off);
+
+        c.set_output_off("HDMI-A-1", false);
+        let back = from(&c.doc.to_string());
+        assert!(!back.output("HDMI-A-1").off);
+    }
+
+    #[test]
+    fn moving_an_output_twice_does_not_stack_positions() {
+        let mut c = shipped();
+        c.set_output_position("DP-1", 100, 100);
+        c.set_output_position("DP-1", 2560, 0);
+
+        let back = from(&c.doc.to_string());
+        assert_eq!(back.output("DP-1").position, Some((2560, 0)));
+
+        // and it rewrote the node rather than appending a second one
+        let node = back.output_node("DP-1").expect("the output block");
+        let positions = node
+            .children()
+            .expect("its children")
+            .nodes()
+            .iter()
+            .filter(|n| n.name().value() == "position")
+            .count();
+        assert_eq!(positions, 1, "position was written more than once");
+    }
+
+    #[test]
     fn writes_sections_that_are_missing() {
         let mut c = from("");
         c.set_number(&["glass"], "opacity", 0.2, 2);
@@ -485,6 +535,157 @@ impl Config {
                 node.entries_mut().push(entry);
             }
             self.doc.nodes_mut().push(node);
+        }
+    }
+}
+
+// outputs
+//
+// Outputs are repeated named blocks rather than keyed values, so they need their own
+// accessors like the binds do. The name is the node's one argument.
+pub struct OutputCfg {
+    pub name: String,
+    pub off: bool,
+    pub mode: Option<String>,
+    pub scale: Option<f64>,
+    pub position: Option<(i64, i64)>,
+    pub transform: Option<String>,
+}
+
+impl Config {
+    fn output_node(&self, name: &str) -> Option<&KdlNode> {
+        self.doc.nodes().iter().find(|n| {
+            n.name().value() == "output"
+                && n.entries()
+                    .first()
+                    .and_then(|e| e.value().as_string())
+                    .is_some_and(|n| n == name)
+        })
+    }
+
+    pub fn output(&self, name: &str) -> OutputCfg {
+        let mut cfg = OutputCfg {
+            name: name.to_owned(),
+            off: false,
+            mode: None,
+            scale: None,
+            position: None,
+            transform: None,
+        };
+
+        let Some(children) = self.output_node(name).and_then(KdlNode::children) else {
+            return cfg;
+        };
+
+        cfg.off = children.get("off").is_some();
+        cfg.mode = children
+            .get("mode")
+            .and_then(|n| n.entries().first())
+            .and_then(|e| e.value().as_string())
+            .map(str::to_owned);
+        cfg.transform = children
+            .get("transform")
+            .and_then(|n| n.entries().first())
+            .and_then(|e| e.value().as_string())
+            .map(str::to_owned);
+        cfg.scale = children
+            .get("scale")
+            .and_then(|n| n.entries().first())
+            .and_then(|e| e.value().as_f64().or_else(|| e.value().as_i64().map(|i| i as f64)));
+
+        if let Some(node) = children.get("position") {
+            let read = |k: &str| {
+                node.get(k)
+                    .and_then(|e| e.value().as_i64())
+                    .or_else(|| node.get(k).and_then(|e| e.value().as_f64()).map(|f| f as i64))
+            };
+            if let (Some(x), Some(y)) = (read("x"), read("y")) {
+                cfg.position = Some((x, y));
+            }
+        }
+
+        cfg
+    }
+
+    fn output_children(&mut self, name: &str) -> &mut KdlDocument {
+        if self.output_node(name).is_none() {
+            let mut node = fresh("output", 0);
+            let mut entry = KdlEntry::new(KdlValue::String(name.to_owned()));
+            entry.set_value_repr(format!("{name:?}"));
+            node.entries_mut().push(entry);
+            node.set_children(empty(0));
+            self.doc.nodes_mut().push(node);
+        }
+
+        let node = self
+            .doc
+            .nodes_mut()
+            .iter_mut()
+            .find(|n| {
+                n.name().value() == "output"
+                    && n.entries()
+                        .first()
+                        .and_then(|e| e.value().as_string())
+                        .is_some_and(|n| n == name)
+            })
+            .unwrap();
+
+        if node.children().is_none() {
+            node.set_children(empty(0));
+        }
+        node.children_mut().as_mut().unwrap()
+    }
+
+    pub fn set_output_off(&mut self, name: &str, off: bool) {
+        let children = self.output_children(name);
+        let present = children.get("off").is_some();
+        if off && !present {
+            children.nodes_mut().push(fresh("off", 1));
+        } else if !off && present {
+            children.nodes_mut().retain(|n| n.name().value() != "off");
+        }
+    }
+
+    pub fn set_output_text(&mut self, name: &str, key: &str, value: &str) {
+        let children = self.output_children(name);
+        if children.get(key).is_none() {
+            children.nodes_mut().push(fresh(key, 1));
+        }
+        let node = children.get_mut(key).unwrap();
+
+        let mut entry = KdlEntry::new(KdlValue::String(value.to_owned()));
+        entry.set_value_repr(format!("{value:?}"));
+
+        node.entries_mut().retain(|e| e.name().is_some());
+        node.entries_mut().push(entry);
+    }
+
+    pub fn set_output_scale(&mut self, name: &str, scale: f64) {
+        let children = self.output_children(name);
+        if children.get("scale").is_none() {
+            children.nodes_mut().push(fresh("scale", 1));
+        }
+        let node = children.get_mut("scale").unwrap();
+
+        let mut entry = KdlEntry::new(KdlValue::Base10Float(scale));
+        entry.set_value_repr(format!("{scale:.2}"));
+
+        node.entries_mut().retain(|e| e.name().is_some());
+        node.entries_mut().push(entry);
+    }
+
+    pub fn set_output_position(&mut self, name: &str, x: i64, y: i64) {
+        let children = self.output_children(name);
+        if children.get("position").is_none() {
+            children.nodes_mut().push(fresh("position", 1));
+        }
+        let node = children.get_mut("position").unwrap();
+        node.entries_mut().clear();
+
+        for (key, value) in [("x", x), ("y", y)] {
+            let mut entry = KdlEntry::new_prop(key, KdlValue::Base10(value));
+            entry.set_value_repr(format!("{value}"));
+            node.entries_mut().push(entry);
         }
     }
 }

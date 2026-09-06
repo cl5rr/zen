@@ -1,5 +1,6 @@
 mod config;
 mod lists;
+mod monitors;
 mod spec;
 mod wallpaper;
 
@@ -109,6 +110,7 @@ fn build(app: &adw::Application) {
     for page in PAGES {
         stack.add_named(&build_page(&state, page), Some(page.name));
     }
+    stack.add_named(&monitors::page(&state), Some("Monitors"));
     stack.add_named(&lists::binds_page(&state), Some("Keybinds"));
     stack.add_named(&lists::startup_page(&state), Some("Startup apps"));
     stack.add_named(&wallpaper::page(&state), Some("Wallpaper"));
@@ -160,6 +162,7 @@ fn build_sidebar(stack: &gtk::Stack) -> gtk::Widget {
         .build();
 
     let mut names: Vec<&str> = PAGES.iter().map(|p| p.name).collect();
+    names.push("Monitors");
     names.push("Keybinds");
     names.push("Startup apps");
     names.push("Wallpaper");

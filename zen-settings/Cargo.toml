@@ -13,3 +13,4 @@ anyhow.workspace = true
 gtk = { version = "0.10.3", package = "gtk4", features = ["v4_12"] }
 kdl = "4.7"
 zen-config = { version = "0.1.0", path = "../zen-config" }
+serde_json.workspace = true

@@ -126,8 +126,9 @@ Clusters that tile internally and move as one.
 ## Settings
 
 `Mod+,` opens a settings app: the glass material, window spacing, edges and
-depth, the camera, focus behaviour, the welcome animation, your keybinds, the
-commands that run at startup, and the wallpaper reel. It edits
+depth, the camera, focus behaviour, monitor resolution and arrangement, the
+welcome animation, your keybinds, the commands that run at startup, and the
+wallpaper reel. It edits
 `~/.config/zen/config.kdl` directly and ZEN reloads as you drag a slider, so
 you see the change on the windows behind it.
 
