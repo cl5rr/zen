@@ -12,8 +12,11 @@
 
 set -euo pipefail
 
-# Kept for the re-exec in update_zen: inside a function "$@" is the function's args.
+# Self-update needs both of these resolved before anything else runs. "$@" inside a
+# function is that function's args, and "$0" stops meaning anything useful the moment
+# a relative path outlives a directory change.
 ZEN_ARGV=("$@")
+ZEN_SELF="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")"
 
 PREFIX="${PREFIX:-/usr/local}"
 ASSUME_YES=0
@@ -682,6 +685,45 @@ zen_is_running() {
     pgrep -x zen >/dev/null 2>&1
 }
 
+# --------------------------------------------------------------- self ----
+#
+# bash executes a script as it reads it, so the copy running right now is the one
+# that was on disk before the pull. Any step added by the very commit being fetched
+# would be skipped, and the next run would be the first to have it. Restarting is
+# the only way a pull can take effect on the run that performed it.
+
+self_fingerprint() {
+    cksum < "$ZEN_SELF" 2>/dev/null || wc -c < "$ZEN_SELF" 2>/dev/null || echo unknown
+}
+
+reexec_if_self_changed() {
+    local before="$1" after
+    after=$(self_fingerprint)
+    [ "$before" != "$after" ] || return 0
+
+    # One restart is enough: the second run pulls nothing, so a second change means
+    # something is wrong rather than something new.
+    if [ "${ZEN_SETUP_REEXEC:-0}" = 1 ]; then
+        warn "setup.sh changed again after one restart; carrying on without another"
+        return 0
+    fi
+
+    # Never hand control to a script that will not parse. A half-written checkout
+    # should leave you on the working old copy, not a broken new one.
+    if ! bash -n "$ZEN_SELF" 2>/dev/null; then
+        warn "the setup.sh just pulled does not parse; continuing with the running one"
+        dim "run ${C_BOLD}./setup.sh --update${C_RESET} again once the checkout is sound"
+        return 0
+    fi
+
+    ok "setup.sh itself changed; restarting with the new one"
+    export ZEN_SETUP_REEXEC=1
+    exec bash "$ZEN_SELF" ${ZEN_ARGV[@]+"${ZEN_ARGV[@]}"}
+
+    # exec only returns on failure, and continuing would silently run stale code.
+    die "could not restart setup.sh at $ZEN_SELF"
+}
+
 update_zen() {
     step "Updating ZEN"
 
@@ -694,9 +736,9 @@ update_zen() {
         confirm || return 1
     fi
 
-    local before after self_before self_after
+    local before after self_before
     before=$(git rev-parse HEAD)
-    self_before=$(cksum < "$0" 2>/dev/null)
+    self_before=$(self_fingerprint)
     info "fetching"
     if ! git pull --ff-only; then
         printf '\n'
@@ -708,16 +750,7 @@ update_zen() {
     fi
 
     after=$(git rev-parse HEAD)
-    self_after=$(cksum < "$0" 2>/dev/null)
-
-    # bash reads a script as it runs, so the copy executing right now is the one that
-    # was on disk before the pull. Without this, any step added by the very commit we
-    # just fetched is skipped, and the next run is the first that has it.
-    if [ "$self_before" != "$self_after" ] && [ "${ZEN_SETUP_REEXEC:-0}" != 1 ]; then
-        ok "setup.sh itself changed; restarting with the new one"
-        ZEN_SETUP_REEXEC=1 export ZEN_SETUP_REEXEC
-        exec bash "$0" ${ZEN_ARGV[@]+"${ZEN_ARGV[@]}"}
-    fi
+    reexec_if_self_changed "$self_before"
 
     if [ "$before" = "$after" ]; then
         # Deliberately still building and installing. "The pull fetched nothing" is not the
