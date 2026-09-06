@@ -4427,7 +4427,10 @@ impl<W: LayoutElement> Layout<W> {
             return true;
         }
 
-        if self.camera_fit_all() {
+        // The map is a scale, not a framing. Fitting alone lands wherever the windows
+        // happen to sit, so two windows side by side barely leave 1:1 and the gesture
+        // is indistinguishable from fit-all. Capping guarantees the bubble scale.
+        if self.camera_fit_capped(threshold) {
             return true;
         }
 
@@ -4447,6 +4450,10 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn camera_fit_all(&mut self) -> bool {
+        self.camera_fit_capped(f64::INFINITY)
+    }
+
+    fn camera_fit_capped(&mut self, zoom_cap: f64) -> bool {
         let config = self.options.animations.overview_open_close.0;
         let Some(mon) = self.active_monitor() else {
             return false;
@@ -4454,7 +4461,7 @@ impl<W: LayoutElement> Layout<W> {
         let Some(bbox) = mon.active_workspace_ref().floating_tiles_bbox() else {
             return false;
         };
-        mon.fit_camera_to(bbox, 48., config);
+        mon.fit_camera_to(bbox, 48., zoom_cap, config);
         true
     }
 

@@ -28,11 +28,22 @@ use zen_config::{Color, CornerRadius, GradientInterpolation};
 use crate::render_helpers::border::BorderRenderElement;
 
 // map
-const BUBBLE_PAD: f64 = 18.;
+// Bubbles have to be on when the map settles at exactly map-zoom, and reading a
+// float back out of an animation does not land on the target to the bit. The slack
+// also fades them in a frame or two early instead of popping at the stop.
+const BUBBLE_ZOOM_SLACK: f64 = 1.08;
 
-const BUBBLE_RADIUS: f32 = 22.;
+const BUBBLE_PAD: f64 = 56.;
 
-const BUBBLE_FILL: Color = Color::new_unpremul(1., 1., 1., 0.07);
+const BUBBLE_RADIUS: f32 = 64.;
+
+const BUBBLE_FILL: Color = Color::new_unpremul(1., 1., 1., 0.10);
+
+// The fill alone is invisible over a light wallpaper, and a darker one would be
+// invisible over a dark wallpaper. The ring is what actually draws the boundary; the
+// fill only separates the inside from the canvas.
+const BUBBLE_RING: Color = Color::new_unpremul(1., 1., 1., 0.38);
+const BUBBLE_RING_WIDTH: f32 = 6.;
 
 use crate::render_helpers::renderer::ZenRenderer;
 use crate::render_helpers::xray::XrayPos;
@@ -61,7 +72,7 @@ pub struct FloatingSpace<W: LayoutElement> {
     spawn_center: Option<Point<f64, Canvas>>,
 
     islands: IslandSpace<W::Id>,
-    bubbles: Vec<BorderRenderElement>,
+    bubbles: Vec<(BorderRenderElement, BorderRenderElement)>,
 
     view_size: Size<f64, Logical>,
 
@@ -306,18 +317,25 @@ impl<W: LayoutElement> FloatingSpace<W> {
                 )),
             );
 
-            self.bubbles.push(BorderRenderElement::new(
-                padded.size,
-                Rectangle::from_size(padded.size),
-                GradientInterpolation::default(),
-                BUBBLE_FILL,
-                BUBBLE_FILL,
-                0.,
-                Rectangle::from_size(padded.size),
-                0.,
-                CornerRadius::from(BUBBLE_RADIUS),
-                self.scale as f32,
-                1.,
+            let bubble = |color, width| {
+                BorderRenderElement::new(
+                    padded.size,
+                    Rectangle::from_size(padded.size),
+                    GradientInterpolation::default(),
+                    color,
+                    color,
+                    0.,
+                    Rectangle::from_size(padded.size),
+                    width,
+                    CornerRadius::from(BUBBLE_RADIUS),
+                    self.scale as f32,
+                    1.,
+                )
+            };
+
+            self.bubbles.push((
+                bubble(BUBBLE_FILL, 0.),
+                bubble(BUBBLE_RING, BUBBLE_RING_WIDTH),
             ));
         }
     }
@@ -1167,15 +1185,12 @@ impl<W: LayoutElement> FloatingSpace<W> {
         }
 
         // Pushed after the tiles, so they sit behind them.
-        if layer.is_normal() && xray_pos.zoom <= self.options.camera.map_zoom {
-            for (island, bubble) in self.islands.islands().zip(self.bubbles.iter()) {
+        if layer.is_normal() && xray_pos.zoom <= self.options.camera.map_zoom * BUBBLE_ZOOM_SLACK {
+            for (island, (fill, ring)) in self.islands.islands().zip(self.bubbles.iter()) {
                 let loc = self.canvas_to_logical(island.rect().loc);
-                push(
-                    bubble
-                        .clone()
-                        .with_location(Point::from((loc.x - BUBBLE_PAD, loc.y - BUBBLE_PAD)))
-                        .into(),
-                );
+                let at = Point::from((loc.x - BUBBLE_PAD, loc.y - BUBBLE_PAD));
+                push(ring.clone().with_location(at).into());
+                push(fill.clone().with_location(at).into());
             }
         }
     }

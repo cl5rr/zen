@@ -1294,6 +1294,7 @@ impl<W: LayoutElement> Monitor<W> {
         &mut self,
         rect: Rectangle<f64, Logical>,
         padding: f64,
+        zoom_cap: f64,
         config: zen_config::Animation,
     ) {
         if rect.size.w <= 0. || rect.size.h <= 0. {
@@ -1302,7 +1303,7 @@ impl<W: LayoutElement> Monitor<W> {
 
         let avail_w = (self.view_size.w - padding * 2.).max(1.);
         let avail_h = (self.view_size.h - padding * 2.).max(1.);
-        let zoom = (avail_w / rect.size.w).min(avail_h / rect.size.h);
+        let zoom = (avail_w / rect.size.w).min(avail_h / rect.size.h).min(zoom_cap);
         let zoom = zoom.clamp(self.options.camera.min_zoom, self.options.camera.max_zoom);
 
         let ws_size = self.workspace_size(zoom);
@@ -1325,7 +1326,7 @@ impl<W: LayoutElement> Monitor<W> {
         };
 
         self.camera_focus = Some((id, rect));
-        self.fit_camera_to(rect, CAMERA_FOCUS_PADDING, config);
+        self.fit_camera_to(rect, CAMERA_FOCUS_PADDING, f64::INFINITY, config);
         true
     }
 
@@ -1353,7 +1354,7 @@ impl<W: LayoutElement> Monitor<W> {
 
         if rect != last_rect {
             self.camera_focus = Some((id, rect));
-            self.fit_camera_to(rect, CAMERA_FOCUS_PADDING, config);
+            self.fit_camera_to(rect, CAMERA_FOCUS_PADDING, f64::INFINITY, config);
         }
     }
 
