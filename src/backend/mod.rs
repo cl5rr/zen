@@ -20,6 +20,9 @@ pub use winit::Winit;
 pub mod headless;
 pub use headless::Headless;
 
+pub mod virtual_output;
+pub use virtual_output::VirtualOutput;
+
 #[allow(clippy::large_enum_variant)]
 pub enum Backend {
     Tty(Tty),
@@ -42,7 +45,7 @@ static OUTPUT_ID_COUNTER: IdCounter = IdCounter::new();
 pub struct OutputId(u64);
 
 impl OutputId {
-    fn next() -> OutputId {
+    pub(crate) fn next() -> OutputId {
         OutputId(OUTPUT_ID_COUNTER.next())
     }
 
@@ -86,6 +89,10 @@ impl Backend {
         output: &Output,
         target_presentation_time: Duration,
     ) -> RenderResult {
+        if zen.is_virtual_output(output) {
+            return zen.render_virtual_output(self, output);
+        }
+
         match self {
             Backend::Tty(tty) => tty.render(zen, output, target_presentation_time),
             Backend::Winit(winit) => winit.render(zen, output),

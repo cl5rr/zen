@@ -383,6 +383,39 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
         Request::Output { output, action } => {
             action.validate()?;
 
+            // Creating and destroying are not config changes: there is no connector to
+            // reconfigure, the output itself comes and goes.
+            if let zen_ipc::OutputAction::Create {
+                width,
+                height,
+                refresh,
+            } = action
+            {
+                let (tx, rx) = async_channel::bounded(1);
+                ctx.event_loop.insert_idle(move |state| {
+                    let result = state.zen.create_virtual_output(&output, width, height, refresh);
+                    if result.is_ok() {
+                        state.zen.queue_redraw_all();
+                    }
+                    let _ = tx.send_blocking(result);
+                });
+                rx.recv().await.unwrap_or_else(|_| Err("no reply".to_owned()))?;
+                return Ok(Response::Handled);
+            }
+
+            if matches!(action, zen_ipc::OutputAction::Destroy) {
+                let (tx, rx) = async_channel::bounded(1);
+                ctx.event_loop.insert_idle(move |state| {
+                    let result = state.zen.destroy_virtual_output(&output);
+                    if result.is_ok() {
+                        state.zen.queue_redraw_all();
+                    }
+                    let _ = tx.send_blocking(result);
+                });
+                rx.recv().await.unwrap_or_else(|_| Err("no reply".to_owned()))?;
+                return Ok(Response::Handled);
+            }
+
             let ipc_outputs = ctx.ipc_outputs.lock().unwrap();
             let found = ipc_outputs
                 .values()

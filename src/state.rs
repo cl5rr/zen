@@ -170,6 +170,7 @@ use crate::screencasting::Screencasting;
 use crate::ui::config_error_notification::ConfigErrorNotification;
 use crate::ui::exit_confirm_dialog::{ExitConfirmDialog, ExitConfirmDialogRenderElement};
 use crate::ui::hotkey_overlay::HotkeyOverlay;
+use crate::backend::VirtualOutput;
 use crate::ui::welcome::{Welcome, WelcomeRenderElement};
 use crate::ui::mru::{MruCloseRequest, WindowMruUi, WindowMruUiRenderElement};
 use crate::ui::screen_transition::{self, ScreenTransition};
@@ -330,6 +331,7 @@ pub struct Zen {
     pub config_error_notification: ConfigErrorNotification,
     pub hotkey_overlay: HotkeyOverlay,
     pub welcome: Option<Welcome>,
+    pub virtual_outputs: HashMap<String, VirtualOutput>,
     pub mod_tap_armed: bool,
     pub pending_mod_tap: bool,
     pub exit_confirm_dialog: ExitConfirmDialog,
@@ -1644,6 +1646,7 @@ impl State {
 
     pub fn apply_transient_output_config(&mut self, name: &str, action: zen_ipc::OutputAction) {
         self.modify_output_config(name, move |config| match action {
+            zen_ipc::OutputAction::Create { .. } | zen_ipc::OutputAction::Destroy => (),
             zen_ipc::OutputAction::Off => config.off = true,
             zen_ipc::OutputAction::On => config.off = false,
             zen_ipc::OutputAction::Mode { mode } => {
@@ -2390,6 +2393,7 @@ impl Zen {
             config_error_notification,
             hotkey_overlay,
             welcome,
+            virtual_outputs: HashMap::new(),
             mod_tap_armed: false,
             pending_mod_tap: false,
             exit_confirm_dialog,
@@ -3393,14 +3397,32 @@ impl Zen {
     pub fn redraw_queued_outputs(&mut self, backend: &mut Backend) {
         let _span = tracy_client::span!("Zen::redraw_queued_outputs");
 
+        // An output whose redraw leaves it Queued would spin this loop forever, inside
+        // one dispatch, taking the session with it. Any output can only legitimately be
+        // drawn once per pass, so the count is the bound.
+        let mut budget = self.output_state.len() + 1;
+
         while let Some((output, _)) = self.output_state.iter().find(|(_, state)| {
             matches!(
                 state.redraw_state,
                 RedrawState::Queued | RedrawState::WaitingForEstimatedVBlankAndQueued(_)
             )
         }) {
-            trace!("redrawing output");
             let output = output.clone();
+
+            budget = budget.saturating_sub(1);
+            if budget == 0 {
+                warn!(
+                    "{} still wants redrawing after every output had a turn;                      dropping the rest of this pass rather than looping",
+                    output.name()
+                );
+                if let Some(state) = self.output_state.get_mut(&output) {
+                    state.redraw_state = RedrawState::Idle;
+                }
+                break;
+            }
+
+            trace!("redrawing output");
             self.redraw(backend, &output);
         }
     }
@@ -6048,5 +6070,86 @@ zen_render_elements! {
         Welcome = WelcomeRenderElement,
         Texture = PrimaryGpuTextureRenderElement,
         RelocatedMemoryBuffer = RelocateRenderElement<MemoryRenderBufferRenderElement<R>>,
+    }
+}
+
+// virtual outputs
+impl Zen {
+    pub fn is_virtual_output(&self, output: &Output) -> bool {
+        self.virtual_outputs.contains_key(&output.name())
+    }
+
+    // Taken out of the map for the duration of the render, because it borrows the very
+    // state it is drawing.
+    pub fn render_virtual_output(
+        &mut self,
+        backend: &mut Backend,
+        output: &Output,
+    ) -> RenderResult {
+        let Some(mut virtual_output) = self.virtual_outputs.remove(&output.name()) else {
+            return RenderResult::Skipped;
+        };
+
+        let result = backend
+            .with_primary_renderer(|renderer| virtual_output.render(self, renderer))
+            .unwrap_or(RenderResult::Skipped);
+
+        let interval = virtual_output.refresh_interval();
+        self.virtual_outputs.insert(output.name(), virtual_output);
+
+        // Nothing will ever report a vblank for this output, so it has to pace itself.
+        // Leaving redraw_state at Queued spins the whole loop at full speed, which
+        // takes the session down with it.
+        let state = self.output_state.get_mut(output).unwrap();
+        state.redraw_state = RedrawState::Idle;
+        state.frame_callback_sequence = state.frame_callback_sequence.wrapping_add(1);
+        let keep_going = state.unfinished_animations_remain;
+
+        if keep_going {
+            let again = output.clone();
+            let timer = Timer::from_duration(interval);
+            if let Err(err) = self.event_loop.insert_source(timer, move |_, _, data| {
+                data.zen.queue_redraw(&again);
+                TimeoutAction::Drop
+            }) {
+                warn!("virtual output timer: {err:?}");
+            }
+        }
+
+        result
+    }
+
+    pub fn create_virtual_output(
+        &mut self,
+        name: &str,
+        width: u16,
+        height: u16,
+        refresh: u32,
+    ) -> Result<(), String> {
+        if self.global_space.outputs().any(|o| o.name() == name) {
+            return Err(format!("an output called {name} already exists"));
+        }
+        if width == 0 || height == 0 {
+            return Err("a virtual output needs a size".to_owned());
+        }
+
+        let virtual_output = VirtualOutput::new(name, width, height, refresh);
+        let output = virtual_output.output.clone();
+        let interval = virtual_output.refresh_interval();
+
+        self.virtual_outputs.insert(name.to_owned(), virtual_output);
+        self.add_output(output, Some(interval), false);
+        Ok(())
+    }
+
+    pub fn destroy_virtual_output(&mut self, name: &str) -> Result<(), String> {
+        let Some(virtual_output) = self.virtual_outputs.remove(name) else {
+            return Err(format!("{name} is not a virtual output"));
+        };
+
+        let output = virtual_output.output.clone();
+        drop(virtual_output);
+        self.remove_output(&output);
+        Ok(())
     }
 }
