@@ -24,6 +24,7 @@ DO_DEPS=1
 DO_BUILD=1
 DO_INSTALL=0
 DO_UPDATE=0
+RESET_CONFIG=0
 CHECK_ONLY=0
 WITH_VISUAL_TESTS=0
 BUILD_PROFILE=release
@@ -105,6 +106,8 @@ ZEN setup
 Usage: ./setup.sh [options]
 
   --check            Report what is installed and what is missing, then exit.
+  --reset-config     Replace ~/.config/zen/config.kdl with the shipped one, keeping
+                     a timestamped backup. The way to pick up new and changed binds.
                      Changes nothing. Safe to run first.
   --update           Pull, rebuild and reinstall. Shows what changed, and any
                      config options you have not got yet.
@@ -142,6 +145,7 @@ while [ $# -gt 0 ]; do
     ANY_FLAG=1
     case "$1" in
         --check)                CHECK_ONLY=1 ;;
+        --reset-config)         RESET_CONFIG=1; ANY_FLAG=1 ;;
         --update)               DO_UPDATE=1; DO_BUILD=1; DO_INSTALL=1 ;;
         --deps-only)            DO_BUILD=0; DO_INSTALL=0 ;;
         --build-only)           DO_DEPS=0 ;;
@@ -850,6 +854,61 @@ elsewhere_note() {
     printf 'not in your repositories'
 }
 
+# aur
+#
+# Naming a package and leaving someone to it is not much help when the reason it is
+# missing is that Arch keeps it in the AUR. An AUR helper does the whole thing; without
+# one, the manual route is four commands and worth printing rather than describing.
+aur_helper() {
+    local helper
+    for helper in paru yay pikaur trizen aurman; do
+        have "$helper" && { printf '%s\n' "$helper"; return 0; }
+    done
+    return 1
+}
+
+install_from_aur() {
+    [ "$PKG_MGR" = pacman ] || {
+        dim "everything else will still be installed"
+        return 0
+    }
+
+    local wanted="" pkg
+    for pkg in "$@"; do
+        case " $AUR_ONLY " in *" $pkg "*) wanted="$wanted $pkg" ;; esac
+    done
+    wanted="${wanted# }"
+    [ -n "$wanted" ] || {
+        dim "everything else will still be installed"
+        return 0
+    }
+
+    local helper
+    if helper=$(aur_helper); then
+        printf '\n'
+        info "$helper can build these from the AUR:"
+        dim "$wanted"
+        if confirm; then
+            # Deliberately not run through $SUDO: every AUR helper refuses to run as
+            # root, and makepkg will not build as root either.
+            # shellcheck disable=SC2086
+            $helper -S --needed $wanted || warn "the AUR build did not finish"
+        else
+            dim "skipped"
+        fi
+        return 0
+    fi
+
+    printf '\n'
+    dim "no AUR helper found. Either install one, for example:"
+    printf '      %s\n' "sudo pacman -S --needed git base-devel"
+    printf '      %s\n' "git clone https://aur.archlinux.org/paru.git && cd paru && makepkg -si"
+    dim "or build each of these the same way:"
+    for pkg in $wanted; do
+        printf '      %s\n' "git clone https://aur.archlinux.org/$pkg.git && cd $pkg && makepkg -si"
+    done
+}
+
 install_deps() {
     MISSING_PKGS="${MISSING_PKGS# }"
 
@@ -899,11 +958,11 @@ install_deps() {
 
     if [ -n "$absent" ]; then
         printf '\n'
-        warn "these are not in your repositories, so they are being skipped"
+        warn "these are not in your repositories"
         for pkg in $absent; do
             printf '      %-22s %s\n' "$pkg" "$(elsewhere_note "$pkg")"
         done
-        dim "everything else will still be installed"
+        install_from_aur $absent
     fi
 
     if [ -z "${have_pkgs# }" ]; then
@@ -1054,6 +1113,81 @@ install_zen() {
 # options added later never appear in it. They fall back to their defaults, which is
 # harmless, but you would never learn they exist. This is a hint, not a merge: your
 # file is yours, and nothing here edits it.
+# bind drift
+#
+# A rebind keeps the node name and changes what it does, so the node compare cannot see
+# it and the line count says only that something moved. Someone whose Mod+F still runs
+# the old action has no other way to find out.
+#
+# Only single-line binds are read. A chord is recognised by shape rather than by
+# position, so a section header like `layout {` is never mistaken for one.
+bind_pairs() {
+    awk '
+        /^[[:space:]]*\/\// { next }
+        {
+            line = $0
+            sub(/^[[:space:]]+/, "", line)
+            if (line !~ /\{/ || line !~ /\}/) next
+
+            chord = line
+            sub(/[[:space:]].*$/, "", chord)
+            sub(/\{.*$/, "", chord)
+            if (chord == "") next
+
+            is_chord = (chord ~ /\+/) ||
+                       (chord ~ /^(Print|ModTap|XF86[A-Za-z]+)$/)
+            if (!is_chord) next
+
+            action = line
+            sub(/^[^{]*\{[[:space:]]*/, "", action)
+            sub(/[[:space:];].*$/, "", action)
+            sub(/\}.*$/, "", action)
+            if (action == "") next
+
+            print chord, action
+        }
+    ' "$1" | sort -u
+}
+
+bind_drift() {
+    local user="$1" shipped="$2"
+    local tmp_ship tmp_user
+    tmp_ship=$(mktemp) || return 0
+    tmp_user=$(mktemp) || { rm -f "$tmp_ship"; return 0; }
+
+    bind_pairs "$shipped" > "$tmp_ship"
+    bind_pairs "$user"    > "$tmp_user"
+
+    local reported=0 chord ship_action user_action added=""
+    while read -r chord ship_action; do
+        [ -n "$chord" ] || continue
+        user_action=$(awk -v c="$chord" '$1 == c { print $2; exit }' "$tmp_user")
+
+        if [ -z "$user_action" ]; then
+            added="$added $chord"
+            continue
+        fi
+        [ "$user_action" = "$ship_action" ] && continue
+
+        if [ "$reported" -eq 0 ]; then
+            printf '\n'
+            warn "these binds do something different in the config ZEN now ships"
+            reported=1
+        fi
+        printf '      %-20s yours: %-24s now: %s\n' "$chord" "$user_action" "$ship_action"
+    done < "$tmp_ship"
+
+    if [ -n "${added# }" ]; then
+        printf '\n'
+        warn "these binds are new and your config does not have them"
+        dim "$(printf '%s' "${added# }" | cut -c1-240)"
+        reported=1
+    fi
+
+    rm -f "$tmp_ship" "$tmp_user"
+    [ "$reported" -eq 0 ] || dim "./setup.sh --reset-config takes the shipped config"
+}
+
 config_drift() {
     local user="${XDG_CONFIG_HOME:-$HOME/.config}/zen/config.kdl"
     local shipped="resources/default-config.kdl"
@@ -1096,6 +1230,8 @@ config_drift() {
     info "Your config wins over the defaults, so anything newer is not reaching you."
     info "The look lives there too: shadows, corners, the glass material and the"
     info "window transparency are config, not binary."
+    printf '\n'
+    bind_drift "$user" "$shipped"
     printf '\n'
     dim "diff:  diff $user resources/default-config.kdl"
 
@@ -1486,6 +1622,39 @@ install_extra_apps() {
     pacman_install $EXTRA_APPS && ok "extras installed"
 }
 
+# reset
+#
+# Changing a bind in the shipped config does nothing for anyone who already has a
+# config, because theirs is theirs. That is how Mod+F kept opening the old action and
+# why a new bind never appeared. This replaces it, keeping the old one beside it.
+reset_user_config() {
+    step "Resetting your config"
+    local dir="${XDG_CONFIG_HOME:-$HOME/.config}/zen"
+    local dst="$dir/config.kdl"
+
+    mkdir -p "$dir"
+
+    if [ -f "$dst" ]; then
+        if cmp -s resources/default-config.kdl "$dst"; then
+            ok "already identical to the shipped config"
+            return 0
+        fi
+
+        warn "this replaces $dst with the one ZEN ships"
+        dim "everything you changed in it goes back to the default"
+        confirm || { dim "left alone"; return 0; }
+
+        local backup
+        backup="$dst.$(date +%Y%m%d-%H%M%S).bak"
+        cp "$dst" "$backup" || die "could not back up $dst"
+        ok "kept your old one at $backup"
+    fi
+
+    cp resources/default-config.kdl "$dst" || die "could not write $dst"
+    ok "wrote $dst"
+    dim "ZEN reloads it live, so the new binds are active already"
+}
+
 write_user_config() {
     step "Writing your config"
     local dir="${XDG_CONFIG_HOME:-$HOME/.config}/zen"
@@ -1866,6 +2035,10 @@ main() {
         printf '\n%sZEN setup%s\n' "$C_BOLD$C_BLUE" "$C_RESET"
     fi
 
+    if [ "$RESET_CONFIG" = 1 ] && [ "$DO_UPDATE" = 0 ]; then
+        DO_DEPS=0; DO_BUILD=0; DO_INSTALL=0
+    fi
+
     if [ "$CHECK_ONLY" = 1 ]; then
         check_deps
         printf '\n'
@@ -1889,6 +2062,7 @@ main() {
     if [ "$W_EXTRAS" = 1 ]; then install_extra_apps; fi
     if [ "$DO_BUILD" = 1 ]; then ensure_rust; build; fi
     if [ "$DO_INSTALL" = 1 ]; then install_zen; fi
+    if [ "$RESET_CONFIG" = 1 ]; then reset_user_config; seed_wallpapers; theme_all; fi
     if [ "$W_CONFIG" = 1 ]; then write_user_config; fi
     if [ "$W_GREETER" = 1 ]; then install_greeter; fi
 

@@ -153,7 +153,7 @@ fn virtual_card(state: &Rc<App>, screens: &[Screen]) -> gtk::Widget {
     if existing.is_empty() {
         card.append(&row(
             "None right now",
-            "A virtual monitor renders offscreen, so a screen share can pick it up              while nothing on your desk shows it",
+            "A virtual monitor renders offscreen, so a screen share can pick it up while nothing on your desk shows it",
             gtk::Box::new(Orientation::Horizontal, 0).upcast(),
         ));
     } else {

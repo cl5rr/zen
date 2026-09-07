@@ -3477,7 +3477,7 @@ impl Zen {
             budget = budget.saturating_sub(1);
             if budget == 0 {
                 warn!(
-                    "{} still wants redrawing after every output had a turn;                      dropping the rest of this pass rather than looping",
+                    "{} still wants redrawing after every output had a turn; dropping the rest of this pass rather than looping",
                     output.name()
                 );
                 if let Some(state) = self.output_state.get_mut(&output) {

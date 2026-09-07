@@ -28,6 +28,23 @@ const NEEDS: &[Need] = &[
         package: "polkit",
         probe: Probe::OnPath,
     },
+    Need {
+        command: "polkit agent",
+        what: "what draws the password prompt. Without one pkexec tries to ask on a \
+               terminal, and a settings window has none",
+        package: "polkit-gnome",
+        probe: Probe::AnyFile(&[
+            "/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1",
+            "/usr/libexec/polkit-gnome-authentication-agent-1",
+            "/usr/lib/polkit-kde-authentication-agent-1",
+            "/usr/libexec/polkit-kde-authentication-agent-1",
+            "/usr/lib/mate-polkit/polkit-mate-authentication-agent-1",
+            "/usr/libexec/polkit-mate-authentication-agent-1",
+            "/usr/lib/xfce-polkit/xfce-polkit",
+            "/usr/bin/lxqt-policykit-agent",
+            "/usr/bin/lxpolkit",
+        ]),
+    },
 ];
 
 struct Field {
@@ -42,7 +59,27 @@ enum Kind {
     Text(&'static str),
     Choice(&'static [&'static str]),
     Number(f64, f64),
+    Colour,
 }
+
+const TERMINAL_COLOURS: [(&str, &str); 16] = [
+    ("Black", "#1a1d24"),
+    ("Red", "#e06c75"),
+    ("Green", "#8fd18a"),
+    ("Yellow", "#e5c07b"),
+    ("Blue", "#7fc8ff"),
+    ("Magenta", "#c39ee0"),
+    ("Cyan", "#6fd2d2"),
+    ("Light grey", "#c7ccd4"),
+    ("Dark grey", "#3a3f4b"),
+    ("Bright red", "#ff8b93"),
+    ("Bright green", "#a9e0a3"),
+    ("Bright yellow", "#f2d3a0"),
+    ("Bright blue", "#a3d9ff"),
+    ("Bright magenta", "#d6b8ee"),
+    ("Bright cyan", "#92e2e2"),
+    ("White", "#f0f2f5"),
+];
 
 const FIELDS: &[Field] = &[
     Field {
@@ -100,28 +137,22 @@ const FIELDS: &[Field] = &[
         kind: Kind::Flag,
     },
     Field {
-        key: "tty",
-        label: "TTY",
-        hint: "Which virtual terminal Ly runs on. ZEN's installer uses 2",
-        kind: Kind::Number(1., 12.),
-    },
-    Field {
         key: "bg",
         label: "Background colour",
-        hint: "An ncurses colour number, 0 to 15. Ly cannot take hex",
-        kind: Kind::Number(0., 15.),
+        hint: "Ly draws in a terminal, so it can only use these sixteen",
+        kind: Kind::Colour,
     },
     Field {
         key: "fg",
         label: "Text colour",
         hint: "",
-        kind: Kind::Number(0., 15.),
+        kind: Kind::Colour,
     },
     Field {
         key: "border_fg",
         label: "Border colour",
         hint: "",
-        kind: Kind::Number(0., 15.),
+        kind: Kind::Colour,
     },
 ];
 
@@ -289,6 +320,54 @@ fn field_row(
             drop.upcast()
         }
 
+        Kind::Colour => {
+            let picked = current.parse::<usize>().unwrap_or(0).min(15);
+
+            let swatch = gtk::DrawingArea::new();
+            swatch.set_size_request(26, 20);
+            swatch.set_valign(Align::Center);
+            swatch.add_css_class("swatch");
+
+            let shown = Rc::new(std::cell::Cell::new(picked));
+            {
+                let shown = shown.clone();
+                swatch.set_draw_func(move |_, cr, w, h| {
+                    let (r, g, b) = rgb_of(shown.get());
+                    cr.set_source_rgb(r, g, b);
+                    let _ = cr.paint();
+                    let _ = h;
+                    let _ = w;
+                });
+            }
+
+            let names: Vec<&str> = TERMINAL_COLOURS.iter().map(|(n, _)| *n).collect();
+            let drop = gtk::DropDown::builder()
+                .model(&gtk::StringList::new(&names))
+                .selected(picked as u32)
+                .valign(Align::Center)
+                .build();
+
+            {
+                let pending = pending.clone();
+                let swatch = swatch.clone();
+                let shown = shown.clone();
+                drop.connect_selected_notify(move |d| {
+                    let idx = d.selected() as usize;
+                    shown.set(idx.min(15));
+                    swatch.queue_draw();
+                    pending
+                        .borrow_mut()
+                        .insert(field.key.to_owned(), idx.to_string());
+                });
+            }
+
+            let line = gtk::Box::new(Orientation::Horizontal, 8);
+            line.set_valign(Align::Center);
+            line.append(&swatch);
+            line.append(&drop);
+            line.upcast()
+        }
+
         Kind::Number(min, max) => {
             let spin = gtk::SpinButton::with_range(*min, *max, 1.);
             spin.set_value(current.parse().unwrap_or(*min));
@@ -363,6 +442,16 @@ fn run_privileged(state: &Rc<App>, args: &[String], good: &str) -> bool {
     }
 
     let why = String::from_utf8_lossy(&out.stderr);
+
+    if why.contains("/dev/tty") || why.contains("textual authentication agent") {
+        state.say(
+            "no polkit agent is running, so nothing can ask for your password. Start \
+             zen-polkit, or install polkit-gnome",
+            "bad",
+        );
+        return false;
+    }
+
     let why = why.lines().last().unwrap_or("").trim();
     if why.is_empty() {
         state.say("not saved", "");
@@ -380,4 +469,54 @@ fn scrolled(child: &gtk::Box) -> gtk::Widget {
         .vexpand(true)
         .build()
         .upcast()
+}
+
+fn rgb_of(index: usize) -> (f64, f64, f64) {
+    let hex = TERMINAL_COLOURS.get(index).map(|(_, h)| *h).unwrap_or("#000000");
+    let value = u32::from_str_radix(hex.trim_start_matches('#'), 16).unwrap_or(0);
+    (
+        f64::from((value >> 16) & 0xff) / 255.,
+        f64::from((value >> 8) & 0xff) / 255.,
+        f64::from(value & 0xff) / 255.,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_terminal_colour_parses_to_a_channel_in_range() {
+        for index in 0..16 {
+            let (r, g, b) = rgb_of(index);
+            for channel in [r, g, b] {
+                assert!(
+                    (0. ..=1.).contains(&channel),
+                    "colour {index} gave {channel}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_out_of_range_index_is_still_drawable() {
+        let (r, g, b) = rgb_of(99);
+        assert_eq!((r, g, b), (0., 0., 0.));
+    }
+
+    #[test]
+    fn the_names_are_in_terminal_colour_order() {
+        assert_eq!(TERMINAL_COLOURS[0].0, "Black");
+        assert_eq!(TERMINAL_COLOURS[1].0, "Red");
+        assert_eq!(TERMINAL_COLOURS[15].0, "White");
+        assert_eq!(TERMINAL_COLOURS.len(), 16);
+    }
+
+    #[test]
+    fn the_tty_is_not_settable_from_here() {
+        assert!(
+            !FIELDS.iter().any(|f| f.key == "tty"),
+            "changing Ly's TTY from a settings app can only lock someone out"
+        );
+    }
 }

@@ -214,7 +214,7 @@ fn pan_does_not_disturb_surface_coordinates() {
         let err = (after.x - before.x).abs().max((after.y - before.y).abs());
         assert!(
             err < 1e-6,
-            "at zoom {zoom}: panning changed the client's coordinate from {before:?} to              {after:?}; clicks would drift as you pan"
+            "at zoom {zoom}: panning changed the client's coordinate from {before:?} to {after:?}; clicks would drift as you pan"
         );
     }
 }
@@ -410,4 +410,46 @@ mod edge_resistance {
         let (held, _) = resist_edge(screen(), Point::from((500., -5.)), 0., 40.);
         assert_eq!(held.y, 0.);
     }
+}
+
+#[test]
+fn a_bubble_is_clickable_wherever_the_map_settles() {
+    let mut f = fixture_with_window();
+    f.zen().layout.set_window_floating(None, true);
+    f.zen_complete_animations();
+
+    let map_zoom = 0.42;
+    for factor in [1.0, 1.02, 1.05, 1.079] {
+        f.zen().layout.set_camera_zoom(map_zoom * factor);
+        f.zen_complete_animations();
+
+        let on_map = f.zen().layout.is_at_map_zoom();
+        assert!(
+            on_map,
+            "at {:.4} the bubbles draw but a click would be ignored",
+            map_zoom * factor
+        );
+    }
+
+    f.zen().layout.set_camera_zoom(map_zoom * 1.4);
+    f.zen_complete_animations();
+    assert!(
+        !f.zen().layout.is_at_map_zoom(),
+        "well above the threshold should not be the map"
+    );
+}
+
+#[test]
+fn toggling_the_map_lands_somewhere_clickable() {
+    let mut f = fixture_with_window();
+    f.zen().layout.set_window_floating(None, true);
+    f.zen_complete_animations();
+
+    assert!(f.zen().layout.camera_toggle_map());
+    f.zen_complete_animations();
+
+    assert!(
+        f.zen().layout.is_at_map_zoom(),
+        "Mod+O settled outside the band where clicking a bubble works"
+    );
 }

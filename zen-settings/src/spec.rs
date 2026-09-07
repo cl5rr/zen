@@ -90,7 +90,7 @@ pub const PAGES: &[Page] = &[
                 rows: &[
                     Row {
                         label: "Blur",
-                        hint: "Off leaves refraction and tint on their own, which is as close to                                clear glass as the material goes",
+                        hint: "Off leaves refraction and tint on their own, which is as close to clear glass as the material goes",
                         path: &["blur"],
                         key: "off",
                         kind: Kind::Flag { invert: true },
@@ -225,14 +225,14 @@ pub const PAGES: &[Page] = &[
                 rows: &[
                     Row {
                         label: "Tint the whole window",
-                        hint: "Off draws the focus ring and border as an outline instead of a                                colour cast behind the window",
+                        hint: "Off draws the focus ring and border as an outline instead of a colour cast behind the window",
                         path: &["window-rule"],
                         key: "draw-border-with-background",
                         kind: Kind::Bool { default: false },
                     },
                     Row {
                         label: "Focused transparency",
-                        hint: "1 is opaque. The material behind a window only shows through the                                pixels the window leaves see-through",
+                        hint: "1 is opaque. The material behind a window only shows through the pixels the window leaves see-through",
                         path: &["window-rule@is-active=true"],
                         key: "opacity",
                         kind: Kind::Number { min: 0.3, max: 1., step: 0.01, default: 0.92, digits: 2 },
@@ -325,7 +325,7 @@ pub const PAGES: &[Page] = &[
                 },
                 Row {
                     label: "Gather",
-                    hint: "How far the map pulls the islands together. 1 leaves them                            exactly where they are on the canvas",
+                    hint: "How far the map pulls the islands together. 1 leaves them exactly where they are on the canvas",
                     path: &["camera"],
                     key: "map-gather",
                     kind: Kind::Number { min: 0.05, max: 1., step: 0.01, default: 0.34, digits: 2 },
@@ -336,7 +336,7 @@ pub const PAGES: &[Page] = &[
             title: "SCREEN CORNERS",
             rows: &[Row {
                 label: "Corner opens the map",
-                hint: "Off by default. It fires on a single pixel, so it goes off while                        you are reaching for something else",
+                hint: "Off by default. It fires on a single pixel, so it goes off while you are reaching for something else",
                 path: &["gestures", "hot-corners"],
                 key: "off",
                 kind: Kind::Flag { invert: true },
@@ -390,7 +390,7 @@ pub const PAGES: &[Page] = &[
                 title: "MONITOR EDGES",
                 rows: &[Row {
                     label: "Breakthrough",
-                    hint: "How hard to push before the pointer crosses to the next                            monitor. 0 lets it cross freely",
+                    hint: "How hard to push before the pointer crosses to the next monitor. 0 lets it cross freely",
                     path: &["input"],
                     key: "monitor-breakthrough",
                     kind: Kind::Number { min: 0., max: 200., step: 1., default: 24., digits: 0 },

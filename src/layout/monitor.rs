@@ -55,6 +55,8 @@ const MAP_SCRIM_FADE_FROM: f64 = 2.2;
 
 const TRAVEL_PADDING: f64 = 64.;
 
+pub const MAP_ZOOM_SLACK: f64 = 1.08;
+
 #[derive(Debug)]
 pub struct Monitor<W: LayoutElement> {
     pub(super) output: Output,
@@ -1599,9 +1601,7 @@ impl<W: LayoutElement> Monitor<W> {
     }
 
     fn renders_active_workspace_only(&self) -> bool {
-        self.workspace_switch.is_none()
-            && !self.in_overview()
-            && self.camera.zoom() > self.options.camera.map_zoom * 1.08
+        self.workspace_switch.is_none() && !self.in_overview() && !self.is_on_map()
     }
 
     pub fn workspaces_with_render_geo(
@@ -1932,6 +1932,10 @@ impl<W: LayoutElement> Monitor<W> {
                 Relocate::Relative,
             ));
         }
+    }
+
+    pub fn is_on_map(&self) -> bool {
+        self.overview_zoom() <= self.options.camera.map_zoom * MAP_ZOOM_SLACK
     }
 
     pub fn camera_zoom(&self) -> f64 {

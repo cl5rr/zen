@@ -32,8 +32,6 @@ use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
 use crate::render_helpers::texture::TextureRenderElement;
 use crate::ui::app_icons::AppIcons;
 
-const BUBBLE_ZOOM_SLACK: f64 = 1.08;
-
 const ICON_SIZE: f64 = 132.;
 
 const BUBBLE_PAD: f64 = 56.;
@@ -1184,7 +1182,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
             }
         }
 
-        let on_map = xray_pos.zoom <= self.options.camera.map_zoom * BUBBLE_ZOOM_SLACK;
+        let on_map = xray_pos.zoom <= self.options.camera.map_zoom * crate::layout::monitor::MAP_ZOOM_SLACK;
 
         let active = self.active_window_id.clone();
         for (tile, tile_pos) in self.tiles_with_render_positions() {

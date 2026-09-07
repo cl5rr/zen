@@ -4479,9 +4479,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn is_at_map_zoom(&self) -> bool {
-        let threshold = self.options.camera.map_zoom;
-        self.active_monitor_ref()
-            .is_some_and(|mon| mon.camera.zoom() <= threshold)
+        self.active_monitor_ref().is_some_and(|mon| mon.is_on_map())
     }
 
     pub fn camera_fit_all(&mut self) -> bool {

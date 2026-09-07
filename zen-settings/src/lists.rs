@@ -508,7 +508,7 @@ mod tests {
         ];
 
         for chord in cases {
-            let text = format!("binds {{\n    {chord} {{ close-window; }}\n}}\n");
+            let text = format!("binds {{\n {chord} {{ close-window; }}\n}}\n");
             zen_config::Config::parse_mem(&text)
                 .unwrap_or_else(|e| panic!("{chord} does not parse as a bind: {e}"));
         }
