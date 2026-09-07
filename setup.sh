@@ -763,12 +763,20 @@ check_screencast() {
 
     # The routing file. Without it the portal picks a backend by its own defaults, and
     # on a desktop it does not recognise that is usually none at all.
-    local routing="/usr/share/xdg-desktop-portal/zen-portals.conf"
-    if [ -f "$routing" ] || [ -f "/etc/xdg-desktop-portal/zen-portals.conf" ]; then
-        row_ok "portal routing" ""
+    # Installed under PREFIX, which is not /usr by default, and the portal finds it
+    # through XDG_DATA_DIRS. Looking only in /usr reported it missing on every normal
+    # install.
+    local routing="" candidate
+    for candidate in         "$PREFIX/share/xdg-desktop-portal/zen-portals.conf"         "/usr/local/share/xdg-desktop-portal/zen-portals.conf"         "/usr/share/xdg-desktop-portal/zen-portals.conf"         "/etc/xdg-desktop-portal/zen-portals.conf"
+    do
+        [ -f "$candidate" ] && { routing="$candidate"; break; }
+    done
+
+    if [ -n "$routing" ]; then
+        row_ok "portal routing" "$routing"
         N_OK=$((N_OK + 1))
     else
-        row_miss "portal routing" "$routing is missing; run ./setup.sh --install"
+        row_miss "portal routing" "no zen-portals.conf anywhere; run ./setup.sh --install"
         N_MISSING=$((N_MISSING + 1))
     fi
 
@@ -779,7 +787,7 @@ check_screencast() {
         version=$(busctl --user get-property org.freedesktop.portal.Desktop \
                       /org/freedesktop/portal/desktop \
                       org.freedesktop.portal.ScreenCast version 2>/dev/null \
-                  | awk '{print $2}')
+                  | awk '{print $2}' || true)
         if [ -n "$version" ] && [ "$version" != "0" ]; then
             row_ok "portal screencast" "version $version"
             N_OK=$((N_OK + 1))
@@ -1234,7 +1242,7 @@ config_drift() {
     config_names "$user"    > "$tmp_user"
 
     local missing
-    missing=$(comm -23 "$tmp_ship" "$tmp_user" | tr '\n' ' ')
+    missing=$(comm -23 "$tmp_ship" "$tmp_user" | tr '\n' ' ' || true)
     rm -f "$tmp_ship" "$tmp_user"
 
     missing="${missing%% }"
@@ -1242,13 +1250,13 @@ config_drift() {
     # Missing node names are only the loud half. A changed *value* on a node you
     # already have is silent, and that is how a whole visual change goes missing.
     local changed
-    changed=$(diff "$user" "$shipped" 2>/dev/null | grep -c '^[<>]')
+    changed=$(diff "$user" "$shipped" 2>/dev/null | grep -c '^[<>]' || true)
     [ -n "$missing" ] || [ "${changed:-0}" -gt 0 ] || return 0
 
     printf '\n'
     if [ -n "$missing" ]; then
         local count
-        count=$(printf '%s\n' $missing | wc -l | tr -d ' ')
+        count=$(printf '%s\n' $missing | wc -l | tr -d ' ' || true)
         warn "your config does not have $count setting(s) that ZEN now ships"
         dim "$(printf '%s' "$missing" | cut -c1-300)"
     else
@@ -1785,7 +1793,7 @@ is_unmodified_zen_theme() {
     [ -f "$history" ] || return 1
     command -v sha256sum >/dev/null 2>&1 || return 1
     local have
-    have=$(sha256sum < "$dst" | cut -d' ' -f1)
+    have=$(sha256sum < "$dst" | cut -d' ' -f1 || true)
     grep -q "^$src $have\$" "$history"
 }
 
