@@ -46,7 +46,7 @@ per-output virtual monitors.
 - **Islands.** Windows group into islands that tile internally and move together.
   Navigation is a spatial search for the nearest island in a direction, not index
   arithmetic.
-- **Camera-maximize.** `Mod+Shift+M` frames a window without resizing it. No
+- **Camera-maximize.** `Mod+M` frames a window without resizing it. No
   configure is sent, so `stty size` does not change and you can pan away instantly.
 - **The map.** `Mod+O` pulls back to a dark ground where each island is a bubble
   of the icons of what is open in it, gathered into a cluster rather than left at
@@ -91,7 +91,8 @@ The camera is the point of ZEN, so these matter most.
 
 | Keybind | Action |
 |---|---|
-| `Mod+Shift+M` | Camera-maximize: frame the window without resizing it |
+| `Mod+M` | Camera-maximize: frame the window without resizing it |
+| `Mod+Shift+M` | Fill the view: resize the window to what the camera is looking at |
 | `Mod+Home`, `Mod+Ctrl+0` | Go home: back to origin (0, 0) at 1:1 |
 | `Mod+Alt+0` | Frame every window. The way out of being lost |
 | `Mod+Alt+arrows` | Pan the camera |

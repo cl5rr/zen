@@ -371,6 +371,7 @@ pub enum Action {
     PanCameraDown,
     FitAllWindows,
     CameraMaximize,
+    MaximizeWindowToView,
     FocusIslandLeft,
     FocusIslandRight,
     FocusIslandUp,
@@ -574,6 +575,7 @@ impl From<zen_ipc::Action> for Action {
             zen_ipc::Action::UnsetWorkspaceName {
                 reference: Some(reference),
             } => Self::UnsetWorkSpaceNameByRef(WorkspaceReference::from(reference)),
+            zen_ipc::Action::MaximizeWindowToView {} => Self::MaximizeWindowToView,
             zen_ipc::Action::FocusMonitorLeft {} => Self::FocusMonitorLeft,
             zen_ipc::Action::FocusMonitorRight {} => Self::FocusMonitorRight,
             zen_ipc::Action::FocusMonitorDown {} => Self::FocusMonitorDown,

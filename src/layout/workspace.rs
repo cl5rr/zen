@@ -2002,6 +2002,10 @@ impl<W: LayoutElement> Workspace<W> {
         &mut self.scrolling
     }
 
+    pub fn floating_mut(&mut self) -> &mut FloatingSpace<W> {
+        &mut self.floating
+    }
+
     pub fn floating(&self) -> &FloatingSpace<W> {
         &self.floating
     }

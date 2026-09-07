@@ -4408,6 +4408,27 @@ impl<W: LayoutElement> Layout<W> {
         true
     }
 
+    pub fn maximize_window_to_view(&mut self, id: Option<&W::Id>) -> bool {
+        let gaps = self.options.layout.gaps;
+        let Some(mon) = self.active_monitor() else {
+            return false;
+        };
+
+        let view = mon.camera_view_size();
+        let top_left = mon.view_to_workspace(Point::from((0., 0.)));
+        let bottom_right = mon.view_to_workspace(Point::from((view.w, view.h)));
+
+        let rect = Rectangle::new(
+            Point::from((top_left.x + gaps, top_left.y + gaps)),
+            Size::from((
+                (bottom_right.x - top_left.x - gaps * 2.).max(1.),
+                (bottom_right.y - top_left.y - gaps * 2.).max(1.),
+            )),
+        );
+
+        mon.active_workspace().floating_mut().fill_rect(id, rect)
+    }
+
     pub fn camera_pan_by(&mut self, delta: Point<f64, Logical>) {
         let Some(mon) = self.active_monitor() else {
             return;

@@ -2261,6 +2261,11 @@ impl State {
                     self.zen.queue_redraw_all();
                 }
             }
+            Action::MaximizeWindowToView => {
+                if self.zen.layout.maximize_window_to_view(None) {
+                    self.zen.queue_redraw_all();
+                }
+            }
             Action::CameraMaximize => {
                 if self.zen.layout.camera_maximize() {
                     self.zen.queue_redraw_all();

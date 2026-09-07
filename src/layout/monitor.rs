@@ -1581,16 +1581,27 @@ impl<W: LayoutElement> Monitor<W> {
         let output_geo = Rectangle::from_size(self.view_size);
         let zoom = self.overview_zoom();
         let extents = self.content_extents();
+        let solo = cull && self.renders_active_workspace_only();
+        let active = self.active_workspace_idx;
 
         let geo = self.workspaces_render_geo();
         zip(self.workspaces.iter().enumerate(), geo)
             .filter(move |((idx, _ws), geo)| {
+                if solo && *idx != active {
+                    return false;
+                }
                 !cull
                     || Self::cull_coverage(*geo, extents[*idx], zoom)
                         .intersection(output_geo)
                         .is_some()
             })
             .map(|((_idx, ws), geo)| (ws, geo))
+    }
+
+    fn renders_active_workspace_only(&self) -> bool {
+        self.workspace_switch.is_none()
+            && !self.in_overview()
+            && self.camera.zoom() > self.options.camera.map_zoom * 1.08
     }
 
     pub fn workspaces_with_render_geo(

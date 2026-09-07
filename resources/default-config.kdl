@@ -741,8 +741,9 @@ binds {
 
     // ZEN's maximize: the camera frames the window, the window is not touched.
     // No resize, no configure, nothing to restore -- pan away and it is still
-    // exactly where it was. Mod+Shift+M, since Mod+M is zen's real maximize.
-    Mod+Shift+M { camera-maximize; }
+    // Fills what the camera is looking at, wherever that is on the canvas, rather than
+    // snapping to a fixed desktop rectangle the way a tiling maximize would.
+    Mod+Shift+M { maximize-window-to-view; }
     Mod+Alt+WheelScrollUp cooldown-ms=60 { zoom-in; }
     Mod+Alt+WheelScrollDown cooldown-ms=60 { zoom-out; }
 
@@ -936,14 +937,16 @@ binds {
     // ZEN's maximize: the camera frames the window, the window is not touched.
     // No resize, no configure, nothing to restore. Pan away and it is still
     // exactly where it was.
-    Mod+F { camera-maximize; }
+    // Fullscreen means fullscreen: the client is resized and its decorations go. The
+    // camera move that only looks like it is Mod+M.
+    Mod+F { fullscreen-window; }
     Mod+Shift+F { fullscreen-window; }
 
     // While maximize-column leaves gaps and borders around the window,
     // maximize-window-to-edges doesn't: the window expands to the edges of the screen.
     // This bind corresponds to normal window maximizing,
     // e.g. by double-clicking on the titlebar.
-    Mod+M { maximize-window-to-edges; }
+    Mod+M { camera-maximize; }
 
     // Frame every window on the canvas. The way back if you pan somewhere empty.
     Mod+Ctrl+F { fit-all-windows; }

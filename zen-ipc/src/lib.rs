@@ -494,6 +494,7 @@ pub enum Action {
     PanCameraDown {},
     FitAllWindows {},
     CameraMaximize {},
+    MaximizeWindowToView {},
     FocusIslandLeft {},
     FocusIslandRight {},
     FocusIslandUp {},

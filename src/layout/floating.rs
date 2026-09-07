@@ -816,6 +816,35 @@ impl<W: LayoutElement> FloatingSpace<W> {
         self.interactive_resize_end(Some(&id));
     }
 
+    pub fn fill_rect(&mut self, id: Option<&W::Id>, rect: Rectangle<f64, Logical>) -> bool {
+        let Some(id) = id.or(self.active_window_id.as_ref()).cloned() else {
+            return false;
+        };
+        let Some(idx) = self.idx_of(&id) else {
+            return false;
+        };
+
+        let tile = &mut self.tiles[idx];
+        tile.floating_preset_width_idx = None;
+
+        let chrome = tile.tile_expected_or_current_size() - tile.window_expected_or_current_size();
+        let win = tile.window_mut();
+        let min = win.min_size();
+        let max = win.max_size();
+
+        let want_w = (rect.size.w - chrome.w).round().max(1.) as i32;
+        let want_h = (rect.size.h - chrome.h).round().max(1.) as i32;
+        let size = Size::from((
+            ensure_min_max_size(want_w, min.w, max.w),
+            ensure_min_max_size(want_h, min.h, max.h),
+        ));
+        win.request_size_once(size, true);
+
+        self.data[idx].set_logical_pos(rect.loc);
+        self.data[idx].logical_pos = rect.loc;
+        true
+    }
+
     pub fn set_window_width(&mut self, id: Option<&W::Id>, change: SizeChange, animate: bool) {
         let Some(id) = id.or(self.active_window_id.as_ref()) else {
             return;
