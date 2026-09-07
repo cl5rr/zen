@@ -821,6 +821,35 @@ check_system() {
     fi
 }
 
+# availability
+#
+# One package the repositories have never heard of fails the whole transaction, so a
+# single AUR-only name locks the user out of updating at all. Everything is asked about
+# first, the known ones are installed, and the rest are named rather than attempted.
+pkg_available() {
+    local pkg="$1"
+    [ -n "$pkg" ] || return 1
+    case "$PKG_MGR" in
+        pacman) pacman -Si -- "$pkg" >/dev/null 2>&1 ;;
+        apt)    apt-cache show -- "$pkg" >/dev/null 2>&1 ;;
+        dnf)    dnf --quiet info -- "$pkg" >/dev/null 2>&1 ;;
+        apk)    apk search -x -- "$pkg" 2>/dev/null | grep -q . ;;
+        zypper) zypper --quiet info -- "$pkg" 2>/dev/null | grep -q "^Name" ;;
+        *)      return 0 ;;
+    esac
+}
+
+# Named so the message can say where to get them rather than just that they are absent.
+AUR_ONLY="mpvpaper xwayland-satellite swww"
+
+elsewhere_note() {
+    local pkg="$1"
+    case " $AUR_ONLY " in
+        *" $pkg "*) [ "$PKG_MGR" = pacman ] && printf 'in the AUR' && return 0 ;;
+    esac
+    printf 'not in your repositories'
+}
+
 install_deps() {
     MISSING_PKGS="${MISSING_PKGS# }"
 
@@ -858,8 +887,34 @@ install_deps() {
         return 0
     fi
 
+    local have_pkgs="" absent=""
+    local pkg
+    for pkg in "$@"; do
+        if pkg_available "$pkg"; then
+            have_pkgs="$have_pkgs $pkg"
+        else
+            absent="$absent $pkg"
+        fi
+    done
+
+    if [ -n "$absent" ]; then
+        printf '\n'
+        warn "these are not in your repositories, so they are being skipped"
+        for pkg in $absent; do
+            printf '      %-22s %s\n' "$pkg" "$(elsewhere_note "$pkg")"
+        done
+        dim "everything else will still be installed"
+    fi
+
+    if [ -z "${have_pkgs# }" ]; then
+        warn "nothing left to install from your repositories"
+        return 0
+    fi
+
     need_root
     local y=""; [ "$ASSUME_YES" = 1 ] && y=1
+    # shellcheck disable=SC2086
+    set -- $have_pkgs
 
     case "$PKG_MGR" in
         pacman) $SUDO pacman -S --needed ${y:+--noconfirm} "$@" ;;
@@ -867,7 +922,11 @@ install_deps() {
         dnf)    $SUDO dnf install ${y:+-y} "$@" ;;
         apk)    $SUDO apk add "$@" ;;
         zypper) $SUDO zypper install ${y:+-y} "$@" ;;
-    esac
+    esac || {
+        # A failure here must not take the update with it: the build still has to run.
+        warn "the package manager reported a problem; carrying on"
+        return 0
+    }
     ok "packages installed"
 }
 
@@ -1341,6 +1400,17 @@ pkg_install() {
     set -- $translated
     [ $# -gt 0 ] || return 0
 
+    local have_pkgs="" pkg
+    for pkg in "$@"; do
+        pkg_available "$pkg" && have_pkgs="$have_pkgs $pkg"
+    done
+    [ -n "${have_pkgs# }" ] || {
+        warn "none of these are in your repositories: $*"
+        return 0
+    }
+    # shellcheck disable=SC2086
+    set -- $have_pkgs
+
     need_root
     local y=""; [ "$ASSUME_YES" = 1 ] && y=1
 
@@ -1350,7 +1420,7 @@ pkg_install() {
         dnf)    $SUDO dnf install ${y:+-y} "$@" ;;
         apk)    $SUDO apk add "$@" ;;
         zypper) $SUDO zypper install ${y:+-y} "$@" ;;
-    esac
+    esac || warn "the package manager reported a problem; carrying on"
 }
 
 # The handful of desktop packages whose name is not the same everywhere. Everything not

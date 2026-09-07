@@ -197,7 +197,7 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
 
     let extras = [
         ("swww", "crossfades between wallpapers instead of cutting"),
-        ("mpvpaper", "plays video wallpapers"),
+        ("mpvpaper", "plays video wallpapers, and is in the AUR on Arch"),
     ];
     let absent: Vec<&str> = extras
         .iter()

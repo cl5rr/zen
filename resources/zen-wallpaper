@@ -159,7 +159,7 @@ apply_swaybg() {
 apply_video() {
     local vid="$1"
     command -v mpvpaper >/dev/null 2>&1 \
-        || die "video wallpapers need mpvpaper (pacman -S mpvpaper, or from the AUR)"
+        || die "video wallpapers need mpvpaper, which is in the AUR on Arch"
 
     local vol; vol=$(volume)
     local opts="--loop-file=inf --no-audio-display --panscan=1.0 --volume=$vol"
