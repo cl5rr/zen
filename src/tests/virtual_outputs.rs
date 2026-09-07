@@ -7,7 +7,7 @@ fn create_then_destroy() {
 
     assert!(f
         .zen_state()
-        .create_virtual_output("stream", 1280, 720, 60_000)
+        .create_virtual_output("stream", 1280, 720, 60_000, false)
         .is_ok());
 
     let zen = f.zen();
@@ -33,8 +33,8 @@ fn a_name_that_is_taken_is_refused() {
     f.add_output(1, (1920, 1080));
 
     let existing = f.zen().global_space.outputs().next().unwrap().name();
-    assert!(f.zen_state().create_virtual_output(&existing, 800, 600, 60_000).is_err());
-    assert!(f.zen_state().create_virtual_output("ok-name", 0, 600, 60_000).is_err());
+    assert!(f.zen_state().create_virtual_output(&existing, 800, 600, 60_000, false).is_err());
+    assert!(f.zen_state().create_virtual_output("ok-name", 0, 600, 60_000, false).is_err());
     assert!(f.zen_state().destroy_virtual_output("never-made").is_err());
 }
 
@@ -44,7 +44,7 @@ fn redrawing_a_virtual_output_terminates() {
 
     let mut f = Fixture::new();
     f.add_output(1, (1920, 1080));
-    f.zen_state().create_virtual_output("stream", 1280, 720, 60_000).unwrap();
+    f.zen_state().create_virtual_output("stream", 1280, 720, 60_000, false).unwrap();
 
     let output = f
         .zen()
@@ -83,7 +83,7 @@ fn a_virtual_output_is_listed_over_the_ipc() {
 
     assert!(!listed(&mut f));
     f.zen_state()
-        .create_virtual_output("stream", 1280, 720, 60_000)
+        .create_virtual_output("stream", 1280, 720, 60_000, false)
         .unwrap();
     assert!(listed(&mut f), "created but absent from zen msg outputs");
 
@@ -96,7 +96,7 @@ fn a_virtual_output_identifies_itself_as_one() {
     let mut f = Fixture::new();
     f.add_output(1, (1920, 1080));
     f.zen_state()
-        .create_virtual_output("stream", 800, 600, 60_000)
+        .create_virtual_output("stream", 800, 600, 60_000, false)
         .unwrap();
 
     let outputs = f.zen_state().backend.ipc_outputs();
@@ -106,4 +106,77 @@ fn a_virtual_output_identifies_itself_as_one() {
     assert_eq!(entry.model, "Virtual");
     assert_eq!(entry.modes[0].width, 800);
     assert_eq!(entry.modes[0].height, 600);
+}
+
+#[test]
+fn a_placeable_output_takes_a_position_like_any_other() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.zen_state()
+        .create_virtual_output("stream", 1280, 720, 60_000, false)
+        .unwrap();
+
+    let zen = f.zen();
+    let output = zen
+        .global_space
+        .outputs()
+        .find(|o| o.name() == "stream")
+        .cloned()
+        .expect("a placeable output should be in the global space");
+
+    assert!(!zen.is_hidden_output(&output));
+    assert!(
+        zen.global_space.output_geometry(&output).is_some(),
+        "a placeable output should have somewhere to be"
+    );
+}
+
+#[test]
+fn a_hidden_output_says_so() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.zen_state()
+        .create_virtual_output("secret", 1280, 720, 60_000, true)
+        .unwrap();
+    f.zen_state()
+        .create_virtual_output("shown", 1280, 720, 60_000, false)
+        .unwrap();
+
+    let zen = f.zen();
+    let by_name = |name: &str| {
+        zen.global_space
+            .outputs()
+            .find(|o| o.name() == name)
+            .cloned()
+            .unwrap()
+    };
+
+    assert!(zen.is_hidden_output(&by_name("secret")));
+    assert!(!zen.is_hidden_output(&by_name("shown")));
+}
+
+#[test]
+fn destroying_a_hidden_output_clears_the_flag_with_it() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.zen_state()
+        .create_virtual_output("secret", 800, 600, 60_000, true)
+        .unwrap();
+    f.zen_state().destroy_virtual_output("secret").unwrap();
+
+    assert!(
+        !f.zen().global_space.outputs().any(|o| o.name() == "secret"),
+        "the output should be gone"
+    );
+    f.zen_state()
+        .create_virtual_output("secret", 800, 600, 60_000, false)
+        .expect("the name should be free again");
+    let zen = f.zen();
+    let output = zen
+        .global_space
+        .outputs()
+        .find(|o| o.name() == "secret")
+        .cloned()
+        .unwrap();
+    assert!(!zen.is_hidden_output(&output), "the old flag came back");
 }

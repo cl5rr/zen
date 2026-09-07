@@ -19,13 +19,14 @@ use crate::utils::get_monotonic_time;
 pub struct VirtualOutput {
     pub output: Output,
     pub id: OutputId,
+    pub hidden: bool,
     size: Size<i32, smithay::utils::Physical>,
     damage: OutputDamageTracker,
     texture: Option<GlesTexture>,
 }
 
 impl VirtualOutput {
-    pub fn new(name: &str, width: u16, height: u16, refresh: u32) -> Self {
+    pub fn new(name: &str, width: u16, height: u16, refresh: u32, hidden: bool) -> Self {
         let output = Output::new(
             name.to_owned(),
             PhysicalProperties {
@@ -55,6 +56,7 @@ impl VirtualOutput {
             damage: OutputDamageTracker::from_output(&output),
             output,
             id: OutputId::next(),
+            hidden,
             size: mode.size,
             texture: None,
         }

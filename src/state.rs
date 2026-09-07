@@ -1728,6 +1728,7 @@ impl State {
         width: u16,
         height: u16,
         refresh: u32,
+        hidden: bool,
     ) -> Result<(), String> {
         if self.zen.global_space.outputs().any(|o| o.name() == name) {
             return Err(format!("an output called {name} already exists"));
@@ -1736,7 +1737,7 @@ impl State {
             return Err("a virtual output needs a size".to_owned());
         }
 
-        let virtual_output = VirtualOutput::new(name, width, height, refresh);
+        let virtual_output = VirtualOutput::new(name, width, height, refresh, hidden);
         let output = virtual_output.output.clone();
         let interval = virtual_output.refresh_interval();
         let id = virtual_output.id;
@@ -6134,6 +6135,12 @@ zen_render_elements! {
 
 // virtual outputs
 impl Zen {
+    pub fn is_hidden_output(&self, output: &Output) -> bool {
+        self.virtual_outputs
+            .values()
+            .any(|v| v.hidden && v.output == *output)
+    }
+
     pub fn is_virtual_output(&self, output: &Output) -> bool {
         self.virtual_outputs.contains_key(&output.name())
     }

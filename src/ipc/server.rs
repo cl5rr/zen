@@ -387,11 +387,12 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                 width,
                 height,
                 refresh,
+                hidden,
             } = action
             {
                 let (tx, rx) = async_channel::bounded(1);
                 ctx.event_loop.insert_idle(move |state| {
-                    let result = state.create_virtual_output(&output, width, height, refresh);
+                    let result = state.create_virtual_output(&output, width, height, refresh, hidden);
                     if result.is_ok() {
                         state.zen.queue_redraw_all();
                     }

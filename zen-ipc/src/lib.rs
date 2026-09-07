@@ -570,8 +570,6 @@ pub enum ColumnDisplay {
 pub enum OutputAction {
     Off,
     On,
-    // A display with nothing behind it: no connector, no cable. It renders into a
-    // texture, so a screencast can consume it while nothing shows it.
     Create {
         #[cfg_attr(feature = "clap", arg(long, default_value = "1920"))]
         width: u16,
@@ -579,6 +577,8 @@ pub enum OutputAction {
         height: u16,
         #[cfg_attr(feature = "clap", arg(long, default_value = "60000"))]
         refresh: u32,
+        #[cfg_attr(feature = "clap", arg(long))]
+        hidden: bool,
     },
     Destroy,
     Mode {

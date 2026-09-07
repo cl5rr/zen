@@ -170,11 +170,12 @@ fn virtual_card(state: &Rc<App>, screens: &[Screen]) -> gtk::Widget {
                     run_output(&state, &name, &["destroy"], &format!("removed {name}"));
                 });
             }
-            card.append(&row(
-                &screen.name,
-                &format!("{:.0}x{:.0}", screen.w, screen.h),
-                remove.upcast(),
-            ));
+            let where_ = if screen.w > 0. && screen.h > 0. {
+                format!("{:.0}x{:.0}, at {:.0},{:.0}", screen.w, screen.h, screen.x, screen.y)
+            } else {
+                format!("{:.0}x{:.0}, hidden", screen.w, screen.h)
+            };
+            card.append(&row(&screen.name, &where_, remove.upcast()));
             separator(&card);
         }
     }
@@ -205,6 +206,16 @@ fn virtual_card(state: &Rc<App>, screens: &[Screen]) -> gtk::Widget {
 
     separator(&card);
 
+    let placeable = gtk::Switch::builder().valign(Align::Center).active(true).build();
+    card.append(&row(
+        "Placeable",
+        "On, it sits beside your real monitors and the pointer can walk onto it. Off, \
+         it is hidden and only a keybind or zen msg can reach it",
+        placeable.clone().upcast(),
+    ));
+
+    separator(&card);
+
     let create = gtk::Button::builder()
         .label("Create")
         .valign(Align::Center)
@@ -216,6 +227,7 @@ fn virtual_card(state: &Rc<App>, screens: &[Screen]) -> gtk::Widget {
         let width = width.clone();
         let height = height.clone();
         let refresh = refresh.clone();
+        let placeable = placeable.clone();
         create.connect_clicked(move |_| {
             let chosen = name.text().trim().to_owned();
             if chosen.is_empty() {
@@ -223,20 +235,20 @@ fn virtual_card(state: &Rc<App>, screens: &[Screen]) -> gtk::Widget {
                 return;
             }
             let mhz = (refresh.value() * 1000.).round() as i64;
-            run_output(
-                &state,
-                &chosen,
-                &[
-                    "create",
-                    "--width",
-                    &format!("{}", width.value().round() as i64),
-                    "--height",
-                    &format!("{}", height.value().round() as i64),
-                    "--refresh",
-                    &format!("{mhz}"),
-                ],
-                &format!("created {chosen}"),
-            );
+            let mut args = vec![
+                "create".to_owned(),
+                "--width".to_owned(),
+                format!("{}", width.value().round() as i64),
+                "--height".to_owned(),
+                format!("{}", height.value().round() as i64),
+                "--refresh".to_owned(),
+                format!("{mhz}"),
+            ];
+            if !placeable.is_active() {
+                args.push("--hidden".to_owned());
+            }
+            let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+            run_output(&state, &chosen, &borrowed, &format!("created {chosen}"));
         });
     }
     card.append(&row(

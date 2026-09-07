@@ -2493,6 +2493,32 @@ impl State {
             }
         }
 
+        // hidden outputs
+        if let Some(from) = self
+            .zen
+            .global_space
+            .output_under(pos)
+            .next()
+            .filter(|o| !self.zen.is_hidden_output(o))
+            .and_then(|o| self.zen.global_space.output_geometry(o))
+        {
+            let onto_hidden = self
+                .zen
+                .global_space
+                .output_under(new_pos)
+                .next()
+                .is_some_and(|o| self.zen.is_hidden_output(o));
+
+            if onto_hidden {
+                new_pos.x = new_pos
+                    .x
+                    .clamp(from.loc.x as f64, (from.loc.x + from.size.w - 1) as f64);
+                new_pos.y = new_pos
+                    .y
+                    .clamp(from.loc.y as f64, (from.loc.y + from.size.h - 1) as f64);
+            }
+        }
+
         let breakthrough = self.zen.config.borrow().input.monitor_breakthrough;
         if breakthrough > 0. {
             let from = self
