@@ -871,6 +871,7 @@ install_zen() {
     $SUDO install -Dm755 resources/zen-wallpaper    "$PREFIX/bin/zen-wallpaper"
     $SUDO install -Dm755 resources/zen-lock         "$PREFIX/bin/zen-lock"
     $SUDO install -Dm755 resources/zen-power        "$PREFIX/bin/zen-power"
+    $SUDO install -Dm755 resources/zen-ly           "$PREFIX/bin/zen-ly"
     $SUDO install -Dm644 resources/default-wallpaper.jpg \
                                                     "$PREFIX/share/zen/default-wallpaper.jpg"
     for wp in resources/wallpapers/*; do
@@ -1241,14 +1242,80 @@ EXTRA_APPS="firefox nautilus mako"
 GREETER_PKGS="greetd cage greetd-regreet"
 GREETER_LY_PKGS="ly"
 
-pacman_install() {
-    [ "$PKG_MGR" = pacman ] || {
-        warn "only pacman is supported for this step; install these yourself: $*"
+# Install packages with whatever this machine actually uses.
+#
+# The names come in as Arch names because that is what ZEN is developed on, and
+# translated per manager on the way out. Anything with no translation is passed through,
+# which is right far more often than not: alacritty, fuzzel, waybar, mako, swaybg and
+# most of the rest are called the same thing everywhere.
+pkg_install() {
+    [ "$PKG_MGR" != unknown ] || {
+        warn "unrecognized distribution; install these yourself: $*"
         return 1
     }
+
+    local translated="" pkg
+    for pkg in "$@"; do
+        translated="$translated $(app_package_for "$PKG_MGR" "$pkg")"
+    done
+    # shellcheck disable=SC2086
+    set -- $translated
+    [ $# -gt 0 ] || return 0
+
     need_root
-    $SUDO pacman -S --needed --noconfirm "$@"
+    local y=""; [ "$ASSUME_YES" = 1 ] && y=1
+
+    case "$PKG_MGR" in
+        pacman) $SUDO pacman -S --needed ${y:+--noconfirm} "$@" ;;
+        apt)    $SUDO apt-get update && $SUDO apt-get install ${y:+-y} "$@" ;;
+        dnf)    $SUDO dnf install ${y:+-y} "$@" ;;
+        apk)    $SUDO apk add "$@" ;;
+        zypper) $SUDO zypper install ${y:+-y} "$@" ;;
+    esac
 }
+
+# The handful of desktop packages whose name is not the same everywhere. Everything not
+# listed keeps the name it came in with.
+app_package_for() {
+    local mgr="$1" pkg="$2"
+    case "$mgr" in
+    apt) case "$pkg" in
+        xdg-utils) echo xdg-utils ;;
+        wireplumber) echo wireplumber ;;
+        ttf-dejavu) echo fonts-dejavu-core ;;
+        noto-fonts-emoji) echo fonts-noto-color-emoji ;;
+        xorg-xwayland) echo xwayland ;;
+        greetd-regreet) echo "" ;;
+        *) echo "$pkg" ;;
+        esac ;;
+    dnf) case "$pkg" in
+        ttf-dejavu) echo dejavu-sans-fonts ;;
+        noto-fonts-emoji) echo google-noto-emoji-color-fonts ;;
+        xorg-xwayland) echo xorg-x11-server-Xwayland ;;
+        greetd-regreet) echo "" ;;
+        *) echo "$pkg" ;;
+        esac ;;
+    apk) case "$pkg" in
+        ttf-dejavu) echo font-dejavu ;;
+        noto-fonts-emoji) echo font-noto-emoji ;;
+        xorg-xwayland) echo xwayland ;;
+        greetd-regreet) echo "" ;;
+        *) echo "$pkg" ;;
+        esac ;;
+    zypper) case "$pkg" in
+        ttf-dejavu) echo dejavu-fonts ;;
+        noto-fonts-emoji) echo noto-coloremoji-fonts ;;
+        xorg-xwayland) echo xwayland ;;
+        greetd-regreet) echo "" ;;
+        *) echo "$pkg" ;;
+        esac ;;
+    *) echo "$pkg" ;;
+    esac
+}
+
+# Kept as a name because the greeter steps read better with it, and because a reader
+# looking for the old one should find it rather than conclude it was dropped.
+pacman_install() { pkg_install "$@"; }
 
 install_desktop_apps() {
     step "Installing what the keybinds expect"

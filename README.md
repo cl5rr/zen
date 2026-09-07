@@ -48,26 +48,37 @@ per-output virtual monitors.
   arithmetic.
 - **Camera-maximize.** `Mod+Shift+M` frames a window without resizing it. No
   configure is sent, so `stty size` does not change and you can pan away instantly.
-- **The map.** Pull the camera back past `map-zoom` and islands draw as bubbles.
-  It is a zoom level, not a mode, so there is no state to get stuck in.
+- **The map.** `Mod+O` pulls back to a dark ground where each island is a bubble
+  of the icons of what is open in it, gathered into a cluster rather than left at
+  desktop positions. Click a bubble to travel there. It is a zoom level, not a
+  mode, so there is nothing to get stuck in.
 - **Glass.** A real material: blurred and saturation-lifted backdrop, squircle
   corners, a specular rim, and refraction that bends the backdrop at the edge and
   leaves the middle alone.
-- **A settings app** on `Mod+,` covering the material, windows, camera, input,
-  monitors, keybinds, startup commands and wallpapers.
-- **Wallpapers.** Drop images in a folder; that folder is the whole configuration.
+- **A settings app** on `Mod+,`: material, windows, camera, input, monitors,
+  keybinds (searchable, and rebound by pressing the keys), startup commands, the
+  status bar, the login screen, and wallpapers.
+- **A status bar.** ZEN hosts waybar rather than drawing one, ships a theme for
+  it, and exports `NIRI_SOCKET` alongside `ZEN_SOCKET` so its workspace and window
+  modules work with no plugin. Settings picks which pills show and how they look.
+- **Wallpapers.** Drop images or video in a folder; that folder is the whole
+  configuration. Video wallpapers get a volume control.
+- **A lock screen** that blurs the live session where swaylock-effects is
+  installed, with an idle timer that also locks before suspend.
 
 ## What does not work yet
 
 - **Virtual monitors are experimental.** They can be created and destroyed at
-  runtime and they render offscreen, but nothing consumes that texture yet and
-  the per-window visibility mask is not built. Treat them as a foundation.
+  runtime, they are listed over the IPC, and they render offscreen, but nothing
+  consumes that texture yet and the per-window visibility mask is not built.
+  There is no way to place one beside a real monitor and walk the pointer onto it.
 - **Canvas widgets** are not started.
 - **The workspace grid** is still underneath the canvas. It is invisible now, but
   it has not been retired, and it is why some layout code has more cases than the
   model needs.
-- **Only tested on one machine.** Multi-GPU, fractional scaling and unusual
-  hardware are unexplored.
+- **Tested on one machine.** Multi-GPU, fractional scaling and unusual hardware
+  are unexplored. Multi-monitor behaviour is written and reasoned about but has
+  never run on two physical outputs.
 
 ## Keybinds
 
@@ -86,7 +97,7 @@ The camera is the point of ZEN, so these matter most.
 | `Mod+Alt+arrows` | Pan the camera |
 | `Mod+middle-drag` | Pan with the mouse |
 | `Mod+Alt+wheel`, `Mod+Ctrl+±` | Zoom about the pointer |
-| `Mod+O` | Overview |
+| `Mod+O` | The map: islands as bubbles of app icons, click one to travel |
 
 ### Windows
 
@@ -124,6 +135,7 @@ Clusters that tile internally and move as one.
 | `Mod+Shift+W` | Pick a wallpaper |
 | `Mod+Ctrl+W` | Next wallpaper |
 | `Print` | Screenshot |
+| `Mod+Shift+Escape` | Lock the screen |
 | `Mod+Shift+/` | Show every binding, live from your config |
 
 ## Settings
@@ -188,6 +200,30 @@ zen-wallpaper set ~/pictures/thing.jpg
 
 Needs `swaybg`, which `./setup.sh` offers to install. A wallpaper ships with ZEN
 and is seeded into that folder on first install.
+
+## Distributions
+
+ZEN is developed on Arch and daily-driven there. Nothing in it is Arch-specific:
+
+- `./setup.sh` detects pacman, apt, dnf, apk and zypper, and translates package
+  names per manager. Anything it cannot recognise it names and asks you to install.
+- `./setup.sh --check` prints exactly what is missing and why it matters, without
+  changing anything. Run it first on a distribution nobody has tried yet.
+- The compositor itself needs the same libraries everywhere: wayland, libinput,
+  libxkbcommon, mesa, libseat, libdisplay-info, pango and dbus, plus pipewire for
+  screen sharing.
+
+The parts that are not the compositor are ordinary packages you may already have:
+alacritty, fuzzel, swaybg, swaylock, swayidle, waybar, mako, wl-clipboard. Swap any
+of them for what you prefer; they are named in your config, not compiled in.
+
+Two things are worth knowing on any distribution:
+
+- **`xwayland-satellite` is what gives you an X server.** ZEN does not run Xwayland
+  directly. Without that binary there is no `$DISPLAY` and every X11 app fails.
+- **A portal backend is separate from the portal.** `xdg-desktop-portal` on its own
+  answers nothing, so file pickers never open and screen sharing hangs on an empty
+  chooser. Install `xdg-desktop-portal-gtk` or `-gnome` as well.
 
 ## Building
 

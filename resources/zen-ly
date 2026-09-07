@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+#
+# ZEN's helper for Ly, the TTY login manager.
+#
+#   zen-ly get                 print the current config as key=value lines
+#   zen-ly set KEY=VALUE ...   change settings (needs root; run it under pkexec)
+#   zen-ly path                print the config file being used
+#   zen-ly theme               apply ZEN's colours
+#
+# Ly's config lives in /etc, owned by root, so the settings app cannot write it
+# directly. It shells out to `pkexec zen-ly set ...` instead, and this script is the
+# only thing that runs privileged: it takes key=value pairs, refuses anything not on
+# the known list, and rewrites the file in place keeping every comment.
+#
+# Refusing unknown keys matters. This runs as root from a desktop app, so the smallest
+# useful surface is the right one.
+
+set -u
+
+CONFIG="${ZEN_LY_CONFIG:-/etc/ly/config.ini}"
+
+die() { printf 'zen-ly: %s\n' "$*" >&2; exit 1; }
+
+# Everything the settings page offers, and nothing else.
+ALLOWED="animation animate asterisk bg fg border_fg hide_borders blank_box clock \
+box_title clear_password lang load save numlock tty vi_mode brightness_down_cmd \
+brightness_up_cmd session_log path"
+
+is_allowed() {
+    local key="$1" allowed
+    for allowed in $ALLOWED; do
+        [ "$key" = "$allowed" ] && return 0
+    done
+    return 1
+}
+
+get() {
+    [ -r "$CONFIG" ] || die "cannot read $CONFIG"
+    # Ly's format is key = value with # comments. Only the settable keys are printed,
+    # so the caller does not have to know which of them it may touch.
+    while IFS= read -r line; do
+        case "$line" in
+            \#*|"") continue ;;
+        esac
+        local key value
+        key="${line%%=*}"
+        value="${line#*=}"
+        key="$(printf '%s' "$key" | tr -d '[:space:]')"
+        value="$(printf '%s' "$value" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+        is_allowed "$key" && printf '%s=%s\n' "$key" "$value"
+    done < "$CONFIG"
+}
+
+set_keys() {
+    [ "$(id -u)" -eq 0 ] || die "setting needs root: run it as pkexec zen-ly set ..."
+    [ -w "$CONFIG" ] || die "cannot write $CONFIG"
+    [ $# -gt 0 ] || die "nothing to set"
+
+    local tmp; tmp=$(mktemp) || die "no temp file"
+    cp "$CONFIG" "$tmp" || die "could not copy $CONFIG"
+
+    local pair key value
+    for pair in "$@"; do
+        case "$pair" in
+            *=*) ;;
+            *) die "expected key=value, got: $pair" ;;
+        esac
+        key="${pair%%=*}"
+        value="${pair#*=}"
+
+        is_allowed "$key" || die "refusing to set unknown key: $key"
+        case "$value" in
+            *$'\n'*) die "a value cannot contain a newline" ;;
+        esac
+
+        if grep -qE "^[[:space:]]*#?[[:space:]]*$key[[:space:]]*=" "$tmp"; then
+            # Rewritten in place, so the comment above each key stays where it is and
+            # a commented-out key gets uncommented rather than duplicated.
+            sed -i -E "0,/^[[:space:]]*#?[[:space:]]*$key[[:space:]]*=.*/s||$key = $value|" "$tmp"
+        else
+            printf '%s = %s\n' "$key" "$value" >> "$tmp"
+        fi
+    done
+
+    # Swapped in only once every key applied, so a bad value never leaves a login
+    # manager half-configured on a machine whose only way in is that login manager.
+    cat "$tmp" > "$CONFIG" || die "could not write $CONFIG"
+    rm -f "$tmp"
+}
+
+theme() {
+    # Ly takes ncurses colour numbers, not hex, so this is the nearest thing to ZEN's
+    # palette that its renderer can express.
+    set_keys \
+        animation=matrix \
+        bg=0 \
+        fg=15 \
+        border_fg=4 \
+        blank_box=true \
+        clock="%H:%M" \
+        box_title=ZEN \
+        clear_password=true \
+        numlock=true
+}
+
+case "${1:-get}" in
+    get)   get ;;
+    path)  printf '%s\n' "$CONFIG" ;;
+    theme) theme ;;
+    set)   shift; set_keys "$@" ;;
+    -h|--help|help)
+           sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *)     die "unknown command: $1 (try --help)" ;;
+esac

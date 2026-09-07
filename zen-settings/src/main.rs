@@ -1,5 +1,6 @@
 mod bar;
 mod config;
+mod greeter;
 mod lists;
 mod monitors;
 mod spec;
@@ -115,6 +116,7 @@ fn build(app: &adw::Application) {
     stack.add_named(&lists::binds_page(&state), Some("Keybinds"));
     stack.add_named(&lists::startup_page(&state), Some("Startup apps"));
     stack.add_named(&bar::page(&state), Some("Status bar"));
+    stack.add_named(&greeter::page(&state), Some("Login screen"));
     stack.add_named(&wallpaper::page(&state), Some("Wallpaper"));
 
     let sidebar = build_sidebar(&stack);
@@ -168,6 +170,7 @@ fn build_sidebar(stack: &gtk::Stack) -> gtk::Widget {
     names.push("Keybinds");
     names.push("Startup apps");
     names.push("Status bar");
+    names.push("Login screen");
     names.push("Wallpaper");
 
     for name in &names {
