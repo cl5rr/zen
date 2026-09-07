@@ -7,7 +7,7 @@ use adw::prelude::*;
 use gtk::{Align, Orientation};
 
 use crate::monitors::{row, separator};
-use crate::require::{self, Need};
+use crate::require::{self, Need, Probe};
 use crate::App;
 
 const NEEDS: &[Need] = &[
@@ -15,11 +15,18 @@ const NEEDS: &[Need] = &[
         command: "ly",
         what: "the login manager this page configures",
         package: "ly",
+        probe: Probe::AnyFile(&[
+            "/etc/ly/config.ini",
+            "/usr/bin/ly",
+            "/usr/lib/systemd/system/ly.service",
+            "/usr/lib/systemd/system/ly@.service",
+        ]),
     },
     Need {
         command: "pkexec",
         what: "how a desktop app is allowed to write /etc",
         package: "polkit",
+        probe: Probe::OnPath,
     },
 ];
 

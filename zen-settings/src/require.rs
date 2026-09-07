@@ -5,10 +5,25 @@ pub struct Need {
     pub command: &'static str,
     pub what: &'static str,
     pub package: &'static str,
+    pub probe: Probe,
+}
+
+pub enum Probe {
+    OnPath,
+    AnyFile(&'static [&'static str]),
+}
+
+pub fn present(need: &Need) -> bool {
+    match need.probe {
+        Probe::OnPath => have(need.command),
+        Probe::AnyFile(paths) => {
+            have(need.command) || paths.iter().any(|p| std::path::Path::new(p).exists())
+        }
+    }
 }
 
 pub fn missing(needs: &[Need]) -> Vec<&Need> {
-    needs.iter().filter(|n| !have(n.command)).collect()
+    needs.iter().filter(|n| !present(n)).collect()
 }
 
 pub fn have(command: &str) -> bool {
@@ -111,16 +126,40 @@ mod tests {
                 command: "sh",
                 what: "a shell",
                 package: "bash",
+                probe: Probe::OnPath,
             },
             Need {
                 command: "zen-definitely-not-a-real-command",
                 what: "nothing",
                 package: "nothing",
+                probe: Probe::OnPath,
             },
         ];
         let gone = missing(&needs);
         assert_eq!(gone.len(), 1);
         assert_eq!(gone[0].command, "zen-definitely-not-a-real-command");
+    }
+
+    #[test]
+    fn a_file_probe_finds_what_a_path_probe_cannot() {
+        let need = Need {
+            command: "zen-definitely-not-a-real-command",
+            what: "something installed as a service",
+            package: "nothing",
+            probe: Probe::AnyFile(&["/etc/passwd"]),
+        };
+        assert!(present(&need), "an existing file should count as installed");
+    }
+
+    #[test]
+    fn a_file_probe_still_reports_a_genuine_absence() {
+        let need = Need {
+            command: "zen-definitely-not-a-real-command",
+            what: "nothing",
+            package: "nothing",
+            probe: Probe::AnyFile(&["/definitely/not/here"]),
+        };
+        assert!(!present(&need));
     }
 
     #[test]

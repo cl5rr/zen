@@ -8,16 +8,18 @@ use gtk::{Align, Orientation};
 use serde_json::{Map, Value};
 
 use crate::monitors::{row, separator};
-use crate::require::{self, Need};
+use crate::require::{self, Need, Probe};
 use crate::App;
 
 const NEEDS: &[Need] = &[Need {
     command: "waybar",
     what: "the bar itself. ZEN hosts it rather than drawing one",
     package: "waybar",
+    probe: Probe::OnPath,
 }];
 
 const CONFIG: &str = "waybar/config.jsonc";
+const MODULES: &str = "~/.config/waybar/zen-modules.jsonc";
 
 const WAYBAR_RULE: &str = "layer-rule@namespace=waybar";
 
@@ -348,12 +350,13 @@ fn bar_card(state: &Rc<App>, doc: &Rc<RefCell<Map<String, Value>>>) -> gtk::Widg
             save(&state, &doc);
         });
     }
-    card.append(&row(
+    let reserve_row = row(
         "Reserve its space",
         "On, windows stop short of the bar. Off, it floats over them and nothing is \
          cut down to make room",
         reserve.upcast(),
-    ));
+    );
+    card.append(&reserve_row);
 
     separator(&card);
 
@@ -366,9 +369,9 @@ fn bar_card(state: &Rc<App>, doc: &Rc<RefCell<Map<String, Value>>>) -> gtk::Widg
     let mode = gtk::DropDown::builder()
         .model(&gtk::StringList::new(&[
             "Always visible",
-            "Hover to show",
+            "Hidden until Mod+B",
             "Over fullscreen too",
-            "Hidden",
+            "Invisible but still there",
         ]))
         .selected(MODES.iter().position(|m| *m == current_mode).unwrap_or(0) as u32)
         .valign(Align::Center)
@@ -380,15 +383,22 @@ fn bar_card(state: &Rc<App>, doc: &Rc<RefCell<Map<String, Value>>>) -> gtk::Widg
             let Some(picked) = MODES.get(d.selected() as usize) else {
                 return;
             };
-            doc.borrow_mut()
-                .insert("mode".into(), Value::String((*picked).into()));
+            {
+                let mut doc = doc.borrow_mut();
+                doc.insert("mode".into(), Value::String((*picked).into()));
+                if *picked != "dock" {
+                    doc.remove("exclusive");
+                    doc.remove("layer");
+                }
+            }
             save(&state, &doc);
         });
     }
     card.append(&row(
         "When to show it",
-        "Hover to show keeps it out of the way until the pointer reaches the edge",
-        mode.upcast(),
+        "waybar cannot reveal itself on hover, so hiding it is a toggle: Mod+B. \
+         Anything but Always visible makes waybar decide the two settings below",
+        mode.clone().upcast(),
     ));
 
     separator(&card);
@@ -420,11 +430,31 @@ fn bar_card(state: &Rc<App>, doc: &Rc<RefCell<Map<String, Value>>>) -> gtk::Widg
             save(&state, &doc);
         });
     }
-    card.append(&row(
+    let layer_row = row(
         "Stacking",
         "Where the bar sits against windows",
         layer.upcast(),
-    ));
+    );
+    card.append(&layer_row);
+
+    let follow_mode = {
+        let reserve_row = reserve_row.clone();
+        let layer_row = layer_row.clone();
+        move |picked: &str| {
+            let owned = picked == "dock";
+            reserve_row.set_sensitive(owned);
+            layer_row.set_sensitive(owned);
+        }
+    };
+    follow_mode(&current_mode);
+    {
+        let follow_mode = follow_mode.clone();
+        mode.connect_selected_notify(move |d| {
+            if let Some(picked) = MODES.get(d.selected() as usize) {
+                follow_mode(picked);
+            }
+        });
+    }
 
     card.upcast()
 }
@@ -622,6 +652,13 @@ fn set_shown(doc: &mut Map<String, Value>, pill: &Pill, on: bool) {
 }
 
 fn save(state: &Rc<App>, doc: &Rc<RefCell<Map<String, Value>>>) {
+    if !doc.borrow().contains_key("include") {
+        doc.borrow_mut().insert(
+            "include".into(),
+            Value::Array(vec![Value::String(MODULES.into())]),
+        );
+    }
+
     let path = config_path();
     let text = match serde_json::to_string_pretty(&Value::Object(doc.borrow().clone())) {
         Ok(text) => text,
@@ -677,6 +714,55 @@ mod tests {
             .as_object()
             .unwrap()
             .clone()
+    }
+
+    #[test]
+    fn the_shipped_config_pulls_in_the_module_definitions() {
+        let doc = shipped();
+        let include = doc
+            .get("include")
+            .and_then(|v| v.as_array())
+            .expect("the shipped config must include the module file");
+        assert!(
+            include.iter().any(|v| v.as_str().is_some_and(|s| s.ends_with("zen-modules.jsonc"))),
+            "the include does not name zen-modules.jsonc: {include:?}"
+        );
+    }
+
+    #[test]
+    fn every_listed_module_is_defined() {
+        let doc = shipped();
+        let modules: serde_json::Value =
+            serde_json::from_str(&strip_comments(include_str!(
+                "../../resources/waybar/zen-modules.jsonc"
+            )))
+            .expect("zen-modules.jsonc must be valid JSON");
+
+        for region in [Region::Left, Region::Centre, Region::Right] {
+            for name in region_list(&doc, region) {
+                assert!(
+                    modules.get(&name).is_some(),
+                    "the bar lists {name} but nothing defines it"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_pill_the_page_offers_is_defined() {
+        let modules: serde_json::Value =
+            serde_json::from_str(&strip_comments(include_str!(
+                "../../resources/waybar/zen-modules.jsonc"
+            )))
+            .expect("zen-modules.jsonc must be valid JSON");
+
+        for pill in PILLS {
+            assert!(
+                modules.get(pill.key).is_some(),
+                "the page offers {} but nothing defines it",
+                pill.key
+            );
+        }
     }
 
     #[test]

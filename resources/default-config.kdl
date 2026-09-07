@@ -675,6 +675,12 @@ binds {
     // is installed and the blurred wallpaper otherwise.
     Mod+Shift+Escape hotkey-overlay-title="Lock the Screen" { spawn "zen-lock"; }
 
+    // waybar has no way to reveal itself when the pointer reaches the edge, so hiding
+    // the bar has to be a toggle. SIGUSR1 is what waybar listens for.
+    Mod+B hotkey-overlay-title="Show or Hide the Bar" {
+        spawn-sh "pkill -SIGUSR1 -x waybar";
+    }
+
     // Use spawn-sh to run a shell command. Do this if you need pipes, multiple commands, etc.
     // Note: the entire command goes as a single argument. It's passed verbatim to `sh -c`.
     // For example, this is a standard bind to toggle the screen reader (orca).

@@ -7,13 +7,14 @@ use adw::prelude::*;
 use gtk::{Align, Orientation};
 
 use crate::config;
-use crate::require::{self, Need};
+use crate::require::{self, Need, Probe};
 use crate::App;
 
 const NEEDS: &[Need] = &[Need {
     command: "swaybg",
     what: "what actually puts an image on the screen",
     package: "swaybg",
+    probe: Probe::OnPath,
 }];
 
 const THUMB_W: i32 = 208;

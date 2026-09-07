@@ -1263,9 +1263,9 @@ ui_multi() {
 #   core      Mod+T, Mod+Space, the wallpaper, the lock screen
 #   media     the XF86 keys: volume, brightness, play/pause
 #   apps      Mod+W, Mod+E, Mod+D and notifications
-DESKTOP_APPS="alacritty fuzzel swaybg swaylock swayidle waybar"
+DESKTOP_APPS="alacritty fuzzel swaybg swww swaylock swayidle waybar"
 MEDIA_APPS="wireplumber playerctl brightnessctl xdg-utils wl-clipboard cliphist"
-EXTRA_APPS="firefox nautilus mako"
+EXTRA_APPS="firefox nautilus mako mpvpaper pavucontrol blueman discord"
 GREETER_PKGS="greetd cage greetd-regreet"
 GREETER_LY_PKGS="ly"
 
@@ -1356,7 +1356,7 @@ install_desktop_apps() {
 
 # What the shipped keybinds spawn, as "command:package" pairs. Checked by command
 # because that is what a bind actually needs to find on PATH.
-BIND_APPS="waybar:waybar wl-copy:wl-clipboard cliphist:cliphist swayidle:swayidle alacritty:alacritty fuzzel:fuzzel swaybg:swaybg swaylock:swaylock wpctl:wireplumber playerctl:playerctl brightnessctl:brightnessctl xdg-open:xdg-utils firefox:firefox nautilus:nautilus mako:mako"
+BIND_APPS="waybar:waybar swww:swww mpvpaper:mpvpaper pavucontrol:pavucontrol blueman-manager:blueman makoctl:mako discord:discord wl-copy:wl-clipboard cliphist:cliphist swayidle:swayidle alacritty:alacritty fuzzel:fuzzel swaybg:swaybg swaylock:swaylock wpctl:wireplumber playerctl:playerctl brightnessctl:brightnessctl xdg-open:xdg-utils firefox:firefox nautilus:nautilus mako:mako"
 
 install_extra_apps() {
     step "Installing optional extras"
@@ -1445,7 +1445,9 @@ theme_bar() {
     local base="${XDG_CONFIG_HOME:-$HOME/.config}"
     theme_file "$base/waybar/config.jsonc" resources/waybar/config.jsonc "waybar"
     theme_file "$base/waybar/style.css"    resources/waybar/style.css    "the waybar style"
+    theme_file "$base/waybar/zen-modules.jsonc" resources/waybar/zen-modules.jsonc "the bar modules"
     theme_file "$base/waybar/zen-pills.css" resources/waybar/zen-pills.css "the pill fill"
+    migrate_waybar_include "$base/waybar/config.jsonc"
 }
 
 theme_lock() {
@@ -1465,6 +1467,27 @@ is_unmodified_zen_theme() {
     local have
     have=$(sha256sum < "$dst" | cut -d' ' -f1)
     grep -q "^$src $have\$" "$history"
+}
+
+# migration
+#
+# Module definitions moved into zen-modules.jsonc so that they keep updating even after
+# the settings app has rewritten config.jsonc, which it does the moment anyone toggles a
+# pill. A config written before that split has no include, so every new module ZEN ships
+# is invisible to it forever. One line is added; nothing else is touched.
+migrate_waybar_include() {
+    local dst="$1"
+    [ -f "$dst" ] || return 0
+    grep -q '"include"' "$dst" && return 0
+    grep -q '"custom/power"' "$dst" && return 0
+
+    cp "$dst" "$dst.bak" || return 0
+    if sed -i '0,/^[[:space:]]*{/s||{\n    "include": ["~/.config/waybar/zen-modules.jsonc"],|' "$dst"; then
+        ok "added the module include to $dst (kept $dst.bak)"
+    else
+        mv "$dst.bak" "$dst"
+        warn "could not add the module include to $dst; add it by hand"
+    fi
 }
 
 theme_file() {
