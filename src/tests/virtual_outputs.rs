@@ -38,17 +38,6 @@ fn a_name_that_is_taken_is_refused() {
     assert!(f.zen_state().destroy_virtual_output("never-made").is_err());
 }
 
-// The freeze, and the limits of testing it here.
-//
-// redraw_queued_outputs is a `while let` over every output still marked Queued, so an
-// output whose redraw state is never cleared does not merely spin: that loop never
-// returns, inside one dispatch, and the session stops. A virtual output has no vblank
-// to clear it, so it clears its own, and the loop now carries a bound as well.
-//
-// This checks the loop terminates and leaves the output idle. It does NOT prove the
-// pacing itself, because the fixture has no GPU: the render returns Skipped and the
-// existing Skipped branch clears the state for its own reasons. Verified by A/B, which
-// passed with the fix removed.
 #[test]
 fn redrawing_a_virtual_output_terminates() {
     use crate::state::RedrawState;
@@ -77,10 +66,6 @@ fn redrawing_a_virtual_output_terminates() {
     );
 }
 
-// The bug this catches: a virtual output was added to the layout but never to the
-// backend's IPC output map, so it was a real monitor to clients and to the compositor
-// while `zen msg outputs` denied it existed. Everything that lists monitors reads that
-// map, so the settings app could create one and then never show it.
 #[test]
 fn a_virtual_output_is_listed_over_the_ipc() {
     let mut f = Fixture::new();
@@ -106,8 +91,6 @@ fn a_virtual_output_is_listed_over_the_ipc() {
     assert!(!listed(&mut f), "destroyed but still listed");
 }
 
-// The settings page tells a virtual output from a real one by these two fields, so they
-// are load-bearing rather than decoration.
 #[test]
 fn a_virtual_output_identifies_itself_as_one() {
     let mut f = Fixture::new();

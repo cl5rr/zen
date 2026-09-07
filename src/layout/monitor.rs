@@ -49,16 +49,10 @@ const WORKSPACE_GESTURE_RUBBER_BAND: RubberBand = RubberBand {
 
 const WORKSPACE_DND_EDGE_SCROLL_MOVEMENT: f64 = 1500.;
 
-// The map is meant to be a different picture, not a smaller one: the wallpaper drops
-// away behind a scrim so the island bubbles are what the eye lands on.
-//
-// The scrim fades in across the last stretch of the zoom rather than snapping on at the
-// threshold, so pulling back by hand arrives at the same place as Mod+O.
 const MAP_SCRIM_COLOR: Color32F = Color32F::new(0.031, 0.039, 0.055, 1.);
 const MAP_SCRIM_ALPHA: f32 = 0.88;
 const MAP_SCRIM_FADE_FROM: f64 = 2.2;
 
-// Breathing room left around an island after travelling to it.
 const TRAVEL_PADDING: f64 = 64.;
 
 #[derive(Debug)]
@@ -80,8 +74,6 @@ pub struct Monitor<W: LayoutElement> {
     camera_focus: Option<(W::Id, Rectangle<f64, Logical>)>,
 
     canvas_clock: CanvasClock,
-    // The map's backdrop. Sized to the view rather than the canvas because it is a
-    // property of looking at the space, not a thing in it.
     map_scrim: SolidColorBuffer,
     pub(super) camera: Camera,
     pub(super) clock: Clock,
@@ -1336,8 +1328,6 @@ impl<W: LayoutElement> Monitor<W> {
         self.camera.animate_pan_to(pan, config);
     }
 
-    // The inverse of the mapping fit_camera_to builds, so a click in the view resolves
-    // to the workspace point the render actually put under the pointer.
     pub fn view_to_workspace(&self, view: Point<f64, Logical>) -> Point<f64, Logical> {
         let zoom = self.camera.zoom();
         if zoom <= 0. {
@@ -1348,8 +1338,6 @@ impl<W: LayoutElement> Monitor<W> {
         (view - self.camera.pan_offset_view() - static_offset).downscale(zoom)
     }
 
-    // Capped at 1:1 so travelling to a small island frames it without magnifying it
-    // into a wall of pixels.
     pub fn travel_to(&mut self, rect: Rectangle<f64, Logical>, config: zen_config::Animation) {
         self.clear_camera_focus();
         self.fit_camera_to(rect, TRAVEL_PADDING, 1., config);
@@ -1751,10 +1739,6 @@ impl<W: LayoutElement> Monitor<W> {
         (InsertWorkspace::NewAt(last_idx + 1), dummy)
     }
 
-    // The layout keeps a spare empty workspace at the end so a window can be dragged
-    // into a new one. On the canvas there is nothing to switch between, so drawing it
-    // just puts a permanently blank page under the overview. Rendering skips it; the
-    // layout still has it, because switching and window-moving are built on it.
     pub fn is_spare_workspace(&self, ws: &Workspace<W>) -> bool {
         self.options.camera.open_on_canvas
             && !ws.has_windows_or_name()
@@ -1919,9 +1903,6 @@ impl<W: LayoutElement> Monitor<W> {
             }
         }
 
-        // Pushed last, so it lands behind every window and in front of the wallpaper.
-        // Not run through scale_relocate: the scrim covers the view, and scaling it with
-        // the canvas would shrink it away from the edges exactly when it is needed.
         let darkness = self.map_darkness();
         if darkness > 0. {
             let elem = SolidColorRenderElement::from_buffer(
@@ -1942,8 +1923,6 @@ impl<W: LayoutElement> Monitor<W> {
         }
     }
 
-    // How dark the map backdrop is, from the camera alone, so that pulling back with a
-    // gesture arrives at the same picture as the bind rather than a different one.
     pub fn camera_zoom(&self) -> f64 {
         self.camera.zoom()
     }
@@ -1969,7 +1948,6 @@ impl<W: LayoutElement> Monitor<W> {
         }
 
         let t = ((from - zoom) / (from - threshold)).clamp(0., 1.);
-        // Eased so the backdrop is barely there until the pull-back is committed.
         (t * t) as f32 * MAP_SCRIM_ALPHA
     }
 

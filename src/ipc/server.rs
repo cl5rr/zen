@@ -383,8 +383,6 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
         Request::Output { output, action } => {
             action.validate()?;
 
-            // Creating and destroying are not config changes: there is no connector to
-            // reconfigure, the output itself comes and goes.
             if let zen_ipc::OutputAction::Create {
                 width,
                 height,

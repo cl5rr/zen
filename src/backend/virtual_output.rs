@@ -16,12 +16,6 @@ use crate::render_helpers::{RenderCtx, RenderTarget};
 use crate::state::Zen;
 use crate::utils::get_monotonic_time;
 
-// A display with no display behind it.
-//
-// It owns an Output like any other, so the layout, the IPC and the settings app all
-// treat it as a monitor without knowing the difference. What it does not have is a
-// CRTC, so rendering goes to a texture instead of a screen and presentation is
-// reported against the clock rather than a vblank.
 pub struct VirtualOutput {
     pub output: Output,
     pub id: OutputId,
@@ -76,9 +70,6 @@ impl VirtualOutput {
         Duration::from_secs_f64(1000. / f64::from(refresh))
     }
 
-    // Same passes a real output goes through, drawn into a texture. Nothing is
-    // submitted anywhere; a consumer reads the texture, and if there is none the work
-    // still has to happen so clients keep getting frame callbacks.
     pub fn render(&mut self, zen: &mut Zen, renderer: &mut GlesRenderer) -> RenderResult {
         let ctx = RenderCtx {
             renderer,

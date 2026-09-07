@@ -1,13 +1,6 @@
 use adw::prelude::*;
 use gtk::{Align, Orientation};
 
-// What a page needs before its controls mean anything.
-//
-// A settings page for something you have not installed used to be an empty page with
-// one line of prose, which tells you nothing about what the page would have offered.
-// Instead the controls stay on screen and go insensitive, with a banner above them
-// naming exactly what to install. You can see what you would get, and you cannot
-// change something that is not there.
 pub struct Need {
     pub command: &'static str,
     pub what: &'static str,
@@ -19,7 +12,6 @@ pub fn missing(needs: &[Need]) -> Vec<&Need> {
 }
 
 pub fn have(command: &str) -> bool {
-    // PATH is what actually decides whether a spawn works, so it is what gets asked.
     std::env::var_os("PATH")
         .map(|paths| {
             std::env::split_paths(&paths).any(|dir| {
@@ -30,7 +22,6 @@ pub fn have(command: &str) -> bool {
         .unwrap_or(false)
 }
 
-// The banner, or None when nothing is missing.
 pub fn banner(missing: &[&Need]) -> Option<gtk::Widget> {
     if missing.is_empty() {
         return None;
@@ -55,7 +46,7 @@ pub fn banner(missing: &[&Need]) -> Option<gtk::Widget> {
     for need in missing {
         card.append(
             &gtk::Label::builder()
-                .label(format!("{} — {}", need.command, need.what))
+                .label(format!("{}: {}", need.command, need.what))
                 .halign(Align::Start)
                 .xalign(0.)
                 .wrap(true)
@@ -64,8 +55,6 @@ pub fn banner(missing: &[&Need]) -> Option<gtk::Widget> {
         );
     }
 
-    // One line to paste. Selectable, because the alternative is retyping it from a
-    // screenshot of your own settings app.
     let packages: Vec<&str> = missing.iter().map(|n| n.package).collect();
     let command = gtk::Label::builder()
         .label(format!("sudo pacman -S {}", packages.join(" ")))
@@ -91,17 +80,12 @@ pub fn banner(missing: &[&Need]) -> Option<gtk::Widget> {
     Some(card.upcast())
 }
 
-// Puts the banner at the top of a page and greys out everything that follows.
-//
-// Returns whether anything was missing, so a caller that also wants to skip work can
-// ask without checking twice.
 pub fn guard(column: &gtk::Box, body: &gtk::Widget, needs: &[Need]) -> bool {
     let missing = missing(needs);
     if let Some(banner) = banner(&missing) {
         column.append(&banner);
     }
 
-    // Insensitive rather than hidden: the point is to show what the page would do.
     body.set_sensitive(missing.is_empty());
     !missing.is_empty()
 }

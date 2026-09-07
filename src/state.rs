@@ -310,7 +310,6 @@ pub struct Zen {
     pub pointer_inactivity_timer_got_reset: bool,
     pub notified_activity_this_iteration: bool,
     pub pointer_inside_hot_corner: bool,
-    // Motion pushed into a shared monitor edge that has not yet been enough to cross.
     pub pointer_edge_pressure: f64,
     pub pointer_constraint_position_hint: Option<Point<f64, Logical>>,
     pub tablet_cursor_location: Option<Point<f64, Logical>>,
@@ -1723,9 +1722,6 @@ impl State {
         self.reload_output_config();
     }
 
-    // Virtual outputs live on State rather than Zen because creating one has to touch
-    // both: the layout, so windows can go there, and the backend's IPC output map, so
-    // anything that lists monitors can see it.
     pub fn create_virtual_output(
         &mut self,
         name: &str,
@@ -1745,9 +1741,6 @@ impl State {
         let interval = virtual_output.refresh_interval();
         let id = virtual_output.id;
 
-        // Without this the output is real to the compositor and to clients, but
-        // `zen msg outputs` never mentions it, so the settings app and every other
-        // tool that lists monitors is blind to it.
         self.backend.ipc_outputs().lock().unwrap().insert(
             id,
             zen_ipc::Output {
@@ -3470,9 +3463,6 @@ impl Zen {
     pub fn redraw_queued_outputs(&mut self, backend: &mut Backend) {
         let _span = tracy_client::span!("Zen::redraw_queued_outputs");
 
-        // An output whose redraw leaves it Queued would spin this loop forever, inside
-        // one dispatch, taking the session with it. Any output can only legitimately be
-        // drawn once per pass, so the count is the bound.
         let mut budget = self.output_state.len() + 1;
 
         while let Some((output, _)) = self.output_state.iter().find(|(_, state)| {
@@ -4155,10 +4145,6 @@ impl Zen {
                 }};
             }
 
-            // The per-workspace path draws one copy of the wallpaper inside each
-            // workspace rect, which is what the overview grid wants. Outside the
-            // overview those rects live in canvas space, so following them would drag
-            // the wallpaper around as the camera pans.
             let in_overview = mon.in_overview();
 
             if in_overview {
@@ -6152,8 +6138,6 @@ impl Zen {
         self.virtual_outputs.contains_key(&output.name())
     }
 
-    // Taken out of the map for the duration of the render, because it borrows the very
-    // state it is drawing.
     pub fn render_virtual_output(
         &mut self,
         backend: &mut Backend,
@@ -6170,9 +6154,6 @@ impl Zen {
         let interval = virtual_output.refresh_interval();
         self.virtual_outputs.insert(output.name(), virtual_output);
 
-        // Nothing will ever report a vblank for this output, so it has to pace itself.
-        // Leaving redraw_state at Queued spins the whole loop at full speed, which
-        // takes the session down with it.
         let state = self.output_state.get_mut(output).unwrap();
         state.redraw_state = RedrawState::Idle;
         state.frame_callback_sequence = state.frame_callback_sequence.wrapping_add(1);
@@ -6191,6 +6172,5 @@ impl Zen {
 
         result
     }
-
 
 }

@@ -78,9 +78,6 @@ impl Camera {
         self.view_size
     }
 
-    // The workspace is drawn centred in the view, so a zoom of z leaves this much space
-    // on each side. It is a function of zoom, which is why it cannot be left out of
-    // anything that has to hold a point still while the zoom changes.
     fn centring_offset(&self, zoom: f64) -> Point<f64, Logical> {
         Point::from((
             self.view_size.w * (1. - zoom) / 2.,
@@ -137,17 +134,12 @@ impl Camera {
         self.zoom = self.clamp_zoom(zoom);
     }
 
-    // A wheel notch is a target, not a jump. The pan is not animated alongside the
-    // zoom: it is recomputed from the live zoom every frame, which is what holds the
-    // point under the pointer still all the way through rather than only at the ends.
     pub fn zoom_about(
         &mut self,
         view_anchor: Point<f64, Logical>,
         factor: f64,
         config: zen_config::Animation,
     ) {
-        // Zooming while the canvas is already moving is nearly always a slipped
-        // finger, so a notch counts for much less then.
         let factor = if self.drive.is_some() {
             factor.powf(ZOOM_WHILE_PANNING)
         } else {
@@ -281,8 +273,6 @@ impl Camera {
 
         let rect_center = rect.loc + Point::from((rect.size.w / 2., rect.size.h / 2.));
         let view_center = Point::from((self.view_size.w / 2., self.view_size.h / 2.));
-        // Same centring offset the render applies, so framing lands the rect where it
-        // was asked to rather than half a viewport away from it.
         let pan = view_center - rect_center.upscale(zoom) - self.centring_offset(zoom);
 
         self.animate_zoom_to(zoom, config);
@@ -311,15 +301,6 @@ impl Camera {
             let done = anim.is_done();
             let next = if done { anim.to() } else { anim.value() };
 
-            // Correct the pan by the zoom *change*, reading the pan as it stands after
-            // the drive has already moved it this frame. Assigning it outright would
-            // hold the anchor but silently undo panning for the length of the zoom.
-            //
-            // The centring offset has to be in this arithmetic. The workspace is drawn
-            // centred in the view, and that offset is a function of the zoom, so a
-            // correction that used pan alone left the point under the cursor drifting
-            // by half the view's change in size: the zoom looked like it came from the
-            // middle of the screen rather than from the pointer.
             if let Some(view_anchor) = self.zoom_anchor {
                 let under = self.view_to_content_at(view_anchor, self.zoom, self.pan);
                 self.pan = view_anchor - under.upscale(next) - self.centring_offset(next);
@@ -415,9 +396,6 @@ mod tests {
         let mut clock = Clock::with_time(Duration::ZERO);
         let config = zen_config::animations::OverviewOpenCloseAnim::default().0;
 
-        // The clock is shared and only ever moves forward: rewinding it for each
-        // anchor would put the spring before its own start time and it would sit
-        // still, which looks exactly like a broken animation.
         let mut now = 0u64;
 
         for anchor in [(0., 0.), (640., 360.), (1279., 719.), (200., 500.)] {

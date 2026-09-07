@@ -23,10 +23,6 @@ pub struct Screen {
     pub is_virtual: bool,
 }
 
-// discovery
-//
-// Read from the running compositor rather than the config: the config only holds
-// what someone overrode, and a monitor you have never configured is not in it at all.
 fn detect() -> Vec<Screen> {
     let Ok(out) = Command::new("zen").args(["msg", "--json", "outputs"]).output() else {
         return Vec::new();
@@ -68,8 +64,6 @@ fn detect() -> Vec<Screen> {
                 w: logical["width"].as_f64().unwrap_or(1920.),
                 h: logical["height"].as_f64().unwrap_or(1080.),
                 scale: logical["scale"].as_f64().unwrap_or(1.),
-                // VirtualOutput stamps these on the Output it makes, and nothing else
-                // reports itself this way, so it is how a headless one is recognised.
                 is_virtual: o["make"].as_str() == Some("ZEN")
                     && o["model"].as_str() == Some("Virtual"),
             }
@@ -150,9 +144,6 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
     scrolled(&column)
 }
 
-// A display with no cable behind it. Made and destroyed over IPC rather than written to
-// the config, because it exists only for as long as the session does: there is nothing
-// to restore on the next boot, and a config entry would promise otherwise.
 fn virtual_card(state: &Rc<App>, screens: &[Screen]) -> gtk::Widget {
     let card = gtk::Box::new(Orientation::Vertical, 0);
     card.add_css_class("card");
@@ -231,7 +222,6 @@ fn virtual_card(state: &Rc<App>, screens: &[Screen]) -> gtk::Widget {
                 state.say("give it a name first", "bad");
                 return;
             }
-            // The IPC takes millihertz, which is what every mode in ZEN is measured in.
             let mhz = (refresh.value() * 1000.).round() as i64;
             run_output(
                 &state,
@@ -379,8 +369,6 @@ fn arrangement(state: &Rc<App>, placed: &Rc<RefCell<Vec<Screen>>>) -> gtk::Widge
                 return;
             };
 
-            // Snap to the nearest edge of another screen, so monitors end up touching
-            // rather than a few pixels apart, which is what makes the cursor stick.
             let mut screens = list.borrow_mut();
             let (name, x, y) = {
                 let snapped = snap(&screens, i);
@@ -402,8 +390,6 @@ fn arrangement(state: &Rc<App>, placed: &Rc<RefCell<Vec<Screen>>>) -> gtk::Widge
     area.upcast()
 }
 
-// Snap the dragged screen so its edge meets a neighbour, within a tolerance that
-// scales with the screen so big monitors are not fiddly.
 fn snap(screens: &[Screen], i: usize) -> (f64, f64) {
     let me = &screens[i];
     let tolerance = (me.w.max(me.h) * 0.12).max(80.);
@@ -468,9 +454,6 @@ fn rounded(cr: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
     cr.close_path();
 }
 
-// per screen
-// True when `name` is the only monitor still enabled, so turning it off would leave
-// the session with nowhere to draw.
 fn is_last_enabled(config: &crate::config::Config, all: &[String], name: &str) -> bool {
     !all
         .iter()
@@ -558,8 +541,6 @@ fn card(state: &Rc<App>, screen: &Screen, index: usize, all: &[String]) -> gtk::
         let state = state.clone();
         let name = screen.name.clone();
         let all: Vec<String> = all.to_vec();
-        // Set while the handler puts the switch back, so the resulting notify is not
-        // read as the user flipping it again.
         let reverting = Rc::new(Cell::new(false));
         let guard = reverting.clone();
         on.connect_active_notify(move |s| {
@@ -567,9 +548,6 @@ fn card(state: &Rc<App>, screen: &Screen, index: usize, all: &[String]) -> gtk::
                 return;
             }
 
-            // Turning off the last enabled monitor leaves a running session with
-            // nowhere to draw, and the way out is a TTY. The compositor refuses this
-            // too; refusing it here is what lets us say why.
             if !s.is_active() {
                 let last = state
                     .config

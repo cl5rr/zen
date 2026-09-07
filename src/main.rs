@@ -181,9 +181,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(ipc) = &state.zen.ipc_server {
         let socket_path = ipc.socket_path.as_deref().unwrap();
         env::set_var(SOCKET_PATH_ENV, socket_path);
-        // ZEN's IPC is niri's, forked, so every tool built against it already speaks
-        // this protocol and looks for it under this name. Exporting both is what makes
-        // waybar's workspace and window modules work without a ZEN-specific plugin.
         env::set_var(COMPAT_SOCKET_PATH_ENV, socket_path);
         info!("IPC listening on: {}", socket_path.to_string_lossy());
     }

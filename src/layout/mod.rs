@@ -100,8 +100,6 @@ pub trait LayoutElement {
 
     fn id(&self) -> &Self::Id;
 
-    // The app_id the client set, used to find an icon for it on the map. Defaulted
-    // rather than required so the test element does not have to invent one.
     fn app_id(&self) -> String {
         String::new()
     }
@@ -3333,9 +3331,6 @@ impl<W: LayoutElement> Layout<W> {
         }
     }
 
-    // A fullscreen window is sized to the output, so it only actually fills the screen
-    // when the camera is at 1:1 over that output. Left where it was, the window and the
-    // camera disagree and the frame chases itself until they settle.
     fn settle_camera_for_fullscreen(&mut self) {
         self.camera_reset();
     }
@@ -4394,11 +4389,6 @@ impl<W: LayoutElement> Layout<W> {
         mon.camera.reset(config);
     }
 
-    // Clicking an island bubble on the map travels to it. This is the map's whole
-    // point as an interface: it is a menu of places, not just a smaller view.
-    //
-    // Returns false when the click was not on a bubble, so the caller can fall back to
-    // the ordinary click handling rather than swallowing it.
     pub fn travel_to_island_at(&mut self, view_pos: Point<f64, Logical>) -> bool {
         if !self.is_at_map_zoom() {
             return false;
@@ -4410,8 +4400,6 @@ impl<W: LayoutElement> Layout<W> {
         };
 
         let local = mon.view_to_workspace(view_pos);
-        // Hit against the bubble where it is drawn, not where the island really is: the
-        // map gathers the arrangement, so those are two different places.
         let Some(rect) = mon.active_workspace_ref().floating().map_bubble_at(local) else {
             return false;
         };
@@ -4444,8 +4432,6 @@ impl<W: LayoutElement> Layout<W> {
         mon.set_camera_focus(config)
     }
 
-    // Mod+O is a zoom level, not a mode. Far enough out, islands draw as bubbles and
-    // the canvas reads as a map; there is no separate state to get stuck in.
     pub fn camera_toggle_map(&mut self) -> bool {
         let config = self.options.animations.overview_open_close.0;
         let threshold = self.options.camera.map_zoom;
@@ -4459,14 +4445,10 @@ impl<W: LayoutElement> Layout<W> {
             return true;
         }
 
-        // The map is a scale, not a framing. Fitting alone lands wherever the windows
-        // happen to sit, so two windows side by side barely leave 1:1 and the gesture
-        // is indistinguishable from fit-all. Capping guarantees the bubble scale.
         if self.camera_fit_capped(threshold) {
             return true;
         }
 
-        // Nothing to fit: still go out to map scale so the gesture always does something.
         let Some(mon) = self.active_monitor() else {
             return false;
         };

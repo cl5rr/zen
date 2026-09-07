@@ -21,7 +21,6 @@ pub struct Input {
     pub warp_mouse_to_focus: Option<WarpMouseToFocus>,
     pub focus_follows_mouse: Option<FocusFollowsMouse>,
     pub workspace_auto_back_and_forth: bool,
-    // How hard the pointer has to be pushed at a shared monitor edge before it crosses.
     pub monitor_breakthrough: f64,
     pub mod_key: Option<ModKey>,
     pub mod_key_nested: Option<ModKey>,

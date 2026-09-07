@@ -233,8 +233,6 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
 
             let size = size.to_logical(1).to_buffer(1, Transform::Normal);
 
-            // A window almost entirely off screen clamps to nothing, and a zero-sized
-            // texture is not a buffer any of this can draw from.
             let size = Size::from((size.w.max(1), size.h.max(1)));
 
             if inner

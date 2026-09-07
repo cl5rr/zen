@@ -6,11 +6,6 @@ use gtk::{glib, Align, Orientation};
 
 use crate::App;
 
-// keybinds
-//
-// Two things make this page usable rather than a wall of rows: a search that filters as
-// you type, and groups that fold away. A config carries well over a hundred binds and
-// the ones anyone wants to change are a handful.
 pub fn binds_page(state: &Rc<App>) -> gtk::Widget {
     let column = gtk::Box::new(Orientation::Vertical, 10);
     column.add_css_class("page");
@@ -34,8 +29,6 @@ pub fn binds_page(state: &Rc<App>) -> gtk::Widget {
     column.append(&list);
 
     {
-        // Matched against a haystack built once per row, so typing re-reads nothing and
-        // rebuilds nothing: rows are only shown and hidden.
         let groups = groups.clone();
         search.connect_search_changed(move |entry| {
             let needle = entry.text().to_lowercase();
@@ -47,8 +40,6 @@ pub fn binds_page(state: &Rc<App>) -> gtk::Widget {
                     any |= shown;
                 }
                 group.holder.set_visible(any);
-                // Searching is a request to see the matches, not to go hunting for
-                // them inside folded groups.
                 if !needle.is_empty() && any {
                     group.expander.set_expanded(true);
                 }
@@ -82,8 +73,6 @@ fn build_binds(state: &Rc<App>, list: &gtk::Box) -> Rc<Vec<BindGroup>> {
         return Rc::new(Vec::new());
     }
 
-    // Binds that launch something are the ones people actually want to change, so they
-    // come first and start open; the hundred layout actions start folded.
     let (spawns, rest): (Vec<_>, Vec<_>) = binds
         .into_iter()
         .partition(|b| b.action.starts_with("spawn"));
@@ -217,10 +206,6 @@ fn bind_row(state: &Rc<App>, entry: crate::config::Entry, editable_command: bool
     line.upcast()
 }
 
-// A button that records the next chord you press, rather than asking you to spell one.
-//
-// Typing a chord means knowing what ZEN calls the key, which is xkb's name for it and
-// not always what is printed on the keycap. Pressing it cannot be got wrong.
 fn chord_button(state: &Rc<App>, key: &str) -> gtk::Widget {
     let button = gtk::Button::builder()
         .label(key)
@@ -233,7 +218,6 @@ fn chord_button(state: &Rc<App>, key: &str) -> gtk::Widget {
     let recording = Rc::new(Cell::new(false));
 
     let keys = gtk::EventControllerKey::new();
-    // Capture, so the chord is seen before any widget claims it as a shortcut.
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     {
         let button = button.clone();
@@ -245,7 +229,6 @@ fn chord_button(state: &Rc<App>, key: &str) -> gtk::Widget {
                 return glib::Propagation::Proceed;
             }
 
-            // A modifier on its own is half a chord, so keep waiting for the rest.
             if is_modifier(keyval) {
                 return glib::Propagation::Stop;
             }
@@ -334,11 +317,6 @@ fn is_modifier(key: gtk::gdk::Key) -> bool {
     )
 }
 
-// A pressed key turned into what the config calls it.
-//
-// ZEN parses the trigger with xkb's case-insensitive keysym lookup, so the case here is
-// only about how it reads in the file. The modifier order matches the shipped config so
-// a rebound chord does not look out of place beside the others.
 fn chord_string(keyname: &str, sup: bool, ctrl: bool, alt: bool, shift: bool) -> String {
     let mut parts = Vec::new();
     if sup {
@@ -365,8 +343,6 @@ fn chord_string(keyname: &str, sup: bool, ctrl: bool, alt: bool, shift: bool) ->
 fn pretty_key(name: &str) -> String {
     let mut chars = name.chars();
     match chars.next() {
-        // Single letters read better capitalised; the punctuation names xkb gives
-        // ("comma", "period") do too. Anything already capitalised is left alone.
         Some(first) if first.is_ascii_lowercase() => {
             first.to_uppercase().collect::<String>() + chars.as_str()
         }
@@ -509,7 +485,6 @@ mod tests {
     #[test]
     fn a_chord_with_no_modifiers_is_just_the_key() {
         assert_eq!(chord_string("Print", false, false, false, false), "Print");
-        // No stray leading separator, which would not parse.
         assert!(!chord_string("Print", false, false, false, false).starts_with('+'));
     }
 
@@ -521,8 +496,6 @@ mod tests {
         assert_eq!(pretty_key("period"), "Period");
     }
 
-    // Every chord this builds has to be one ZEN can parse back, or clicking a key
-    // writes a config that will not load.
     #[test]
     fn every_chord_it_builds_parses_as_a_bind() {
         let cases = [

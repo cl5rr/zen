@@ -11,16 +11,6 @@ use smithay::utils::Transform;
 use crate::render_helpers::renderer::ZenRenderer;
 use crate::render_helpers::texture::TextureBuffer;
 
-// An app_id turned into something you can recognise at a glance.
-//
-// The map draws applications, not windows, so it needs the icon a launcher would show.
-// That means the freedesktop lookup: find the .desktop file that claims this app_id,
-// read its Icon= key, then find a file for that name in the icon theme.
-//
-// Two caches, because they fail differently. The path cache holds the result of walking
-// the filesystem and is keyed by app_id alone; the texture cache holds uploaded pixels
-// and is keyed by size too. A miss in either is remembered as a miss, so a window whose
-// app has no icon does not re-walk /usr/share/applications every frame.
 #[derive(Debug, Default)]
 pub struct AppIcons {
     paths: RefCell<HashMap<String, Option<PathBuf>>>,
@@ -36,8 +26,6 @@ impl AppIcons {
         self.textures.borrow_mut().clear();
     }
 
-    // The icon for an app, at a square size in physical pixels. Falls back to the app's
-    // initial on a disc, so this only returns None if even cairo failed.
     pub fn get<R: ZenRenderer>(
         &self,
         renderer: &mut R,
@@ -75,19 +63,12 @@ impl AppIcons {
     }
 }
 
-// lookup
-//
-// The desktop file is the correct route, because Icon= is the only thing that knows an
-// app's icon is named differently from the app. But plenty of packages ship an icon
-// named exactly after the app_id and no desktop entry that matches it, so the app_id is
-// tried directly afterwards rather than falling straight through to a letter.
 fn resolve(app_id: &str) -> Option<PathBuf> {
     if let Some(path) = icon_name_for(app_id).and_then(|name| find_icon_file(&name)) {
         return Some(path);
     }
 
     let lower = app_id.to_ascii_lowercase();
-    // The last component of a reverse-DNS id: org.gnome.Nautilus ships nautilus.png.
     let tail = app_id.rsplit('.').next().unwrap_or(app_id).to_ascii_lowercase();
 
     for name in [app_id, lower.as_str(), tail.as_str()] {
@@ -118,16 +99,10 @@ fn data_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-// The Icon= value from the .desktop file that belongs to this app_id.
-//
-// Matched by filename first, because that is what most Wayland apps set their app_id
-// to, then by StartupWMClass, which is how the rest of them declare it.
 fn icon_name_for(app_id: &str) -> Option<String> {
     icon_name_in(&data_dirs(), app_id)
 }
 
-// Split from icon_name_for so it can be tested against a directory the test built,
-// rather than against whatever happens to be installed on the machine.
 fn icon_name_in(dirs: &[PathBuf], app_id: &str) -> Option<String> {
     if app_id.is_empty() {
         return None;
@@ -147,8 +122,6 @@ fn icon_name_in(dirs: &[PathBuf], app_id: &str) -> Option<String> {
             }
         }
 
-        // No direct filename hit, so read the directory looking for a declared class.
-        // Only entered when the cheap lookups missed, and the result is cached.
         let Ok(entries) = std::fs::read_dir(&apps) else {
             continue;
         };
@@ -178,8 +151,6 @@ fn icon_name_in(dirs: &[PathBuf], app_id: &str) -> Option<String> {
                     return Some(icon);
                 }
             } else if fallback.is_none() {
-                // A last resort for app_ids that are a prefix of the desktop id, which
-                // is common for Electron apps and for anything reverse-DNS named.
                 let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
                 if stem.eq_ignore_ascii_case(app_id)
                     || stem.rsplit('.').next().is_some_and(|s| s.eq_ignore_ascii_case(app_id))
@@ -200,14 +171,6 @@ fn read_icon_key(path: &Path) -> Option<String> {
         .map(|v| v.trim().to_owned())
 }
 
-// An icon name resolved to a file on disk.
-//
-// The freedesktop lookup, done properly, because the shortcut version finds almost
-// nothing on a real system: most themes ship SVG, the sizes are not a fixed list, and
-// the interesting theme is whichever one the user actually picked.
-//
-// Themes are tried in order, and within a theme the largest raster wins; an SVG beats
-// every raster because it rasterises at exactly the size the map wants.
 fn find_icon_file(name: &str) -> Option<PathBuf> {
     if name.starts_with('/') {
         let path = PathBuf::from(name);
@@ -226,7 +189,6 @@ fn find_icon_file(name: &str) -> Option<PathBuf> {
         }
     }
 
-    // The flat directories, which is where most third-party installers drop things.
     for dir in data_dirs() {
         for flat in [dir.join("pixmaps"), dir.join("icons")] {
             for ext in ["png", "svg"] {
@@ -241,8 +203,6 @@ fn find_icon_file(name: &str) -> Option<PathBuf> {
     None
 }
 
-// The user's chosen theme first, then whatever it inherits, then the two every system
-// has. Without this an app whose icon lives only in Papirus or Breeze is invisible.
 fn theme_search_order() -> Vec<String> {
     let mut order = Vec::new();
     let mut push = |name: String| {
@@ -303,9 +263,6 @@ fn inherited_themes_in(dirs: &[PathBuf], theme: &str) -> Vec<String> {
     Vec::new()
 }
 
-// Walks one theme for a named icon. Themes nest as <size>/<category>/ or
-// <category>/<size>/, and there is no reliable way to know which without reading
-// index.theme, so this looks at both by walking a bounded depth.
 fn best_in_theme(root: &Path, name: &str) -> Option<PathBuf> {
     let png = format!("{name}.png");
     let svg = format!("{name}.svg");
@@ -331,7 +288,6 @@ fn best_in_theme(root: &Path, name: &str) -> Option<PathBuf> {
                 continue;
             };
 
-            // Scalable wins outright, so there is no point ranking the rasters after it.
             if file == svg {
                 return Some(path);
             }
@@ -347,9 +303,6 @@ fn best_in_theme(root: &Path, name: &str) -> Option<PathBuf> {
     best_png.map(|(_, path)| path)
 }
 
-// The pixel size a theme path implies, from the "48x48" or "48" component in it.
-// Symbolic icons are a single flat colour meant to be recoloured by the toolkit, which
-// is not something the map can do, so they rank below everything.
 fn size_hint(path: &Path) -> u32 {
     let text = path.to_string_lossy();
     if text.contains("symbolic") {
@@ -404,8 +357,6 @@ fn render_icon(
     Ok(buffer)
 }
 
-// Rasterised at exactly the size the map asked for, which is the whole reason an SVG
-// is preferred over a raster: no resampling, crisp at any zoom.
 fn draw_svg(cr: &cairo::Context, path: &Path, size: i32) -> anyhow::Result<()> {
     let data = std::fs::read(path)?;
     let tree = resvg::usvg::Tree::from_data(&data, &resvg::usvg::Options::default())?;
@@ -421,7 +372,6 @@ fn draw_svg(cr: &cairo::Context, path: &Path, size: i32) -> anyhow::Result<()> {
         &mut pixmap.as_mut(),
     );
 
-    // tiny-skia gives premultiplied RGBA; cairo wants premultiplied BGRA.
     let stride = cairo::Format::ARgb32.stride_for_width(size as u32)?;
     let mut argb = vec![0u8; (stride * size) as usize];
     for y in 0..size as usize {
@@ -459,9 +409,6 @@ fn draw_png(cr: &cairo::Context, path: &Path, size: i32) -> anyhow::Result<()> {
         _ => anyhow::bail!("unsupported colour type for {}", path.display()),
     };
 
-    // Cairo wants premultiplied BGRA in native byte order, which on little endian is
-    // B, G, R, A. Straight alpha from the PNG has to be multiplied in or every icon
-    // with soft edges gets a bright halo.
     let mut argb = vec![0u8; (w * h * 4) as usize];
     for i in 0..(w * h) as usize {
         let src = i * channels;
@@ -497,9 +444,6 @@ fn draw_png(cr: &cairo::Context, path: &Path, size: i32) -> anyhow::Result<()> {
     Ok(())
 }
 
-// The fallback, and it has to look deliberate rather than broken: a filled disc in a
-// colour derived from the app_id, with its initial on top. Two apps only collide if
-// their names hash the same, and the letter still tells them apart.
 fn draw_initial(cr: &cairo::Context, app_id: &str, size: i32) -> anyhow::Result<()> {
     let (r, g, b) = hue_for(app_id);
     let half = size as f64 / 2.;
@@ -538,8 +482,6 @@ fn hue_for(app_id: &str) -> (f64, f64, f64) {
         hash = hash.wrapping_mul(16777619);
     }
 
-    // Kept away from full saturation so a screen of these does not look like a paint
-    // chart, and away from full lightness so the white letter stays readable.
     let h = f64::from(hash % 360);
     let (s, l) = (0.45, 0.45);
     hsl_to_rgb(h, s, l)
@@ -596,8 +538,6 @@ mod tests {
 mod lookup_tests {
     use super::*;
 
-    // A synthetic icon theme, because the machine running the tests has no guarantee
-    // of having any particular app installed.
     fn theme(root: &Path) {
         for rel in [
             "icons/Fake/16x16/apps",
@@ -612,7 +552,6 @@ mod lookup_tests {
         std::fs::write(root.join("icons/Fake/index.theme"), "[Icon Theme]\nInherits=hicolor\n")
             .unwrap();
     }
-
 
     #[test]
     fn the_biggest_raster_wins_and_symbolic_never_does() {
@@ -630,8 +569,6 @@ mod lookup_tests {
         );
     }
 
-    // This is the bug the user hit: nearly every Arch icon is scalable, and a search
-    // that only looked at fixed raster sizes found nothing and fell back to a letter.
     #[test]
     fn a_scalable_icon_is_found_and_preferred() {
         let dir = tempfile::tempdir().unwrap();
@@ -659,8 +596,6 @@ mod lookup_tests {
         assert_eq!(found.as_deref(), Some("thing-icon"));
     }
 
-    // Electron apps and anything reverse-DNS named set an app_id that is not the
-    // desktop file's name, and declare the match with StartupWMClass instead.
     #[test]
     fn startup_wm_class_is_matched_too() {
         let dir = tempfile::tempdir().unwrap();
@@ -690,8 +625,6 @@ mod lookup_tests {
 mod resolve_tests {
     use super::*;
 
-    // The gap this closes: a package that ships hicolor/scalable/apps/<app_id>.svg but
-    // no desktop entry naming it. Before, that fell all the way through to a letter.
     #[test]
     fn an_icon_named_after_the_app_is_found_without_a_desktop_file() {
         let dir = tempfile::tempdir().unwrap();

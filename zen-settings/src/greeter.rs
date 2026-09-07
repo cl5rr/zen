@@ -23,16 +23,6 @@ const NEEDS: &[Need] = &[
     },
 ];
 
-// Ly, the login screen you see before ZEN starts.
-//
-// Its config lives in /etc and is owned by root, so nothing here writes it directly:
-// every change shells out to `pkexec zen-ly set key=value`, and zen-ly is the only
-// privileged part. It refuses any key not on its own list, so a bug on this page cannot
-// turn into an arbitrary write to /etc as root.
-//
-// Reading needs no privilege, so the page still shows the current state on a machine
-// with no polkit agent; only saving asks.
-
 struct Field {
     key: &'static str,
     label: &'static str,
@@ -153,13 +143,9 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
             .build(),
     );
 
-    // The controls are built either way. Showing the page you would get, greyed, says
-    // far more about what installing Ly buys you than an empty page with one sentence.
     let values = read().unwrap_or_default();
     let readable = !values.is_empty();
 
-    // Edits collect here and go out in one pkexec call, because asking for a password
-    // per switch would make the page unusable.
     let pending: Rc<RefCell<HashMap<String, String>>> = Rc::new(RefCell::new(HashMap::new()));
 
     let body = gtk::Box::new(Orientation::Vertical, 10);
@@ -208,8 +194,6 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
 
     let blocked = require::guard(&column, &body.clone().upcast(), NEEDS);
     if !blocked && !readable {
-        // Ly is installed but its config could not be read, which is a different
-        // problem from not having it and needs saying differently.
         column.append(
             &gtk::Label::builder()
                 .label(format!(
@@ -361,8 +345,6 @@ fn write(state: &Rc<App>, pending: &Rc<RefCell<HashMap<String, String>>>) {
 }
 
 fn run_privileged(state: &Rc<App>, args: &[String], good: &str) -> bool {
-    // pkexec puts up the password prompt. Without it there is no way to write /etc from
-    // a desktop app, so the page says what to run by hand instead of failing silently.
     let Ok(out) = Command::new("pkexec").arg("zen-ly").args(args).output() else {
         state.say("pkexec is not installed, so this cannot write /etc", "bad");
         return false;
@@ -376,7 +358,6 @@ fn run_privileged(state: &Rc<App>, args: &[String], good: &str) -> bool {
     let why = String::from_utf8_lossy(&out.stderr);
     let why = why.lines().last().unwrap_or("").trim();
     if why.is_empty() {
-        // Cancelling the password prompt is not an error worth shouting about.
         state.say("not saved", "");
     } else {
         state.say(why, "bad");

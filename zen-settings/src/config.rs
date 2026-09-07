@@ -35,9 +35,6 @@ impl Config {
         Ok(Self { path, doc })
     }
 
-    // Checked in process rather than by shelling out to `zen validate`. Spawning the
-    // compositor binary per keystroke cost more than everything else here put together,
-    // and it made the safety net depend on zen being on PATH.
     pub fn save(&self) -> anyhow::Result<()> {
         let text = self.doc.to_string();
 
@@ -58,12 +55,6 @@ impl Config {
         Ok(())
     }
 
-    // read
-    //
-    // A config has several window-rule nodes and only one of them applies to every
-    // window: the one with no match. Taking the first by name would land on whichever
-    // app-specific rule happens to be written earliest, so settings that mean "all
-    // windows" would silently edit the wezterm rule.
     fn pick<'a>(doc: &'a KdlDocument, name: &str) -> Option<&'a KdlNode> {
         let idx = pick_index(doc, name)?;
         Some(&doc.nodes()[idx])
@@ -191,9 +182,6 @@ impl Config {
                 None => {
                     doc.nodes_mut().push(fresh(node_name(name), depth));
                     let idx = doc.nodes().len() - 1;
-                    // A rule created for a selector must carry the match it was
-                    // selected by, or it would apply to every window and never be
-                    // found again.
                     if let Some(selector) = name.split_once('@').map(|(_, sel)| sel) {
                         add_match(&mut doc.nodes_mut()[idx], selector, depth + 1);
                     }
@@ -210,13 +198,6 @@ impl Config {
     }
 }
 
-// util
-//
-// A path segment may carry a selector after '@' so a spec row can name one node out of
-// several with the same name. "window-rule" alone means the rule with no match at all,
-// the one that applies to every window; "window-rule@is-active=true" means the rule
-// whose match says exactly that. Without this, every rule row would edit whichever
-// window-rule happened to be written first.
 fn node_name(segment: &str) -> &str {
     segment.split_once('@').map_or(segment, |(name, _)| name)
 }
@@ -238,9 +219,6 @@ fn selects(node: &KdlNode, selector: Option<&str>) -> bool {
     match_nodes(node).any(|m| {
         m.get(prop).is_some_and(|entry| match entry.value() {
             KdlValue::Bool(b) => b.to_string() == want,
-            // String matches are regexes in a config: `namespace="^waybar$"`. A
-            // selector names the thing, not the pattern, so containment is the only
-            // comparison that finds the rule someone actually wrote.
             KdlValue::String(text) => text.contains(want),
             _ => false,
         })
@@ -252,8 +230,6 @@ fn add_match(node: &mut KdlNode, selector: &str, depth: usize) {
         return;
     };
 
-    // Anchored, because a bare name used as a regex would also match a namespace that
-    // merely contains it, and a rule created here has to mean exactly the one thing.
     let (value, repr) = match want.parse::<bool>() {
         Ok(flag) => (KdlValue::Bool(flag), flag.to_string()),
         Err(_) => {
@@ -278,8 +254,6 @@ fn pick_index(doc: &KdlDocument, segment: &str) -> Option<usize> {
         None => (segment, None),
     };
 
-    // Only rule nodes come in several copies; everything else is a plain lookup, and
-    // treating it as selectable would make an absent selector mean "has no children".
     let selectable = matches!(name, "window-rule" | "layer-rule");
     doc.nodes().iter().position(|n| {
         n.name().value() == name && (!selectable || selects(n, selector))
@@ -329,9 +303,6 @@ mod tests {
         from(include_str!("../../resources/default-config.kdl"))
     }
 
-    // The shipped config has four window-rule nodes and only the third applies to
-    // every window. A path lookup by name alone lands on the wezterm rule, so the
-    // tint toggle would silently edit that instead, and nothing else would notice.
     #[test]
     fn the_tint_toggle_finds_the_rule_that_has_no_match() {
         let mut c = shipped();
@@ -340,8 +311,6 @@ mod tests {
         c.set_boolean(&["window-rule"], "draw-border-with-background", true);
         let text = c.doc.to_string();
 
-        // Counted as nodes, not as text: the config explains the setting in a comment
-        // further up, so a substring count is 2 before anything is even written.
         let carriers: Vec<bool> = c
             .doc
             .nodes()
@@ -373,8 +342,6 @@ mod tests {
         zen_config::Config::parse_mem(&text).expect("the edited config must still parse");
     }
 
-    // The two opacity rules are told apart only by their match, and creating one
-    // without its match would produce a rule that applies to every window.
     #[test]
     fn opacity_rows_address_the_active_and_inactive_rules_separately() {
         let mut c = shipped();
@@ -413,10 +380,6 @@ mod tests {
         zen_config::Config::parse_mem(&text).expect("the created config must still parse");
     }
 
-
-    // The status bar's blur is a layer-rule picked out by its namespace, and namespaces
-    // in a config are regexes, so a selector naming the thing has to find the pattern
-    // that matches it.
     #[test]
     fn a_layer_rule_is_found_by_its_namespace() {
         let c = shipped();
@@ -451,8 +414,6 @@ mod tests {
         zen_config::Config::parse_mem(&text).expect("the edited config must still parse");
     }
 
-    // A rule created for a string selector has to carry a match that finds it again,
-    // or the next toggle makes another one.
     #[test]
     fn a_rule_created_for_a_namespace_is_found_again() {
         let mut c = from("layout {\n    gaps 20\n}\n");
@@ -550,7 +511,6 @@ mod tests {
         let mut c = shipped();
         assert!(c.rebind("Mod+T", "Mod+W").is_err());
 
-        // and the config is untouched by the attempt
         let back = from(&c.doc.to_string());
         assert!(back.binds().iter().any(|b| b.key == "Mod+T"));
         assert!(back.binds().iter().any(|b| b.key == "Mod+W"));
@@ -569,9 +529,6 @@ mod tests {
 
     #[test]
     fn startup_commands_round_trip() {
-        // Asserted as a property rather than against a fixed list. Pinning the shipped
-        // startup entries here made this test fail every time a new one was added,
-        // which says nothing about whether the round trip works.
         let mut c = shipped();
         let shipped_startup = c.startup();
         assert!(
@@ -630,7 +587,6 @@ mod tests {
         let back = from(&c.doc.to_string());
         assert_eq!(back.output("DP-1").position, Some((2560, 0)));
 
-        // and it rewrote the node rather than appending a second one
         let node = back.output_node("DP-1").expect("the output block");
         let positions = node
             .children()
@@ -656,11 +612,6 @@ mod tests {
     }
 }
 
-// lists
-//
-// Keybinds and startup commands are repeated nodes, not keyed values, so they need
-// their own accessors. A bind is `Mod+T { spawn "alacritty"; }`: the node name is the
-// chord and its one child is the action.
 pub struct Entry {
     pub key: String,
     pub action: String,
@@ -697,8 +648,6 @@ impl Config {
             .collect()
     }
 
-    // Renaming the node is the whole edit: the action underneath is untouched, so a
-    // rebind cannot lose what the bind does.
     pub fn rebind(&mut self, from: &str, to: &str) -> anyhow::Result<()> {
         if from == to {
             return Ok(());
@@ -722,7 +671,6 @@ impl Config {
         Ok(())
     }
 
-    // Only the arguments of a spawn change; the action stays whatever it was.
     pub fn set_bind_args(&mut self, key: &str, args: &[String]) -> anyhow::Result<()> {
         let Some(binds) = self
             .doc
@@ -785,10 +733,6 @@ impl Config {
     }
 }
 
-// outputs
-//
-// Outputs are repeated named blocks rather than keyed values, so they need their own
-// accessors like the binds do. The name is the node's one argument.
 pub struct OutputCfg {
     pub name: String,
     pub off: bool,

@@ -10,9 +10,6 @@ use crate::config;
 use crate::require::{self, Need};
 use crate::App;
 
-// swaybg is the only hard requirement: without a renderer nothing can be set at all.
-// The other two make it better rather than possible, so they are named on the page
-// instead of blocking it.
 const NEEDS: &[Need] = &[Need {
     command: "swaybg",
     what: "what actually puts an image on the screen",
@@ -92,8 +89,6 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
         .css_classes(["setting-hint"])
         .build();
 
-    // Volume only means anything for a video, so the row goes away for an image
-    // rather than sitting there greyed out with nothing to explain it.
     let (audio_row, volume_scale) = audio_controls();
 
     let picker = Rc::new(Picker {
@@ -134,8 +129,6 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
         grid.append(&tile(file));
     }
 
-    // Selecting is one click. Applying stays deliberate, because it restarts a
-    // renderer and, for a video, starts something that can make noise.
     {
         let picker = picker.clone();
         grid.connect_selected_children_changed(move |g| {
@@ -197,8 +190,6 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
     }
     picker.sync_audio();
 
-    // The banner goes above everything, so it is the first thing read, but the grid
-    // stays live: browsing what you have is worth doing even when nothing can set it.
     if let Some(banner) = require::banner(&require::missing(NEEDS)) {
         column.prepend(&banner);
     }
@@ -249,8 +240,6 @@ impl Picker {
             Ok(s) if s.success() => {
                 state.say(&format!("wallpaper: {}", name_of(&file)), "good");
             }
-            // The script says why on stderr, and the reasons differ: a missing
-            // mpvpaper for video, a missing swaybg for an image.
             Ok(_) => state.say("zen-wallpaper could not set that, see its output", "bad"),
             Err(_) => state.say("zen-wallpaper is not on PATH", "bad"),
         }
@@ -282,8 +271,6 @@ fn tile(file: &Path) -> gtk::Widget {
     frame.upcast()
 }
 
-// GdkPixbuf will not decode a video, so one gets a placeholder rather than an empty
-// box. Pulling a real frame would mean shelling out to ffmpeg once per file.
 fn thumbnail(file: &Path) -> gtk::Widget {
     if is_video(file) {
         let icon = gtk::Image::from_icon_name("video-x-generic-symbolic");

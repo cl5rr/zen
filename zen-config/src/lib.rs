@@ -2479,6 +2479,11 @@ mod tests {
         +                "idle",
         +            ],
         +        },
+        +        SpawnAtStartup {
+        +            command: [
+        +                "zen-polkit",
+        +            ],
+        +        },
         +    ],
         +    spawn_sh_at_startup: [
         +        SpawnShAtStartup {

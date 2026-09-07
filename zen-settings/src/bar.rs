@@ -17,18 +17,8 @@ const NEEDS: &[Need] = &[Need {
     package: "waybar",
 }];
 
-// The pills across the top of the screen.
-//
-// ZEN does not draw these. Writing a widget toolkit is a second project the size of the
-// compositor, and waybar already is one, so ZEN ships a themed config for it and this
-// page edits that config. The pills are waybar modules; the look is resources/waybar.
-//
-// The file is JSON, and it is rewritten wholesale on every change, so anything in it
-// that is not JSON does not survive. ZEN's shipped config is therefore comment-free.
 const CONFIG: &str = "waybar/config.jsonc";
 
-// The layer-rule ZEN uses to blur behind the bar. Selected by its match rather than by
-// position, because a config has several layer-rules and only one of them is waybar's.
 const WAYBAR_RULE: &str = "layer-rule@namespace=waybar";
 
 const DEFAULT_FILL: f64 = 0.55;
@@ -36,10 +26,6 @@ const DEFAULT_FILL: f64 = 0.55;
 const MODES: [&str; 4] = ["dock", "hide", "overlay", "invisible"];
 const LAYERS: [&str; 3] = ["top", "overlay", "bottom"];
 
-// Every module this page offers, in the order they read on screen.
-//
-// `left` decides which of the three regions a module joins when it is switched on, so a
-// pill always comes back to where it belongs rather than to wherever it was appended.
 struct Pill {
     key: &'static str,
     label: &'static str,
@@ -329,8 +315,6 @@ fn bar_card(state: &Rc<App>, doc: &Rc<RefCell<Map<String, Value>>>) -> gtk::Widg
         gap.connect_value_changed(move |s| {
             let v = s.value().round() as i64;
             let mut doc_ref = doc.borrow_mut();
-            // Kept off every edge together, so the bar floats rather than being tucked
-            // into one corner of the screen.
             for key in ["margin-top", "margin-left", "margin-right"] {
                 doc_ref.insert(key.into(), Value::from(v));
             }
@@ -346,8 +330,6 @@ fn bar_card(state: &Rc<App>, doc: &Rc<RefCell<Map<String, Value>>>) -> gtk::Widg
 
     separator(&card);
 
-    // Whether the bar reserves its strip so windows stop short of it, or simply sits
-    // over them and covers whatever is underneath.
     let reserve = gtk::Switch::builder()
         .valign(Align::Center)
         .active(
@@ -447,11 +429,6 @@ fn bar_card(state: &Rc<App>, doc: &Rc<RefCell<Map<String, Value>>>) -> gtk::Widg
     card.upcast()
 }
 
-// The look of the pills themselves.
-//
-// Opacity is written to zen-pills.css, which style.css imports, so the settings app
-// never has to parse the stylesheet and anything hand-edited there survives. Blur is
-// not something GTK can do behind a layer surface, so that one is a ZEN layer-rule.
 fn look_card(state: &Rc<App>) -> gtk::Widget {
     let card = gtk::Box::new(Orientation::Vertical, 0);
     card.add_css_class("card");
@@ -526,8 +503,6 @@ fn current_opacity() -> f64 {
 
 fn write_pill_css(state: &Rc<App>, opacity: f64) {
     let opacity = opacity.clamp(0., 1.);
-    // The border fades with the fill, or a fully transparent pill is still a visible
-    // outline, which is not what anyone means by transparent.
     let border = 0.09 + 0.06 * opacity;
 
     let text = format!(
@@ -585,12 +560,9 @@ fn read(path: &PathBuf) -> Option<Map<String, Value>> {
     value.as_object().cloned()
 }
 
-// waybar accepts // comments; serde_json does not. Only line comments are handled,
-// because that is the only kind waybar's own documentation uses.
 fn strip_comments(text: &str) -> String {
     text.lines()
         .map(|line| match line.find("//") {
-            // A // inside a string is part of a value, not a comment.
             Some(at) if line[..at].matches('"').count() % 2 == 0 => &line[..at],
             _ => line,
         })
@@ -615,8 +587,6 @@ fn region_list(doc: &Map<String, Value>, region: Region) -> Vec<String> {
         .unwrap_or_default()
 }
 
-// Adding a pill puts it back in its own region, in the order PILLS declares, so
-// switching one off and on again does not shuffle the bar.
 fn set_shown(doc: &mut Map<String, Value>, pill: &Pill, on: bool) {
     for region in [Region::Left, Region::Centre, Region::Right] {
         let mut list = region_list(doc, region);
@@ -672,8 +642,6 @@ fn save(state: &Rc<App>, doc: &Rc<RefCell<Map<String, Value>>>) {
     reload(state, "bar updated");
 }
 
-// waybar rereads its config and its stylesheet on SIGUSR2, so the bar changes without a
-// restart and without this page having to own its lifetime.
 fn reload(state: &Rc<App>, good: &str) {
     let reloaded = Command::new("pkill")
         .args(["-USR2", "-x", "waybar"])
@@ -722,8 +690,6 @@ mod tests {
         }
     }
 
-    // Every pill this page offers has to be a module waybar will accept, and every
-    // module the shipped config turns on has to be one the page can turn off again.
     #[test]
     fn the_page_and_the_shipped_config_agree_on_the_modules() {
         let doc = shipped();

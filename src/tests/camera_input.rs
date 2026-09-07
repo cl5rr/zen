@@ -219,15 +219,10 @@ fn pan_does_not_disturb_surface_coordinates() {
     }
 }
 
-// The map is a menu of places, so a click on a bubble has to resolve to the island the
-// render put under the pointer. The mapping from view to canvas goes through the
-// camera's pan, the zoom, and the centring offset, and getting any of the three wrong
-// still travels somewhere, just to the wrong island.
 #[test]
 fn clicking_a_bubble_on_the_map_travels_to_that_island() {
     let mut f = fixture_with_window();
 
-    // Islands are the floating layer's partition, so a tiled window has none.
     f.zen().layout.set_window_floating(None, true);
     f.zen_complete_animations();
 
@@ -247,8 +242,6 @@ fn clicking_a_bubble_on_the_map_travels_to_that_island() {
         .map(|i| i.rect())
         .expect("the window should be in an island");
 
-    // The centre of that island, mapped forward into the view the same way the render
-    // does, is where a person would actually click.
     let mon = f.zen().layout.active_monitor_ref().unwrap();
     let centre = Point::from((
         island.loc.x + island.size.w / 2.,
@@ -270,7 +263,6 @@ fn clicking_a_bubble_on_the_map_travels_to_that_island() {
         "travelling should leave the map, zoom went {before} -> {after}"
     );
 
-    // And the island should now be roughly centred rather than merely closer.
     let mon = f.zen().layout.active_monitor_ref().unwrap();
     let landed = mon.view_to_workspace(Point::from((
         mon.camera_view_size().w / 2.,
@@ -290,7 +282,6 @@ fn clicking_empty_canvas_on_the_map_is_not_a_travel() {
     f.zen().layout.set_camera_zoom(0.42);
     f.zen_complete_animations();
 
-    // Far from any window, so the ordinary click handling must still get the event.
     assert!(!f.zen().layout.travel_to_island_at(Point::from((4., 4.))));
 }
 
@@ -302,20 +293,12 @@ fn travel_does_nothing_when_not_on_the_map() {
     assert!(!f.zen().layout.travel_to_island_at(Point::from((640., 360.))));
 }
 
-// Zooming has to leave whatever is under the pointer under the pointer.
-//
-// The bug this catches: the camera pinned the anchor using pan and zoom alone, while
-// the render also centres the workspace in the view by an offset that is itself a
-// function of zoom. The point under the cursor therefore slid by half the view's change
-// in size, and the zoom looked like it came from the middle of the screen.
 #[test]
 fn zooming_keeps_the_point_under_the_cursor_still() {
     let mut f = fixture_with_window();
     f.zen().layout.set_window_floating(None, true);
     f.zen_complete_animations();
 
-    // Deliberately off centre: an anchor in the middle of the screen cannot tell a
-    // correct pinning from one that always zooms about the middle.
     let anchor = Point::from((OUTPUT_W as f64 * 0.22, OUTPUT_H as f64 * 0.78));
 
     let before = f
@@ -395,7 +378,6 @@ mod edge_resistance {
     fn pushing_long_enough_lets_it_through() {
         let mut pressure = 0.;
         let mut crossed = false;
-        // Ten frames of a steady push, the way a hand actually moves.
         for _ in 0..10 {
             let (held, next) = resist_edge(screen(), Point::from((1925., 500.)), pressure, 40.);
             pressure = next;
@@ -415,8 +397,6 @@ mod edge_resistance {
         assert_eq!(pressure, 0.);
     }
 
-    // A big jump is a deliberate throw across the screen, not a slip, so it should not
-    // need several frames of pushing.
     #[test]
     fn one_large_movement_crosses_immediately() {
         let (held, _) = resist_edge(screen(), Point::from((2100., 500.)), 0., 40.);

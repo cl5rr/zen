@@ -314,9 +314,6 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
             };
         }
         Msg::Output { output, action } => {
-            // Creating and destroying an output are not config changes, so the server
-            // answers them with a plain Handled. Everything else reports whether the
-            // connector was there to apply the change to.
             if matches!(
                 action,
                 OutputAction::Create { .. } | OutputAction::Destroy
