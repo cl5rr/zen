@@ -58,7 +58,6 @@ enum Kind {
     Flag,
     Text(&'static str),
     Choice(&'static [&'static str]),
-    Number(f64, f64),
     Colour,
 }
 
@@ -366,20 +365,6 @@ fn field_row(
             line.append(&swatch);
             line.append(&drop);
             line.upcast()
-        }
-
-        Kind::Number(min, max) => {
-            let spin = gtk::SpinButton::with_range(*min, *max, 1.);
-            spin.set_value(current.parse().unwrap_or(*min));
-            spin.set_valign(Align::Center);
-            spin.set_width_chars(4);
-            let pending = pending.clone();
-            spin.connect_value_changed(move |s| {
-                pending
-                    .borrow_mut()
-                    .insert(field.key.to_owned(), (s.value().round() as i64).to_string());
-            });
-            spin.upcast()
         }
     };
 

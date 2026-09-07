@@ -168,6 +168,31 @@ done
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# `ls a b` reports failure when any one operand is absent, so a probe naming two
+# libexec directories at once failed on every distro that has only one of them, and
+# called an installed portal missing.
+any_file() {
+    local candidate
+    for candidate in "$@"; do
+        [ -e "$candidate" ] && return 0
+    done
+    return 1
+}
+
+# Where a distro puts a daemon that D-Bus activates rather than one you run by hand.
+LIBEXEC_DIRS="/usr/lib /usr/libexec /usr/lib64 /usr/local/lib /usr/local/libexec"
+
+libexec_any() {
+    local name="$1" dir
+    for dir in $LIBEXEC_DIRS; do
+        # Unquoted so a glob in $name expands; an unmatched glob stays literal and
+        # fails the -e test, which is the wanted answer.
+        # shellcheck disable=SC2086
+        any_file "$dir"/$name && return 0
+    done
+    return 1
+}
+
 confirm() {
     [ "$ASSUME_YES" = 1 ] && return 0
     [ -t 0 ] || return 0
@@ -598,13 +623,24 @@ EOF
 # Everything a session needs once ZEN is running. A build can succeed and leave you
 # with no X11 apps, no file picker and no fonts, and none of that shows up as a build
 # error, so it gets its own pass.
+# Not everything a session needs is on PATH. The portal is a D-Bus activated daemon
+# living in a libexec directory, so asking `command -v` about it answered "missing" on
+# a machine that had had it installed the whole time.
+runtime_present() {
+    case "$1" in
+        xdg-desktop-portal)
+            have xdg-desktop-portal || libexec_any xdg-desktop-portal ;;
+        *) have "$1" ;;
+    esac
+}
+
 check_runtime() {
     printf '\n    %sruntime programs%s\n' "$C_BOLD" "$C_RESET"
 
     local cmd desc pkg
     while IFS='|' read -r cmd desc; do
         [ -n "$cmd" ] || continue
-        if have "$cmd"; then
+        if runtime_present "$cmd"; then
             row_ok "$cmd" ""
             N_OK=$((N_OK + 1))
         else
@@ -621,7 +657,7 @@ EOF
     # zen-portals.conf asks for the gnome backend, then the gtk one.
     if have xdg-desktop-portal-gtk || have xdg-desktop-portal-wlr ||
         have xdg-desktop-portal-gnome || have xdg-desktop-portal-kde ||
-        ls /usr/libexec/xdg-desktop-portal-* /usr/lib/xdg-desktop-portal-* >/dev/null 2>&1
+        libexec_any 'xdg-desktop-portal-*'
     then
         row_ok "portal backend" ""
         N_OK=$((N_OK + 1))
@@ -635,7 +671,7 @@ EOF
     # screencasting against xdg-desktop-portal-gnome, and the gtk backend does not
     # implement ScreenCast at all, so with only gtk installed OBS records a black frame
     # and nothing says why.
-    if have xdg-desktop-portal-gnome         || ls /usr/libexec/xdg-desktop-portal-gnome /usr/lib/xdg-desktop-portal-gnome              >/dev/null 2>&1; then
+    if have xdg-desktop-portal-gnome || libexec_any xdg-desktop-portal-gnome; then
         row_ok "screen sharing" ""
         N_OK=$((N_OK + 1))
     else
@@ -675,8 +711,9 @@ EOF
         add_missing polkit
         N_MISSING=$((N_MISSING + 1))
     elif zen-polkit which >/dev/null 2>&1 \
-        || ls /usr/lib/polkit-*/polkit-*-authentication-agent-1 \
-              /usr/libexec/polkit-*-authentication-agent-1 >/dev/null 2>&1; then
+        || libexec_any 'polkit-*/polkit-*-authentication-agent-1' \
+        || libexec_any 'polkit-*-authentication-agent-1' \
+        || have lxqt-policykit-agent || have lxpolkit; then
         row_ok "polkit agent" ""
         N_OK=$((N_OK + 1))
     else
@@ -880,6 +917,22 @@ pkg_available() {
     esac
 }
 
+# Asked after the install rather than before it. A package manager can report success
+# for a transaction that skipped something, and an AUR helper can stop halfway, and
+# neither says which name did not end up on the system.
+pkg_installed() {
+    local pkg="$1"
+    [ -n "$pkg" ] || return 1
+    case "$PKG_MGR" in
+        pacman) pacman -Qq -- "$pkg" >/dev/null 2>&1 ;;
+        apt)    dpkg-query -W -f='${Status}' -- "$pkg" 2>/dev/null | grep -q "ok installed" ;;
+        dnf)    rpm -q -- "$pkg" >/dev/null 2>&1 ;;
+        apk)    apk info -e -- "$pkg" 2>/dev/null | grep -q . ;;
+        zypper) rpm -q -- "$pkg" >/dev/null 2>&1 ;;
+        *)      return 0 ;;
+    esac
+}
+
 # Named so the message can say where to get them rather than just that they are absent.
 AUR_ONLY="mpvpaper xwayland-satellite swww"
 
@@ -970,10 +1023,35 @@ install_deps() {
     fi
 
     step "Installing missing packages"
-    # shellcheck disable=SC2086
-    set -- $MISSING_PKGS
-    info "$# package(s) via $PKG_MGR:"
-    dim "$*"
+
+    # Split before announcing, not after. Listing an AUR-only name under "via pacman"
+    # and then saying it is not in the repositories two lines later reads as the list
+    # being wrong rather than as two groups.
+    local have_pkgs="" absent="" pkg
+    for pkg in $MISSING_PKGS; do
+        if pkg_available "$pkg"; then
+            have_pkgs="$have_pkgs $pkg"
+        else
+            absent="$absent $pkg"
+        fi
+    done
+    have_pkgs="${have_pkgs# }"
+    absent="${absent# }"
+
+    if [ -n "$have_pkgs" ]; then
+        # shellcheck disable=SC2086
+        set -- $have_pkgs
+        info "$# package(s) via $PKG_MGR:"
+        dim "$*"
+    fi
+    if [ -n "$absent" ]; then
+        # shellcheck disable=SC2086
+        set -- $absent
+        info "$# package(s) your repositories do not carry:"
+        for pkg in "$@"; do
+            printf '      %-22s %s\n' "$pkg" "$(elsewhere_note "$pkg")"
+        done
+    fi
 
     # On an update, declining is a decision about packages, not about the update. Only a
     # fresh install treats it as aborting, because there the build needs them.
@@ -983,27 +1061,13 @@ install_deps() {
         return 0
     fi
 
-    local have_pkgs="" absent=""
-    local pkg
-    for pkg in "$@"; do
-        if pkg_available "$pkg"; then
-            have_pkgs="$have_pkgs $pkg"
-        else
-            absent="$absent $pkg"
-        fi
-    done
-
     if [ -n "$absent" ]; then
-        printf '\n'
-        warn "these are not in your repositories"
-        for pkg in $absent; do
-            printf '      %-22s %s\n' "$pkg" "$(elsewhere_note "$pkg")"
-        done
+        # shellcheck disable=SC2086
         install_from_aur $absent
     fi
 
-    if [ -z "${have_pkgs# }" ]; then
-        warn "nothing left to install from your repositories"
+    if [ -z "$have_pkgs" ]; then
+        report_not_installed $MISSING_PKGS
         return 0
     fi
 
@@ -1021,9 +1085,30 @@ install_deps() {
     esac || {
         # A failure here must not take the update with it: the build still has to run.
         warn "the package manager reported a problem; carrying on"
+        report_not_installed $MISSING_PKGS
         return 0
     }
     ok "packages installed"
+    report_not_installed $MISSING_PKGS
+}
+
+# The one question the install step never answered: of everything it set out to
+# install, what is on the system now. Both halves can quietly do nothing, and an
+# up-to-date warning scrolling past looks the same as a package that was skipped.
+report_not_installed() {
+    [ "$PKG_MGR" = unknown ] && return 0
+    local left="" pkg
+    for pkg in "$@"; do
+        pkg_installed "$pkg" || left="$left $pkg"
+    done
+    [ -n "${left# }" ] || return 0
+
+    printf '\n'
+    warn "still not installed after that:"
+    for pkg in $left; do
+        printf '      %-22s %s\n' "$pkg" "$(elsewhere_note "$pkg")"
+    done
+    dim "ZEN runs without them; what they are for is in the list above"
 }
 
 # ------------------------------------------------------------------ rust ----
@@ -2110,4 +2195,6 @@ main() {
     fi
 }
 
-main "$@"
+# tests/setup-probes.sh sources this to call the probe helpers directly, which is the
+# only way to test them against a directory layout this machine does not have.
+[ "${ZEN_SETUP_LIB:-0}" = 1 ] || main "$@"

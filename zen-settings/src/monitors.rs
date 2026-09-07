@@ -1,14 +1,24 @@
 use std::cell::{Cell, RefCell};
 use std::process::Command;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use adw::prelude::*;
+use gtk::glib;
 use gtk::{Align, Orientation};
 use serde_json::Value;
 
 use crate::App;
 
 const CANVAS_H: i32 = 260;
+const POLL: Duration = Duration::from_millis(900);
+
+// Rebuilding the page from under a drag would fight the pointer, and rebuilding it the
+// instant a drag ends would redraw from compositor state the config change has not
+// reached yet. Both look like the page undoing what you just did.
+const SETTLE: Duration = Duration::from_millis(1500);
+
+type Refresh = Rc<dyn Fn()>;
 
 #[derive(Clone)]
 pub struct Screen {
@@ -75,7 +85,100 @@ fn detect() -> Vec<Screen> {
 }
 
 // page
+//
+// Everything here describes hardware that changes without Settings being told: a
+// monitor is plugged in, a virtual one is created from this very page, `zen msg` is
+// run in a terminal. The page used to be built once when Settings opened and then
+// asked the user to reopen it, which meant the answer on screen was only ever right
+// by accident.
 pub fn page(state: &Rc<App>) -> gtk::Widget {
+    let host = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .hexpand(true)
+        .vexpand(true)
+        .build();
+
+    let seen = Rc::new(RefCell::new(String::new()));
+    let hold = Rc::new(Cell::new(Instant::now()));
+    rebuild(state, &host, &seen, &hold);
+
+    let state = state.clone();
+    let watched = host.clone();
+    let seen = seen.clone();
+    let hold = hold.clone();
+    glib::timeout_add_local(POLL, move || {
+        if watched.root().is_none() {
+            return glib::ControlFlow::Break;
+        }
+        // Each poll is a process, so only pay for it while the page is on screen.
+        if watched.is_mapped() && Instant::now() >= hold.get() {
+            let now = detect();
+            if signature(&now) != *seen.borrow() {
+                fill(&state, &watched, now, &seen, &hold);
+            }
+        }
+        glib::ControlFlow::Continue
+    });
+
+    host.upcast()
+}
+
+// live
+fn signature(screens: &[Screen]) -> String {
+    let mut out = String::new();
+    for s in screens {
+        out.push_str(&format!(
+            "{}|{}|{:.0},{:.0}|{:.0}x{:.0}|{:.3}|{}|{}\n",
+            s.name,
+            s.is_virtual,
+            s.x,
+            s.y,
+            s.w,
+            s.h,
+            s.scale,
+            s.modes.len(),
+            s.current_mode.unwrap_or(usize::MAX),
+        ));
+    }
+    out
+}
+
+fn rebuild(state: &Rc<App>, host: &gtk::ScrolledWindow, seen: &Rc<RefCell<String>>, hold: &Rc<Cell<Instant>>) {
+    let now = detect();
+    fill(state, host, now, seen, hold);
+}
+
+fn fill(
+    state: &Rc<App>,
+    host: &gtk::ScrolledWindow,
+    screens: Vec<Screen>,
+    seen: &Rc<RefCell<String>>,
+    hold: &Rc<Cell<Instant>>,
+) {
+    *seen.borrow_mut() = signature(&screens);
+
+    let refresh: Refresh = {
+        let state = state.clone();
+        let host = host.clone();
+        let seen = seen.clone();
+        let hold = hold.clone();
+        Rc::new(move || rebuild(&state, &host, &seen, &hold))
+    };
+
+    // Replacing the child sends the scrollbar back to the top, which on a page that
+    // redraws itself would yank you away from whatever you were reading.
+    let keep = host.vadjustment().value();
+    host.set_child(Some(&build_column(state, screens, &refresh, hold)));
+    let adjustment = host.vadjustment();
+    glib::idle_add_local_once(move || adjustment.set_value(keep));
+}
+
+fn build_column(
+    state: &Rc<App>,
+    screens: Vec<Screen>,
+    refresh: &Refresh,
+    hold: &Rc<Cell<Instant>>,
+) -> gtk::Box {
     let column = gtk::Box::new(Orientation::Vertical, 10);
     column.add_css_class("page");
 
@@ -86,8 +189,6 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
             .css_classes(["page-title"])
             .build(),
     );
-
-    let screens = detect();
 
     if screens.is_empty() {
         column.append(
@@ -103,7 +204,7 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
                 .css_classes(["setting-hint"])
                 .build(),
         );
-        return scrolled(&column);
+        return column;
     }
 
     column.append(
@@ -119,7 +220,7 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
 
     let names: Vec<String> = screens.iter().map(|s| s.name.clone()).collect();
     let placed = Rc::new(RefCell::new(screens.clone()));
-    column.append(&arrangement(state, &placed));
+    column.append(&arrangement(state, &placed, hold));
 
     for (i, screen) in screens.iter().enumerate() {
         column.append(
@@ -139,12 +240,12 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
             .css_classes(["group-label"])
             .build(),
     );
-    column.append(&virtual_card(state, &screens));
+    column.append(&virtual_card(state, &screens, refresh));
 
-    scrolled(&column)
+    column
 }
 
-fn virtual_card(state: &Rc<App>, screens: &[Screen]) -> gtk::Widget {
+fn virtual_card(state: &Rc<App>, screens: &[Screen], reload: &Refresh) -> gtk::Widget {
     let card = gtk::Box::new(Orientation::Vertical, 0);
     card.add_css_class("card");
 
@@ -166,8 +267,9 @@ fn virtual_card(state: &Rc<App>, screens: &[Screen]) -> gtk::Widget {
             {
                 let state = state.clone();
                 let name = screen.name.clone();
+                let reload = reload.clone();
                 remove.connect_clicked(move |_| {
-                    run_output(&state, &name, &["destroy"], &format!("removed {name}"));
+                    run_output(&state, &name, &["destroy"], &format!("removed {name}"), &reload);
                 });
             }
             let where_ = if screen.w > 0. && screen.h > 0. {
@@ -228,6 +330,7 @@ fn virtual_card(state: &Rc<App>, screens: &[Screen]) -> gtk::Widget {
         let height = height.clone();
         let refresh = refresh.clone();
         let placeable = placeable.clone();
+        let reload = reload.clone();
         create.connect_clicked(move |_| {
             let chosen = name.text().trim().to_owned();
             if chosen.is_empty() {
@@ -248,12 +351,12 @@ fn virtual_card(state: &Rc<App>, screens: &[Screen]) -> gtk::Widget {
                 args.push("--hidden".to_owned());
             }
             let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
-            run_output(&state, &chosen, &borrowed, &format!("created {chosen}"));
+            run_output(&state, &chosen, &borrowed, &format!("created {chosen}"), &reload);
         });
     }
     card.append(&row(
         "Add one",
-        "It appears immediately, and is gone when the session ends",
+        "It appears in the list above straight away, and is gone when the session ends",
         create.upcast(),
     ));
 
@@ -268,12 +371,13 @@ fn spin(min: f64, max: f64, value: f64) -> gtk::SpinButton {
     spin
 }
 
-fn run_output(state: &Rc<App>, name: &str, args: &[&str], good: &str) {
+fn run_output(state: &Rc<App>, name: &str, args: &[&str], good: &str, refresh: &Refresh) {
     let mut cmd = Command::new("zen");
     cmd.args(["msg", "output", name]).args(args);
     match cmd.output() {
         Ok(out) if out.status.success() => {
-            state.say(&format!("{good}, reopen Monitors to refresh the list"), "good");
+            state.say(good, "good");
+            refresh();
         }
         Ok(out) => {
             let why = String::from_utf8_lossy(&out.stderr);
@@ -285,7 +389,11 @@ fn run_output(state: &Rc<App>, name: &str, args: &[&str], good: &str) {
 }
 
 // arrangement
-fn arrangement(state: &Rc<App>, placed: &Rc<RefCell<Vec<Screen>>>) -> gtk::Widget {
+fn arrangement(
+    state: &Rc<App>,
+    placed: &Rc<RefCell<Vec<Screen>>>,
+    hold: &Rc<Cell<Instant>>,
+) -> gtk::Widget {
     let area = gtk::DrawingArea::builder()
         .height_request(CANVAS_H)
         .hexpand(true)
@@ -355,10 +463,12 @@ fn arrangement(state: &Rc<App>, placed: &Rc<RefCell<Vec<Screen>>>) -> gtk::Widge
         let list = placed.clone();
         let held = held.clone();
         let area = area.clone();
+        let hold = hold.clone();
         drag.connect_drag_update(move |_, dx, dy| {
             let Some((i, ox0, oy0)) = *held.borrow() else {
                 return;
             };
+            hold.set(Instant::now() + SETTLE);
             let mut screens = list.borrow_mut();
             let Some((scale, _, _)) = fit(&screens, area.width() as f64, area.height() as f64)
             else {
@@ -376,10 +486,12 @@ fn arrangement(state: &Rc<App>, placed: &Rc<RefCell<Vec<Screen>>>) -> gtk::Widge
         let held = held.clone();
         let area = area.clone();
         let state = state.clone();
+        let hold = hold.clone();
         drag.connect_drag_end(move |_, _, _| {
             let Some((i, _, _)) = held.borrow_mut().take() else {
                 return;
             };
+            hold.set(Instant::now() + SETTLE);
 
             let mut screens = list.borrow_mut();
             let (name, x, y) = {
@@ -628,16 +740,6 @@ pub fn separator(card: &gtk::Box) {
     let sep = gtk::Box::new(Orientation::Horizontal, 0);
     sep.add_css_class("row-sep");
     card.append(&sep);
-}
-
-fn scrolled(child: &gtk::Box) -> gtk::Widget {
-    gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .child(child)
-        .hexpand(true)
-        .vexpand(true)
-        .build()
-        .upcast()
 }
 
 #[cfg(test)]
