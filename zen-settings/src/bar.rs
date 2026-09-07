@@ -317,7 +317,7 @@ fn bar_card(state: &Rc<App>, doc: &Rc<RefCell<Map<String, Value>>>) -> gtk::Widg
         gap.connect_value_changed(move |s| {
             let v = s.value().round() as i64;
             let mut doc_ref = doc.borrow_mut();
-            for key in ["margin-top", "margin-left", "margin-right"] {
+            for key in ["margin-top", "margin-bottom", "margin-left", "margin-right"] {
                 doc_ref.insert(key.into(), Value::from(v));
             }
             drop(doc_ref);

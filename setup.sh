@@ -640,6 +640,11 @@ EOF
         N_MISSING=$((N_MISSING + 1))
     fi
 
+    # screen sharing needs four separate things and fails the same way when any one of
+    # them is absent: a black frame and no message. Each is asked about separately so
+    # the answer names which one.
+    check_screencast
+
     # fontconfig being installed says nothing about there being a font to find.
     if have fc-list; then
         local nfonts nmono
@@ -704,6 +709,53 @@ EOF
             N_MISSING=$((N_MISSING + 1))
         fi
     done
+}
+
+check_screencast() {
+    local zen_bin="$PREFIX/bin/zen"
+    [ -x "$zen_bin" ] || zen_bin="target/$BUILD_PROFILE/zen"
+
+    # Built without the feature, the compositor never claims the bus name and every
+    # capture tool records nothing. The interface string is in the binary either way.
+    if [ -x "$zen_bin" ] && have strings; then
+        # pipefail plus grep -q is a trap here: grep exits on the first match, strings
+        # takes SIGPIPE, and the pipeline reports failure on a binary that is fine.
+        if (set +o pipefail; strings -a "$zen_bin" 2>/dev/null                 | grep -q "org.gnome.Mutter.ScreenCast"); then
+            row_ok "screencast build" ""
+            N_OK=$((N_OK + 1))
+        else
+            row_miss "screencast build" "this zen was built without xdp-gnome-screencast"
+            N_MISSING=$((N_MISSING + 1))
+        fi
+    fi
+
+    if have pgrep && pgrep -x pipewire >/dev/null 2>&1; then
+        row_ok "pipewire running" ""
+        N_OK=$((N_OK + 1))
+    elif have pipewire; then
+        row_miss "pipewire running" "installed but not started (systemctl --user start pipewire)"
+        N_MISSING=$((N_MISSING + 1))
+    fi
+
+    # Only meaningful inside a session, where the bus exists at all.
+    if [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] && have busctl; then
+        if busctl --user status org.gnome.Mutter.ScreenCast >/dev/null 2>&1; then
+            row_ok "screencast service" "zen is answering on the bus"
+            N_OK=$((N_OK + 1))
+        else
+            row_miss "screencast service" "zen is not answering org.gnome.Mutter.ScreenCast"
+            N_MISSING=$((N_MISSING + 1))
+        fi
+    fi
+
+    if [ -n "${XDG_CURRENT_DESKTOP:-}" ]; then
+        case "$XDG_CURRENT_DESKTOP" in
+            *zen*) row_ok "desktop name" "$XDG_CURRENT_DESKTOP"
+                   N_OK=$((N_OK + 1)) ;;
+            *) row_miss "desktop name" "XDG_CURRENT_DESKTOP is $XDG_CURRENT_DESKTOP, so the portal reads the wrong config"
+               N_MISSING=$((N_MISSING + 1)) ;;
+        esac
+    fi
 }
 
 # Conditions that no package can fix, so these report rather than add to the install

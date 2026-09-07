@@ -180,3 +180,27 @@ fn destroying_a_hidden_output_clears_the_flag_with_it() {
         .unwrap();
     assert!(!zen.is_hidden_output(&output), "the old flag came back");
 }
+
+#[test]
+fn a_virtual_output_is_castable() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.zen_state()
+        .create_virtual_output("stream", 1280, 720, 60_000, false)
+        .unwrap();
+
+    f.zen_state().refresh_ipc_outputs();
+
+    let outputs = f.zen_state().backend.ipc_outputs();
+    let outputs = outputs.lock().unwrap();
+    let entry = outputs
+        .values()
+        .find(|o| o.name == "stream")
+        .expect("the virtual output should be listed");
+
+    assert!(
+        entry.logical.is_some(),
+        "record_monitor refuses an output with no logical geometry as disabled, so a \
+         virtual one could never be cast"
+    );
+}
