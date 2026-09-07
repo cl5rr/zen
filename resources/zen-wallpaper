@@ -99,29 +99,42 @@ apply() {
 
     if is_video "$wp"; then
         apply_video "$wp"
-    elif command -v swww >/dev/null 2>&1; then
+    elif swww_bin >/dev/null; then
         apply_swww "$wp"
     else
         apply_swaybg "$wp"
     fi
 }
 
+# The AUR builds swww under the name awww, binaries and all, so looking only for
+# `swww` fell through to swaybg and lost the crossfade on a machine that had it.
+swww_bin() {
+    local name
+    for name in swww awww; do
+        command -v "$name" 2>/dev/null && return 0
+    done
+    return 1
+}
+
 # swww crossfades in the compositor for us, which is the only way to get a real
 # transition: nothing else here can draw two wallpapers at once.
 apply_swww() {
     local img="$1"
+    local bin daemon
+    bin=$(swww_bin) || { apply_swaybg "$img"; return; }
+    daemon="$bin-daemon"
 
-    if ! swww query >/dev/null 2>&1; then
-        swww-daemon >/dev/null 2>&1 &
+    if ! "$bin" query >/dev/null 2>&1; then
+        "$daemon" >/dev/null 2>&1 &
         local waited=0
-        while ! swww query >/dev/null 2>&1; do
+        while ! "$bin" query >/dev/null 2>&1; do
             sleep 0.1
             waited=$((waited + 1))
             [ "$waited" -gt 30 ] && break
         done
     fi
 
-    if swww img --transition-type fade --transition-duration "$(fade_seconds)" \
+    if "$bin" img --transition-type fade --transition-duration "$(fade_seconds)" \
              --transition-fps 60 "$img" >/dev/null 2>&1; then
         pkill -x swaybg 2>/dev/null
         pkill -x mpvpaper 2>/dev/null

@@ -40,7 +40,6 @@ check() {
 }
 
 root=$(mktemp -d) || exit 1
-trap 'rm -rf "$root"' EXIT
 
 # One libexec directory, not both, which is the case that used to fail.
 mkdir -p "$root/lib" "$root/lib/polkit-gnome"
@@ -61,6 +60,25 @@ check "a backend, by glob"                  found  libexec_any 'xdg-desktop-port
 check "the gnome backend, by name"          found  libexec_any xdg-desktop-portal-gnome
 check "a backend that is not installed"     absent libexec_any xdg-desktop-portal-kde
 check "a polkit agent one level down"       found  libexec_any 'polkit-*/polkit-*-authentication-agent-1'
+
+# The AUR builds swww as `awww`, so a machine with a working wallpaper daemon was
+# being told to install one.
+stub=$(mktemp -d) || exit 1
+trap 'rm -rf "$root" "$stub"' EXIT
+printf '#!/bin/sh\n' > "$stub/awww"
+chmod +x "$stub/awww"
+PATH="$stub:$PATH"
+
+check "swww, installed under its other name" found  have_any_cmd "swww,awww"
+check "neither name installed"               absent have_any_cmd "swww-nope,awww-nope"
+
+# The pair in BIND_APPS has to carry both names or the check above proves nothing.
+if printf '%s' "$BIND_APPS" | grep -q 'swww,awww:swww'; then
+    printf '  ok   the wallpaper bind asks about both names\n'
+else
+    printf '  FAIL the wallpaper bind asks about one name only\n'
+    fail=1
+fi
 
 # The portal is never on PATH, so the generic runtime probe has to know about it.
 check "xdg-desktop-portal as a runtime dep" found  runtime_present xdg-desktop-portal

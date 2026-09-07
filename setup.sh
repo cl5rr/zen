@@ -171,6 +171,16 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # `ls a b` reports failure when any one operand is absent, so a probe naming two
 # libexec directories at once failed on every distro that has only one of them, and
 # called an installed portal missing.
+# Some of these go by more than one name. The AUR builds swww as `awww`, and asking
+# only about `swww` reported a wallpaper daemon missing on a machine that had one.
+have_any_cmd() {
+    local names="$1" name
+    for name in ${names//,/ }; do
+        have "$name" && return 0
+    done
+    return 1
+}
+
 any_file() {
     local candidate
     for candidate in "$@"; do
@@ -741,8 +751,8 @@ EOF
     for pair in $BIND_APPS; do
         cmd="${pair%%:*}"
         pkg="${pair##*:}"
-        if have "$cmd"; then
-            row_ok "$cmd" ""
+        if have_any_cmd "$cmd"; then
+            row_ok "${cmd%%,*}" ""
             N_OK=$((N_OK + 1))
         else
             row_miss "$cmd" "$pkg"
@@ -923,6 +933,10 @@ pkg_available() {
 pkg_installed() {
     local pkg="$1"
     [ -n "$pkg" ] || return 1
+    # The AUR builds swww under the name awww; either one means you have it.
+    if [ "$pkg" = swww ] && pkg_installed awww; then
+        return 0
+    fi
     case "$PKG_MGR" in
         pacman) pacman -Qq -- "$pkg" >/dev/null 2>&1 ;;
         apt)    dpkg-query -W -f='${Status}' -- "$pkg" 2>/dev/null | grep -q "ok installed" ;;
@@ -963,10 +977,11 @@ install_from_aur() {
         return 0
     }
 
-    local wanted="" pkg
-    for pkg in "$@"; do
-        case " $AUR_ONLY " in *" $pkg "*) wanted="$wanted $pkg" ;; esac
-    done
+    # Everything absent is offered, not just the names ZEN knows are AUR-only. A
+    # helper asked for something the AUR does not have says so and stops; being told
+    # only about the curated list is how "ly is not in your repositories" turned into
+    # a dead end.
+    local wanted="$*"
     wanted="${wanted# }"
     [ -n "$wanted" ] || {
         dim "everything else will still be installed"
@@ -981,8 +996,9 @@ install_from_aur() {
         if confirm; then
             # Deliberately not run through $SUDO: every AUR helper refuses to run as
             # root, and makepkg will not build as root either.
+            local y=""; [ "$ASSUME_YES" = 1 ] && y=1
             # shellcheck disable=SC2086
-            $helper -S --needed $wanted || warn "the AUR build did not finish"
+            $helper -S --needed ${y:+--noconfirm} $wanted                 || warn "the AUR build did not finish"
         else
             dim "skipped"
         fi
@@ -1662,23 +1678,46 @@ pkg_install() {
     for pkg in "$@"; do
         pkg_available "$pkg" && have_pkgs="$have_pkgs $pkg"
     done
-    [ -n "${have_pkgs# }" ] || {
-        warn "none of these are in your repositories: $*"
-        return 0
+    local wanted="$*"
+    local absent=""
+    for pkg in "$@"; do
+        case " $have_pkgs " in *" $pkg "*) ;; *) absent="$absent $pkg" ;; esac
+    done
+
+    if [ -n "${absent# }" ]; then
+        warn "not in your repositories:${absent}"
+        # shellcheck disable=SC2086
+        install_from_aur $absent
+    fi
+
+    if [ -n "${have_pkgs# }" ]; then
+        # shellcheck disable=SC2086
+        set -- $have_pkgs
+
+        need_root
+        local y=""; [ "$ASSUME_YES" = 1 ] && y=1
+
+        case "$PKG_MGR" in
+            pacman) $SUDO pacman -S --needed ${y:+--noconfirm} "$@" ;;
+            apt)    $SUDO apt-get update && $SUDO apt-get install ${y:+-y} "$@" ;;
+            dnf)    $SUDO dnf install ${y:+-y} "$@" ;;
+            apk)    $SUDO apk add "$@" ;;
+            zypper) $SUDO zypper install ${y:+-y} "$@" ;;
+        esac || warn "the package manager reported a problem; carrying on"
+    fi
+
+    # Answering the only question that matters. Reporting success for a transaction
+    # that skipped the one package the step was about is how "Ly installed" appeared
+    # above a machine with no Ly on it.
+    local still=""
+    for pkg in $wanted; do
+        pkg_installed "$pkg" || still="$still $pkg"
+    done
+    [ -z "${still# }" ] || {
+        warn "still not installed:${still}"
+        return 1
     }
-    # shellcheck disable=SC2086
-    set -- $have_pkgs
-
-    need_root
-    local y=""; [ "$ASSUME_YES" = 1 ] && y=1
-
-    case "$PKG_MGR" in
-        pacman) $SUDO pacman -S --needed ${y:+--noconfirm} "$@" ;;
-        apt)    $SUDO apt-get update && $SUDO apt-get install ${y:+-y} "$@" ;;
-        dnf)    $SUDO dnf install ${y:+-y} "$@" ;;
-        apk)    $SUDO apk add "$@" ;;
-        zypper) $SUDO zypper install ${y:+-y} "$@" ;;
-    esac || warn "the package manager reported a problem; carrying on"
+    return 0
 }
 
 # The handful of desktop packages whose name is not the same everywhere. Everything not
@@ -1736,7 +1775,7 @@ install_desktop_apps() {
 
 # What the shipped keybinds spawn, as "command:package" pairs. Checked by command
 # because that is what a bind actually needs to find on PATH.
-BIND_APPS="waybar:waybar swww:swww mpvpaper:mpvpaper pavucontrol:pavucontrol blueman-manager:blueman makoctl:mako discord:discord wl-copy:wl-clipboard cliphist:cliphist swayidle:swayidle alacritty:alacritty fuzzel:fuzzel swaybg:swaybg swaylock:swaylock wpctl:wireplumber playerctl:playerctl brightnessctl:brightnessctl xdg-open:xdg-utils firefox:firefox nautilus:nautilus mako:mako"
+BIND_APPS="waybar:waybar swww,awww:swww mpvpaper:mpvpaper pavucontrol:pavucontrol blueman-manager:blueman makoctl:mako discord:discord wl-copy:wl-clipboard cliphist:cliphist swayidle:swayidle alacritty:alacritty fuzzel:fuzzel swaybg:swaybg swaylock:swaylock wpctl:wireplumber playerctl:playerctl brightnessctl:brightnessctl xdg-open:xdg-utils firefox:firefox nautilus:nautilus mako:mako"
 
 install_extra_apps() {
     step "Installing optional extras"
@@ -1784,15 +1823,40 @@ write_user_config() {
 
     if [ -f "$dst" ]; then
         ok "config already exists at $dst, left alone"
-        return 0
+    else
+        mkdir -p "$dir"
+        cp resources/default-config.kdl "$dst"
+        ok "wrote $dst"
+        dim "it is heavily commented, and reloads live while ZEN is running"
     fi
-    mkdir -p "$dir"
-    cp resources/default-config.kdl "$dst"
-    ok "wrote $dst"
-    dim "it is heavily commented, and reloads live while ZEN is running"
+}
 
+# designs
+#
+# The wallpapers and the themes for waybar, the launcher, the terminal and the lock
+# screen. None of it depends on the config file, and it used to run only when
+# write_user_config had just created one. ZEN writes that file itself the first time it
+# starts, so anyone who booted the session before finishing setup never got a wallpaper,
+# a themed bar or a themed launcher, and nothing said why.
+#
+# Every step leaves a config of your own alone, so this is safe to run every time.
+apply_designs() {
     seed_wallpapers
     theme_all
+}
+
+# Everything after the build, as a function rather than a run of lines inside main, so
+# a test can set the flags and run it. A test that greps main for the right shape
+# passes for the wrong reason, which is how this one first shipped green.
+post_install_steps() {
+    if [ "$RESET_CONFIG" = 1 ]; then reset_user_config; apply_designs; fi
+    if [ "$W_CONFIG" = 1 ]; then write_user_config; fi
+    # Not tied to W_CONFIG: someone who installs ZEN wants the bar and the wallpaper
+    # whether or not their config file happens to need writing.
+    if [ "$W_CONFIG" = 1 ] || { [ "$DO_INSTALL" = 1 ] && [ "$DO_UPDATE" = 0 ]; }; then
+        apply_designs
+    fi
+    if [ "$W_GREETER" = 1 ]; then install_greeter; fi
 }
 
 # Themes the app launcher, unless you already have a config of your own.
@@ -1988,7 +2052,11 @@ install_greeter_ly() {
 
     remove_greetd_if_present
 
-    pacman_install $GREETER_LY_PKGS || return 1
+    if ! pacman_install $GREETER_LY_PKGS; then
+        warn "Ly did not get installed, so there is nothing to configure"
+        dim "install it yourself, then run ./setup.sh --greeter ly"
+        return 1
+    fi
     need_root
 
     theme_ly
@@ -2001,7 +2069,11 @@ install_greeter_greetd() {
     step "Installing the login screen"
     dim "greetd runs the session, ReGreet draws it, cage hosts it"
 
-    pacman_install $GREETER_PKGS || return 1
+    if ! pacman_install $GREETER_PKGS; then
+        warn "greetd did not get installed, so there is nothing to configure"
+        dim "install it yourself, then run ./setup.sh --greeter greetd"
+        return 1
+    fi
 
     need_root
     if [ -f /etc/greetd/config.toml ] && ! grep -q regreet /etc/greetd/config.toml 2>/dev/null; then
@@ -2075,7 +2147,7 @@ wizard_summary() {
     [ "$DO_BUILD"    = 1 ] && info "• build ZEN (this is the slow part, 5 to 15 minutes)"
     [ "$DO_INSTALL"  = 1 ] && info "• install ZEN to $PREFIX"
     [ "$W_CONFIG"    = 1 ] && info "• write your config file"
-    [ "$W_GREETER"   = 1 ] && info "• install and configure the login screen"
+    [ "$W_GREETER"   = 1 ] && info "• install and configure the login screen ($GREETER)"
     printf '\n'
 }
 
@@ -2101,10 +2173,16 @@ wizard() {
     case "$UI_CHOICE" in
         0)  DO_DEPS=1; DO_BUILD=1; DO_INSTALL=1
             W_APPS=1; W_CONFIG=1
-            ui_menu "Also set up a graphical login screen?" \
-                "Yes, install and configure greetd" \
+            # Asked here rather than at the end, because the end is after the build and
+            # nobody is still watching by then.
+            ui_menu "Set up a login screen?" \
+                "Ly     (a small TTY greeter, no GTK, nothing else to install)" \
+                "greetd + ReGreet  (graphical, heavier, needs cage)" \
                 "No, I will start ZEN from a TTY" || return 1
-            [ "$UI_CHOICE" = 0 ] && W_GREETER=1
+            case "$UI_CHOICE" in
+                0) W_GREETER=1; GREETER=ly ;;
+                1) W_GREETER=1; GREETER=greetd ;;
+            esac
             ;;
         1)  DO_UPDATE=1; DO_DEPS=1; DO_BUILD=1; DO_INSTALL=1 ;;
         2)  ui_multi "Pick what to do  (space toggles)" \
@@ -2178,15 +2256,13 @@ main() {
     # An update runs the full audit too. A pull can add a bind that spawns something
     # new, or a library a new feature links against, and neither would ever be offered
     # otherwise: --update does not go through the install steps.
-    if [ "$DO_UPDATE" = 1 ]; then theme_all; check_deps; install_deps; fi
+    if [ "$DO_UPDATE" = 1 ]; then apply_designs; check_deps; install_deps; fi
     if [ "$DO_DEPS" = 1 ] && [ "$DO_UPDATE" = 0 ]; then check_deps; install_deps; fi
     if [ "$W_APPS" = 1 ]; then install_desktop_apps; fi
     if [ "$W_EXTRAS" = 1 ]; then install_extra_apps; fi
     if [ "$DO_BUILD" = 1 ]; then ensure_rust; build; fi
     if [ "$DO_INSTALL" = 1 ]; then install_zen; fi
-    if [ "$RESET_CONFIG" = 1 ]; then reset_user_config; seed_wallpapers; theme_all; fi
-    if [ "$W_CONFIG" = 1 ]; then write_user_config; fi
-    if [ "$W_GREETER" = 1 ]; then install_greeter; fi
+    post_install_steps
 
     printf '\n%sdone%s\n' "$C_GREEN$C_BOLD" "$C_RESET"
     if [ "$DO_UPDATE" = 1 ]; then update_epilogue; fi
