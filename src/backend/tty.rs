@@ -61,7 +61,7 @@ use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 use wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_feedback_v1::TrancheFlags;
 use wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
 
-use super::{IpcOutputMap, RenderResult};
+use super::{keep_virtual_outputs, IpcOutputMap, RenderResult};
 use crate::backend::OutputId;
 use crate::frame_clock::FrameClock;
 use crate::state::{Zen, RedrawState, State};
@@ -2070,6 +2070,7 @@ impl Tty {
                     vrr_enabled,
                     logical,
                     max_bpc,
+                    preview: None,
                 };
 
                 ipc_outputs.insert(id, ipc_output);
@@ -2077,6 +2078,7 @@ impl Tty {
         }
 
         let mut guard = self.ipc_outputs.lock().unwrap();
+        keep_virtual_outputs(&guard, &mut ipc_outputs);
         *guard = ipc_outputs;
         zen.ipc_outputs_changed = true;
     }

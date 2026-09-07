@@ -31,6 +31,8 @@ pub struct Screen {
     pub h: f64,
     pub scale: f64,
     pub is_virtual: bool,
+    pub placed: bool,
+    pub preview: Option<bool>,
 }
 
 fn detect() -> Vec<Screen> {
@@ -64,18 +66,35 @@ fn detect() -> Vec<Screen> {
                 })
                 .unwrap_or_default();
 
+            let current_mode = o["current_mode"].as_u64().map(|i| i as usize);
+
+            // A hidden virtual output has no place on the canvas and so no logical
+            // block, and falling back to 1920x1080 there described a screen that does
+            // not exist. Its mode is the only size it has.
+            let mode_size = current_mode
+                .and_then(|i| o["modes"].as_array().and_then(|list| list.get(i)))
+                .map(|m| {
+                    (
+                        m["width"].as_f64().unwrap_or(1920.),
+                        m["height"].as_f64().unwrap_or(1080.),
+                    )
+                })
+                .unwrap_or((1920., 1080.));
+
             let logical = &o["logical"];
             Screen {
                 name: name.clone(),
                 modes,
-                current_mode: o["current_mode"].as_u64().map(|i| i as usize),
+                current_mode,
                 x: logical["x"].as_f64().unwrap_or(0.),
                 y: logical["y"].as_f64().unwrap_or(0.),
-                w: logical["width"].as_f64().unwrap_or(1920.),
-                h: logical["height"].as_f64().unwrap_or(1080.),
+                w: logical["width"].as_f64().unwrap_or(mode_size.0),
+                h: logical["height"].as_f64().unwrap_or(mode_size.1),
                 scale: logical["scale"].as_f64().unwrap_or(1.),
                 is_virtual: o["make"].as_str() == Some("ZEN")
                     && o["model"].as_str() == Some("Virtual"),
+                placed: logical.is_object(),
+                preview: o["preview"].as_bool(),
             }
         })
         .collect();
@@ -128,9 +147,11 @@ fn signature(screens: &[Screen]) -> String {
     let mut out = String::new();
     for s in screens {
         out.push_str(&format!(
-            "{}|{}|{:.0},{:.0}|{:.0}x{:.0}|{:.3}|{}|{}\n",
+            "{}|{}|{}|{}|{:.0},{:.0}|{:.0}x{:.0}|{:.3}|{}|{}\n",
             s.name,
             s.is_virtual,
+            s.placed,
+            s.preview.unwrap_or(false),
             s.x,
             s.y,
             s.w,
@@ -218,11 +239,20 @@ fn build_column(
             .build(),
     );
 
-    let names: Vec<String> = screens.iter().map(|s| s.name.clone()).collect();
-    let placed = Rc::new(RefCell::new(screens.clone()));
+    // Only real screens count towards "do not turn off the last one". A virtual
+    // output left in this list would let the safety check believe there was
+    // another monitor to fall back to, and there is not one you can look at.
+    let names: Vec<String> = screens
+        .iter()
+        .filter(|s| !s.is_virtual)
+        .map(|s| s.name.clone())
+        .collect();
+    let placed = Rc::new(RefCell::new(
+        screens.iter().filter(|s| s.placed).cloned().collect::<Vec<_>>(),
+    ));
     column.append(&arrangement(state, &placed, hold));
 
-    for (i, screen) in screens.iter().enumerate() {
+    for (i, screen) in screens.iter().filter(|s| !s.is_virtual).enumerate() {
         column.append(
             &gtk::Label::builder()
                 .label(screen.name.to_uppercase())
@@ -272,12 +302,40 @@ fn virtual_card(state: &Rc<App>, screens: &[Screen], reload: &Refresh) -> gtk::W
                     run_output(&state, &name, &["destroy"], &format!("removed {name}"), &reload);
                 });
             }
-            let where_ = if screen.w > 0. && screen.h > 0. {
+            let where_ = if screen.placed {
                 format!("{:.0}x{:.0}, at {:.0},{:.0}", screen.w, screen.h, screen.x, screen.y)
             } else {
-                format!("{:.0}x{:.0}, hidden", screen.w, screen.h)
+                format!("{:.0}x{:.0}, off to the side", screen.w, screen.h)
             };
             card.append(&row(&screen.name, &where_, remove.upcast()));
+            separator(&card);
+
+            let show = gtk::Switch::builder()
+                .valign(Align::Center)
+                .active(screen.preview.unwrap_or(false))
+                .build();
+            {
+                let state = state.clone();
+                let name = screen.name.clone();
+                let reload = reload.clone();
+                show.connect_state_set(move |_, on| {
+                    let arg: &[&str] = if on { &["preview"] } else { &["preview", "--off"] };
+                    run_output(
+                        &state,
+                        &name,
+                        arg,
+                        if on { "showing it on screen" } else { "hidden again" },
+                        &reload,
+                    );
+                    glib::Propagation::Proceed
+                });
+            }
+            card.append(&row(
+                "Show it on screen",
+                "Draws what this monitor is rendering in the corner of your real screens, \
+                 so you can see what a capture would get",
+                show.upcast(),
+            ));
             separator(&card);
         }
     }

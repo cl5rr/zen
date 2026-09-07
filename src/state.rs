@@ -159,7 +159,7 @@ use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
 use crate::render_helpers::renderer::ZenRenderer;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
 use crate::render_helpers::surface::push_elements_from_surface_tree;
-use crate::render_helpers::texture::TextureBuffer;
+use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
 use crate::render_helpers::xray::{Xray, XrayPos};
 use crate::render_helpers::{
     encompassing_geo, render_to_dmabuf, render_to_encompassing_texture, render_to_shm,
@@ -170,6 +170,7 @@ use crate::screencasting::Screencasting;
 use crate::ui::config_error_notification::ConfigErrorNotification;
 use crate::ui::exit_confirm_dialog::{ExitConfirmDialog, ExitConfirmDialogRenderElement};
 use crate::ui::hotkey_overlay::HotkeyOverlay;
+use crate::backend::virtual_output::preview_rect;
 use crate::backend::VirtualOutput;
 use crate::ui::welcome::{Welcome, WelcomeRenderElement};
 use crate::ui::mru::{MruCloseRequest, WindowMruUi, WindowMruUiRenderElement};
@@ -1647,7 +1648,9 @@ impl State {
 
     pub fn apply_transient_output_config(&mut self, name: &str, action: zen_ipc::OutputAction) {
         self.modify_output_config(name, move |config| match action {
-            zen_ipc::OutputAction::Create { .. } | zen_ipc::OutputAction::Destroy => (),
+            zen_ipc::OutputAction::Create { .. }
+            | zen_ipc::OutputAction::Destroy
+            | zen_ipc::OutputAction::Preview { .. } => (),
             zen_ipc::OutputAction::Off => config.off = true,
             zen_ipc::OutputAction::On => config.off = false,
             zen_ipc::OutputAction::Mode { mode } => {
@@ -1722,6 +1725,24 @@ impl State {
         self.reload_output_config();
     }
 
+    // A virtual output shows up in `zen msg outputs` and can be cast from, and until
+    // this there was no way to look at one. The preview is per output rather than
+    // global so two of them do not fight over the same corner.
+    pub fn set_virtual_output_preview(&mut self, name: &str, on: bool) -> Result<(), String> {
+        let Some(virtual_output) = self.zen.virtual_outputs.get_mut(name) else {
+            return Err(format!("{name} is not a virtual output"));
+        };
+        virtual_output.preview = on;
+        let id = virtual_output.id;
+
+        // Settings reads this back, so a switch left on survives Settings being closed.
+        if let Some(entry) = self.backend.ipc_outputs().lock().unwrap().get_mut(&id) {
+            entry.preview = Some(on);
+        }
+        self.zen.ipc_outputs_changed = true;
+        Ok(())
+    }
+
     pub fn create_virtual_output(
         &mut self,
         name: &str,
@@ -1762,6 +1783,7 @@ impl State {
                 vrr_enabled: false,
                 logical: None,
                 max_bpc: None,
+                preview: Some(false),
             },
         );
         self.zen.ipc_outputs_changed = true;
@@ -3982,6 +4004,37 @@ impl Zen {
             self.render_pointer(ctx.renderer, output, &mut |elem| push(elem.into()));
         }
 
+        // preview
+        if !self.virtual_outputs.is_empty() && !self.is_virtual_output(output) {
+            let host = output_size(output);
+            for virtual_output in self.virtual_outputs.values() {
+                let Some((texture, size)) = virtual_output.preview_texture() else {
+                    continue;
+                };
+                let Some(rect) = preview_rect(host, size) else {
+                    continue;
+                };
+                let buffer = TextureBuffer::from_texture(
+                    ctx.renderer.as_gles_renderer(),
+                    texture.clone(),
+                    1.,
+                    Transform::Normal,
+                    Vec::new(),
+                );
+                push(
+                    PrimaryGpuTextureRenderElement(TextureRenderElement::from_texture_buffer(
+                        buffer,
+                        rect.loc,
+                        1.,
+                        None,
+                        Some(rect.size),
+                        Kind::Unspecified,
+                    ))
+                    .into(),
+                );
+            }
+        }
+
         {
             if let Some(transition) = &state.screen_transition {
                 push(transition.render(ctx.target).into());
@@ -6145,6 +6198,10 @@ impl Zen {
         self.virtual_outputs.contains_key(&output.name())
     }
 
+    pub fn is_previewed(&self, name: &str) -> bool {
+        self.virtual_outputs.get(name).is_some_and(|v| v.preview)
+    }
+
     pub fn render_virtual_output(
         &mut self,
         backend: &mut Backend,
@@ -6159,7 +6216,22 @@ impl Zen {
             .unwrap_or(RenderResult::Skipped);
 
         let interval = virtual_output.refresh_interval();
+        let previewed = virtual_output.preview;
         self.virtual_outputs.insert(output.name(), virtual_output);
+
+        // A preview is only live if the screen showing it is told to redraw, and the
+        // real outputs have no reason of their own to think anything changed.
+        if previewed && matches!(result, RenderResult::Submitted) {
+            let showing: Vec<Output> = self
+                .output_state
+                .keys()
+                .filter(|o| !self.is_virtual_output(o))
+                .cloned()
+                .collect();
+            for output in showing {
+                self.queue_redraw(&output);
+            }
+        }
 
         let state = self.output_state.get_mut(output).unwrap();
         state.redraw_state = RedrawState::Idle;

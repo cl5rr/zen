@@ -8,7 +8,7 @@ use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
 use smithay::backend::renderer::{Bind, Offscreen};
 use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
-use smithay::utils::{Size, Transform};
+use smithay::utils::{Logical, Physical, Point, Rectangle, Size, Transform};
 use smithay::wayland::presentation::Refresh;
 
 use super::{OutputId, RenderResult};
@@ -16,10 +16,45 @@ use crate::render_helpers::{RenderCtx, RenderTarget};
 use crate::state::Zen;
 use crate::utils::get_monotonic_time;
 
+// preview
+pub const PREVIEW_WIDTH: f64 = 0.25;
+pub const PREVIEW_MAX_HEIGHT: f64 = 0.4;
+pub const PREVIEW_MARGIN: f64 = 24.;
+
+// A quarter of the screen wide, in the virtual output's own aspect ratio, tucked into
+// the bottom right corner. Height is capped separately so a tall virtual output cannot
+// take over the screen it is being previewed on.
+pub fn preview_rect(
+    host: Size<f64, Logical>,
+    virtual_size: Size<i32, Physical>,
+) -> Option<Rectangle<f64, Logical>> {
+    if host.w <= 0. || host.h <= 0. || virtual_size.w <= 0 || virtual_size.h <= 0 {
+        return None;
+    }
+
+    let aspect = f64::from(virtual_size.h) / f64::from(virtual_size.w);
+    let mut w = (host.w * PREVIEW_WIDTH).min(host.w - PREVIEW_MARGIN * 2.);
+    let mut h = w * aspect;
+
+    let tallest = host.h * PREVIEW_MAX_HEIGHT;
+    if h > tallest {
+        h = tallest;
+        w = h / aspect;
+    }
+    if w < 1. || h < 1. {
+        return None;
+    }
+
+    let x = (host.w - w - PREVIEW_MARGIN).max(0.);
+    let y = (host.h - h - PREVIEW_MARGIN).max(0.);
+    Some(Rectangle::new(Point::from((x, y)), Size::from((w, h))))
+}
+
 pub struct VirtualOutput {
     pub output: Output,
     pub id: OutputId,
     pub hidden: bool,
+    pub preview: bool,
     size: Size<i32, smithay::utils::Physical>,
     damage: OutputDamageTracker,
     texture: Option<GlesTexture>,
@@ -57,9 +92,20 @@ impl VirtualOutput {
             output,
             id: OutputId::next(),
             hidden,
+            preview: false,
             size: mode.size,
             texture: None,
         }
+    }
+
+    // The texture this output renders into is the whole of it: nothing on the desk
+    // shows it, which is the point and also the reason there is no way to tell whether
+    // it is working. The preview puts that texture in a corner of the real screens.
+    pub fn preview_texture(&self) -> Option<(&GlesTexture, Size<i32, Physical>)> {
+        if !self.preview {
+            return None;
+        }
+        Some((self.texture.as_ref()?, self.size))
     }
 
     pub fn refresh_interval(&self) -> Duration {

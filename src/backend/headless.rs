@@ -105,6 +105,7 @@ impl Headless {
                 vrr_enabled: false,
                 logical: Some(logical_output(&output)),
                 max_bpc: None,
+                preview: None,
             },
         );
 

@@ -402,6 +402,19 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                 return Ok(Response::Handled);
             }
 
+            if let zen_ipc::OutputAction::Preview { off } = action {
+                let (tx, rx) = async_channel::bounded(1);
+                ctx.event_loop.insert_idle(move |state| {
+                    let result = state.set_virtual_output_preview(&output, !off);
+                    if result.is_ok() {
+                        state.zen.queue_redraw_all();
+                    }
+                    let _ = tx.send_blocking(result);
+                });
+                rx.recv().await.unwrap_or_else(|_| Err("no reply".to_owned()))?;
+                return Ok(Response::Handled);
+            }
+
             if matches!(action, zen_ipc::OutputAction::Destroy) {
                 let (tx, rx) = async_channel::bounded(1);
                 ctx.event_loop.insert_idle(move |state| {

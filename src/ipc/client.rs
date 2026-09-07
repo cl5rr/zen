@@ -570,6 +570,7 @@ fn print_output(output: Output) -> anyhow::Result<()> {
         vrr_enabled,
         logical,
         max_bpc,
+        preview,
     } = output;
 
     let serial = serial.as_deref().unwrap_or("Unknown");
@@ -654,6 +655,10 @@ fn print_output(output: Output) -> anyhow::Result<()> {
 
     if let Some(max_bpc) = max_bpc {
         println!("  Max bits per channel: {max_bpc}");
+    }
+
+    if let Some(preview) = preview {
+        println!("  Virtual, previewed on screen: {}", if preview { "yes" } else { "no" });
     }
 
     println!("  Available modes:");

@@ -69,9 +69,10 @@ per-output virtual monitors.
 ## What does not work yet
 
 - **Virtual monitors are experimental.** They can be created and destroyed at
-  runtime, they are listed over the IPC, and they render offscreen, but nothing
-  consumes that texture yet and the per-window visibility mask is not built.
-  There is no way to place one beside a real monitor and walk the pointer onto it.
+  runtime, they are listed over the IPC, a screen recorder can point at one, and
+  `preview` draws one in the corner of your real screens. The per-window
+  visibility mask is not built, so a window cannot be on the virtual monitor and
+  hidden from the real one at the same time.
 - **Canvas widgets** are not started.
 - **The workspace grid** is still underneath the canvas. It is invisible now, but
   it has not been retired, and it is why some layout code has more cases than the
@@ -176,13 +177,19 @@ anything showing it.
 ```sh
 zen msg output stream create --width 1920 --height 1080
 zen msg outputs                      # it is there, like any other monitor
+zen msg output stream preview        # and now you can see it
+zen msg output stream preview --off
 zen msg output stream destroy
 ```
 
-Experimental, and honestly so: creating, destroying and rendering work, but
-nothing consumes the texture yet, so there is no screencast of it and no way to
-hide a window from your real screen while keeping it on this one. That mask is
-the next piece.
+`preview` draws what the virtual monitor is rendering into the bottom right
+corner of every real screen, a quarter of the width and in its own aspect ratio.
+It is the only way to tell whether one is doing anything, since by definition
+nothing on your desk shows it. Settings has the same switch under Monitors.
+
+Experimental, and honestly so: creating, destroying, rendering, casting and
+previewing work, but there is still no way to hide a window from your real screen
+while keeping it on this one. That mask is the next piece.
 
 ## Wallpapers
 
