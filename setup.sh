@@ -760,6 +760,35 @@ check_screencast() {
                N_MISSING=$((N_MISSING + 1)) ;;
         esac
     fi
+
+    # The routing file. Without it the portal picks a backend by its own defaults, and
+    # on a desktop it does not recognise that is usually none at all.
+    local routing="/usr/share/xdg-desktop-portal/zen-portals.conf"
+    if [ -f "$routing" ] || [ -f "/etc/xdg-desktop-portal/zen-portals.conf" ]; then
+        row_ok "portal routing" ""
+        N_OK=$((N_OK + 1))
+    else
+        row_miss "portal routing" "$routing is missing; run ./setup.sh --install"
+        N_MISSING=$((N_MISSING + 1))
+    fi
+
+    # The layer between OBS and ZEN, and the one most likely to be the problem: the
+    # portal answers only if a backend implementing ScreenCast is installed and picked.
+    if [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] && have busctl; then
+        local version
+        version=$(busctl --user get-property org.freedesktop.portal.Desktop \
+                      /org/freedesktop/portal/desktop \
+                      org.freedesktop.portal.ScreenCast version 2>/dev/null \
+                  | awk '{print $2}')
+        if [ -n "$version" ] && [ "$version" != "0" ]; then
+            row_ok "portal screencast" "version $version"
+            N_OK=$((N_OK + 1))
+        else
+            row_miss "portal screencast" "the portal offers no ScreenCast; OBS will show nothing"
+            add_missing "$(screencast_backend_package_for "$PKG_MGR")"
+            N_MISSING=$((N_MISSING + 1))
+        fi
+    fi
 }
 
 # Conditions that no package can fix, so these report rather than add to the install
