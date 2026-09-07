@@ -7,7 +7,17 @@ use adw::prelude::*;
 use gtk::{Align, Orientation};
 
 use crate::config;
+use crate::require::{self, Need};
 use crate::App;
+
+// swaybg is the only hard requirement: without a renderer nothing can be set at all.
+// The other two make it better rather than possible, so they are named on the page
+// instead of blocking it.
+const NEEDS: &[Need] = &[Need {
+    command: "swaybg",
+    what: "what actually puts an image on the screen",
+    package: "swaybg",
+}];
 
 const THUMB_W: i32 = 208;
 const THUMB_H: i32 = 117;
@@ -186,6 +196,33 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
         grid.select_child(&child);
     }
     picker.sync_audio();
+
+    // The banner goes above everything, so it is the first thing read, but the grid
+    // stays live: browsing what you have is worth doing even when nothing can set it.
+    if let Some(banner) = require::banner(&require::missing(NEEDS)) {
+        column.prepend(&banner);
+    }
+
+    let extras = [
+        ("swww", "crossfades between wallpapers instead of cutting"),
+        ("mpvpaper", "plays video wallpapers"),
+    ];
+    let absent: Vec<&str> = extras
+        .iter()
+        .filter(|(cmd, _)| !require::have(cmd))
+        .map(|(_, why)| *why)
+        .collect();
+    if !absent.is_empty() {
+        column.append(
+            &gtk::Label::builder()
+                .label(format!("Not installed: {}.", absent.join("; ")))
+                .halign(Align::Start)
+                .wrap(true)
+                .xalign(0.)
+                .css_classes(["setting-hint"])
+                .build(),
+        );
+    }
 
     scrolled(&column)
 }

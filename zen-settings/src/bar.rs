@@ -8,7 +8,14 @@ use gtk::{Align, Orientation};
 use serde_json::{Map, Value};
 
 use crate::monitors::{row, separator};
+use crate::require::{self, Need};
 use crate::App;
+
+const NEEDS: &[Need] = &[Need {
+    command: "waybar",
+    what: "the bar itself. ZEN hosts it rather than drawing one",
+    package: "waybar",
+}];
 
 // The pills across the top of the screen.
 //
@@ -232,32 +239,25 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
 
     let doc = Rc::new(RefCell::new(doc));
 
-    column.append(
-        &gtk::Label::builder()
-            .label("THE BAR")
-            .halign(Align::Start)
-            .css_classes(["group-label"])
-            .build(),
-    );
-    column.append(&bar_card(state, &doc));
+    let body = gtk::Box::new(Orientation::Vertical, 10);
 
-    column.append(
-        &gtk::Label::builder()
-            .label("PILLS")
-            .halign(Align::Start)
-            .css_classes(["group-label"])
-            .build(),
-    );
-    column.append(&pills_card(state, &doc));
+    for (title, card) in [
+        ("THE BAR", bar_card(state, &doc)),
+        ("PILLS", pills_card(state, &doc)),
+        ("LOOK", look_card(state)),
+    ] {
+        body.append(
+            &gtk::Label::builder()
+                .label(title)
+                .halign(Align::Start)
+                .css_classes(["group-label"])
+                .build(),
+        );
+        body.append(&card);
+    }
 
-    column.append(
-        &gtk::Label::builder()
-            .label("LOOK")
-            .halign(Align::Start)
-            .css_classes(["group-label"])
-            .build(),
-    );
-    column.append(&look_card(state));
+    require::guard(&column, &body.clone().upcast(), NEEDS);
+    column.append(&body);
 
     column.append(
         &gtk::Label::builder()

@@ -3,6 +3,7 @@ mod config;
 mod greeter;
 mod lists;
 mod monitors;
+mod require;
 mod spec;
 mod wallpaper;
 

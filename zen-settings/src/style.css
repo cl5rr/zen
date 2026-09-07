@@ -227,6 +227,28 @@ entry.field image {
     color: #6b7280;
 }
 
+/* A page whose tool is not installed keeps its controls and goes insensitive, with
+   this above them. Amber rather than red: nothing is broken, something is absent. */
+.notice {
+    background-color: rgba(229, 192, 123, 0.10);
+    border: 1px solid rgba(229, 192, 123, 0.35);
+    border-radius: 12px;
+    padding: 12px 14px;
+}
+
+.notice-title {
+    color: #f2d3a0;
+    font-weight: 600;
+}
+
+/* GTK dims insensitive widgets only slightly, which on a dark card reads as "maybe
+   still clickable". This makes it unambiguous. */
+.card:disabled,
+.setting:disabled label,
+box:disabled label {
+    opacity: 0.42;
+}
+
 /* status */
 .status {
     font-size: 11.5px;

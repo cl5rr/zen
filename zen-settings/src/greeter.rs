@@ -7,7 +7,21 @@ use adw::prelude::*;
 use gtk::{Align, Orientation};
 
 use crate::monitors::{row, separator};
+use crate::require::{self, Need};
 use crate::App;
+
+const NEEDS: &[Need] = &[
+    Need {
+        command: "ly",
+        what: "the login manager this page configures",
+        package: "ly",
+    },
+    Need {
+        command: "pkexec",
+        what: "how a desktop app is allowed to write /etc",
+        package: "polkit",
+    },
+];
 
 // Ly, the login screen you see before ZEN starts.
 //
@@ -139,25 +153,16 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
             .build(),
     );
 
-    let Some(values) = read() else {
-        column.append(
-            &gtk::Label::builder()
-                .label(
-                    "Ly is not installed, or its config is somewhere zen-ly cannot read. \
-                     Run ./setup.sh and choose the Ly greeter to set it up.",
-                )
-                .halign(Align::Start)
-                .wrap(true)
-                .xalign(0.)
-                .css_classes(["setting-hint"])
-                .build(),
-        );
-        return scrolled(&column);
-    };
+    // The controls are built either way. Showing the page you would get, greyed, says
+    // far more about what installing Ly buys you than an empty page with one sentence.
+    let values = read().unwrap_or_default();
+    let readable = !values.is_empty();
 
     // Edits collect here and go out in one pkexec call, because asking for a password
     // per switch would make the page unusable.
     let pending: Rc<RefCell<HashMap<String, String>>> = Rc::new(RefCell::new(HashMap::new()));
+
+    let body = gtk::Box::new(Orientation::Vertical, 10);
 
     let card = gtk::Box::new(Orientation::Vertical, 0);
     card.add_css_class("card");
@@ -168,7 +173,7 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
         }
         card.append(&field_row(field, &values, &pending));
     }
-    column.append(&card);
+    body.append(&card);
 
     let apply = gtk::Button::builder()
         .label("Save to /etc/ly")
@@ -199,7 +204,28 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
     spacer.set_hexpand(true);
     buttons.append(&spacer);
     buttons.append(&apply);
-    column.append(&buttons);
+    body.append(&buttons);
+
+    let blocked = require::guard(&column, &body.clone().upcast(), NEEDS);
+    if !blocked && !readable {
+        // Ly is installed but its config could not be read, which is a different
+        // problem from not having it and needs saying differently.
+        column.append(
+            &gtk::Label::builder()
+                .label(format!(
+                    "Ly is installed but {} could not be read. Run ./setup.sh and \
+                     choose the Ly greeter to create it.",
+                    config_path()
+                ))
+                .halign(Align::Start)
+                .wrap(true)
+                .xalign(0.)
+                .css_classes(["setting-hint"])
+                .build(),
+        );
+        body.set_sensitive(false);
+    }
+    column.append(&body);
 
     column.append(
         &gtk::Label::builder()

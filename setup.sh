@@ -418,6 +418,14 @@ emoji_packages_for() {
     esac
 }
 
+polkit_agent_package_for() {
+    case "$1" in
+        pacman) echo polkit-gnome ;; apt) echo policykit-1-gnome ;;
+        dnf)    echo polkit-gnome ;; apk) echo polkit-gnome ;;
+        zypper) echo polkit-gnome ;;
+    esac
+}
+
 font_package_for() {
     case "$1" in
         pacman) echo ttf-dejavu ;; apt) echo fonts-dejavu-core ;;
@@ -650,7 +658,25 @@ EOF
             N_OK=$((N_OK + 1))
         fi
 
-        # Emoji and the symbol ranges are a separate font from the text one, and
+        # pkexec hands the request to polkit, and polkit needs an agent running in the
+    # session to draw the password prompt. Without one, anything that asks for root
+    # from a GUI fails with nothing on screen, which is indistinguishable from a bug.
+    if ! have pkexec; then
+        row_miss "pkexec" "how Settings is allowed to write /etc, for the login screen"
+        add_missing polkit
+        N_MISSING=$((N_MISSING + 1))
+    elif zen-polkit which >/dev/null 2>&1 \
+        || ls /usr/lib/polkit-*/polkit-*-authentication-agent-1 \
+              /usr/libexec/polkit-*-authentication-agent-1 >/dev/null 2>&1; then
+        row_ok "polkit agent" ""
+        N_OK=$((N_OK + 1))
+    else
+        row_miss "polkit agent" "pkexec is here but nothing can draw the password prompt"
+        add_missing "$(polkit_agent_package_for "$PKG_MGR")"
+        N_MISSING=$((N_MISSING + 1))
+    fi
+
+    # Emoji and the symbol ranges are a separate font from the text one, and
         # nothing degrades gracefully without them: a missing glyph is a hollow box in
         # a chat window, a bar, or a window title. Asked for by codepoint rather than
         # by package name, because the package differs per distro and per font.
@@ -872,6 +898,7 @@ install_zen() {
     $SUDO install -Dm755 resources/zen-lock         "$PREFIX/bin/zen-lock"
     $SUDO install -Dm755 resources/zen-power        "$PREFIX/bin/zen-power"
     $SUDO install -Dm755 resources/zen-ly           "$PREFIX/bin/zen-ly"
+    $SUDO install -Dm755 resources/zen-polkit       "$PREFIX/bin/zen-polkit"
     $SUDO install -Dm644 resources/default-wallpaper.jpg \
                                                     "$PREFIX/share/zen/default-wallpaper.jpg"
     for wp in resources/wallpapers/*; do

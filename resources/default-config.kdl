@@ -476,6 +476,12 @@ spawn-sh-at-startup "wl-paste --watch cliphist store"
 // drop this line to never lock on its own.
 spawn-at-startup "zen-lock" "idle"
 
+// The polkit authentication agent. pkexec hands a request for root to polkit, and
+// polkit needs an agent in the session to put the password prompt on screen; with none,
+// Settings cannot save the login screen and nothing says why. zen-polkit runs whichever
+// agent is installed, and says so plainly if there is none.
+spawn-at-startup "zen-polkit"
+
 // A notification daemon.
 // spawn-at-startup "mako"
 

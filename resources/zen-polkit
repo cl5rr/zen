@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+#
+# Starts a polkit authentication agent, whichever one is installed.
+#
+#   zen-polkit          run the agent in the foreground (this is the startup entry)
+#   zen-polkit which    print the agent that would be used, or nothing
+#
+# pkexec is how a desktop app asks to do something as root. It does not draw the
+# password prompt itself: it hands the request to polkit, and polkit needs an agent
+# running in the session to put a window on screen. With no agent, pkexec falls back to
+# asking on a controlling terminal, and a GUI app has none, so the request simply fails
+# with nothing shown. That is why Settings could not save to /etc without this.
+#
+# Every desktop ships its own agent and they are all interchangeable, so rather than
+# depending on one, this runs the first one it finds.
+
+set -u
+
+# Ordered by how little else they drag in.
+AGENTS="
+/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1
+/usr/libexec/polkit-gnome-authentication-agent-1
+/usr/lib/polkit-kde-authentication-agent-1
+/usr/libexec/polkit-kde-authentication-agent-1
+/usr/lib/mate-polkit/polkit-mate-authentication-agent-1
+/usr/libexec/polkit-mate-authentication-agent-1
+/usr/lib/xfce-polkit/xfce-polkit
+"
+
+find_agent() {
+    local candidate
+    for candidate in $AGENTS; do
+        [ -x "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+    done
+    # These put themselves on PATH rather than in a libexec directory.
+    for candidate in lxqt-policykit-agent lxpolkit polkit-dumb-agent; do
+        command -v "$candidate" >/dev/null 2>&1 && { command -v "$candidate"; return 0; }
+    done
+    return 1
+}
+
+case "${1:-run}" in
+    which)
+        find_agent || { printf 'zen-polkit: no polkit agent installed\n' >&2; exit 1; }
+        ;;
+    run)
+        agent=$(find_agent) || {
+            printf 'zen-polkit: no polkit agent installed, so nothing can ask for a\n' >&2
+            printf '            password. Install one, for example polkit-gnome.\n' >&2
+            exit 1
+        }
+        exec "$agent"
+        ;;
+    -h|--help|help)
+        sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+        ;;
+    *)
+        printf 'zen-polkit: unknown command: %s (try --help)\n' "$1" >&2
+        exit 1
+        ;;
+esac
