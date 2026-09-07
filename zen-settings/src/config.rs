@@ -236,8 +236,14 @@ fn selects(node: &KdlNode, selector: Option<&str>) -> bool {
         return false;
     };
     match_nodes(node).any(|m| {
-        m.get(prop)
-            .is_some_and(|e| e.value().as_bool().map(|b| b.to_string()) == Some(want.to_owned()))
+        m.get(prop).is_some_and(|entry| match entry.value() {
+            KdlValue::Bool(b) => b.to_string() == want,
+            // String matches are regexes in a config: `namespace="^waybar$"`. A
+            // selector names the thing, not the pattern, so containment is the only
+            // comparison that finds the rule someone actually wrote.
+            KdlValue::String(text) => text.contains(want),
+            _ => false,
+        })
     })
 }
 
@@ -245,15 +251,23 @@ fn add_match(node: &mut KdlNode, selector: &str, depth: usize) {
     let Some((prop, want)) = selector.split_once('=') else {
         return;
     };
-    let Ok(want) = want.parse::<bool>() else {
-        return;
+
+    // Anchored, because a bare name used as a regex would also match a namespace that
+    // merely contains it, and a rule created here has to mean exactly the one thing.
+    let (value, repr) = match want.parse::<bool>() {
+        Ok(flag) => (KdlValue::Bool(flag), flag.to_string()),
+        Err(_) => {
+            let pattern = format!("^{want}$");
+            (KdlValue::String(pattern.clone()), format!("{pattern:?}"))
+        }
     };
+
     if node.children().is_none() {
         node.set_children(empty(depth - 1));
     }
     let mut m = fresh("match", depth);
-    let mut entry = KdlEntry::new_prop(prop, KdlValue::Bool(want));
-    entry.set_value_repr(want.to_string());
+    let mut entry = KdlEntry::new_prop(prop, value);
+    entry.set_value_repr(repr);
     m.entries_mut().push(entry);
     node.children_mut().as_mut().unwrap().nodes_mut().push(m);
 }
@@ -395,6 +409,60 @@ mod tests {
             reread.number(&["window-rule"], "opacity"),
             None,
             "the new rule must not read as the global one"
+        );
+        zen_config::Config::parse_mem(&text).expect("the created config must still parse");
+    }
+
+
+    // The status bar's blur is a layer-rule picked out by its namespace, and namespaces
+    // in a config are regexes, so a selector naming the thing has to find the pattern
+    // that matches it.
+    #[test]
+    fn a_layer_rule_is_found_by_its_namespace() {
+        let c = shipped();
+        assert_eq!(
+            c.boolean(&["layer-rule@namespace=waybar", "background-effect"], "blur"),
+            Some(false),
+            "the shipped waybar layer-rule was not found"
+        );
+    }
+
+    #[test]
+    fn toggling_the_bar_blur_edits_only_that_rule() {
+        let mut c = shipped();
+        let before = c.doc.to_string().matches("layer-rule").count();
+
+        c.set_boolean(
+            &["layer-rule@namespace=waybar", "background-effect"],
+            "blur",
+            true,
+        );
+        let text = c.doc.to_string();
+
+        assert_eq!(
+            text.matches("layer-rule").count(),
+            before,
+            "a second layer-rule was created instead of editing the existing one"
+        );
+        assert_eq!(
+            from(&text).boolean(&["layer-rule@namespace=waybar", "background-effect"], "blur"),
+            Some(true)
+        );
+        zen_config::Config::parse_mem(&text).expect("the edited config must still parse");
+    }
+
+    // A rule created for a string selector has to carry a match that finds it again,
+    // or the next toggle makes another one.
+    #[test]
+    fn a_rule_created_for_a_namespace_is_found_again() {
+        let mut c = from("layout {\n    gaps 20\n}\n");
+        c.set_boolean(&["layer-rule@namespace=mako", "background-effect"], "blur", true);
+
+        let text = c.doc.to_string();
+        assert!(text.contains("mako"), "no match was written: {text}");
+        assert_eq!(
+            from(&text).boolean(&["layer-rule@namespace=mako", "background-effect"], "blur"),
+            Some(true)
         );
         zen_config::Config::parse_mem(&text).expect("the created config must still parse");
     }

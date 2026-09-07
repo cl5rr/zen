@@ -165,6 +165,19 @@ gestures {
     }
 }
 
+// The status bar sits on a layer surface, and GTK cannot blur what is behind one.
+// ZEN can, so the bar's "blurry" look is this rule rather than anything in its CSS.
+// Settings > Status bar switches `blur` here; the pill fill that shows through is in
+// ~/.config/waybar/zen-pills.css. Off by default because a blur pass behind a bar that
+// spans the screen is not free, and the pills read fine without it.
+layer-rule {
+    match namespace="^waybar$"
+
+    background-effect {
+        blur false
+    }
+}
+
 // The frost behind the glass.
 //
 // Glass is blur plus refraction plus a tint, and only the tint is under `glass`.

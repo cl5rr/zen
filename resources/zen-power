@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+#
+# ZEN's power menu.
+#
+#   zen-power              show the menu and act on what is picked
+#   zen-power lock         lock the screen
+#   zen-power logout       end the session
+#   zen-power suspend      suspend to RAM
+#   zen-power hibernate    suspend to disk
+#   zen-power reboot       restart
+#   zen-power poweroff     shut down
+#
+# The menu is fuzzel, because that is the launcher ZEN already ships and themes, so the
+# power menu looks like the rest of the system without a second toolkit. Without fuzzel
+# the subcommands still work, which is what the waybar pill and any keybind use anyway.
+#
+# Nothing here asks for confirmation except the two that lose work. Logging out of a
+# session you meant to lock is the mistake this is most likely to cause.
+
+set -u
+
+die() { printf 'zen-power: %s\n' "$*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# systemd where it exists, and the plain tools where it does not, so this works on a
+# distro that has never heard of loginctl.
+power() {
+    local what="$1"
+    case "$what" in
+        suspend|hibernate|reboot|poweroff)
+            if have systemctl; then
+                systemctl "$what"
+            elif have loginctl; then
+                loginctl "$what"
+            else
+                case "$what" in
+                    reboot)   have reboot   && reboot   || die "nothing here can reboot" ;;
+                    poweroff) have poweroff && poweroff || die "nothing here can power off" ;;
+                    *)        die "$what needs systemd or elogind" ;;
+                esac
+            fi
+            ;;
+    esac
+}
+
+logout() {
+    # Ask ZEN to leave first: it can close clients in an orderly way and it is what the
+    # session manager is watching. Killing the compositor is the fallback.
+    if have zen && zen msg action quit --skip-confirmation 2>/dev/null; then
+        return 0
+    fi
+    if have loginctl && [ -n "${XDG_SESSION_ID:-}" ]; then
+        loginctl terminate-session "$XDG_SESSION_ID"
+        return 0
+    fi
+    pkill -x zen
+}
+
+confirm() {
+    have fuzzel || return 0
+    local answer
+    answer=$(printf 'No, go back\nYes, %s\n' "$1" \
+             | fuzzel --dmenu --lines 2 --prompt "$1? " 2>/dev/null)
+    case "$answer" in Yes*) return 0 ;; *) return 1 ;; esac
+}
+
+menu() {
+    have fuzzel || die "the menu needs fuzzel; the subcommands work without it"
+
+    local choice
+    choice=$(printf '%s\n' \
+        "Lock" "Suspend" "Hibernate" "Log out" "Restart" "Shut down" \
+        | fuzzel --dmenu --lines 6 --prompt 'power: ' 2>/dev/null)
+
+    case "$choice" in
+        Lock)      run lock ;;
+        Suspend)   run suspend ;;
+        Hibernate) run hibernate ;;
+        "Log out") confirm "Log out" && run logout ;;
+        Restart)   confirm "Restart" && run reboot ;;
+        "Shut down") confirm "Shut down" && run poweroff ;;
+        *)         exit 0 ;;
+    esac
+}
+
+run() {
+    case "$1" in
+        lock)      have zen-lock && zen-lock || die "zen-lock is not on PATH" ;;
+        logout)    logout ;;
+        suspend|hibernate|reboot|poweroff) power "$1" ;;
+        *)         die "unknown action: $1" ;;
+    esac
+}
+
+case "${1:-menu}" in
+    menu)      menu ;;
+    lock|logout|suspend|hibernate|reboot|poweroff) run "$1" ;;
+    -h|--help|help)
+               sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *)         die "unknown command: $1 (try --help)" ;;
+esac

@@ -6,10 +6,12 @@
     "margin-left": 12,
     "margin-right": 12,
     "spacing": 8,
+    "exclusive": true,
+    "mode": "dock",
 
     "modules-left": ["niri/workspaces", "niri/window"],
     "modules-center": ["clock"],
-    "modules-right": ["tray", "pulseaudio", "backlight", "battery", "network"],
+    "modules-right": ["tray", "pulseaudio", "backlight", "battery", "network", "custom/power"],
 
     "niri/workspaces": {
         "format": "{index}"
@@ -24,7 +26,17 @@
     "clock": {
         "format": "{:%H:%M}",
         "format-alt": "{:%a %d %b  %H:%M}",
-        "tooltip-format": "<tt>{calendar}</tt>"
+        "tooltip-format": "<span size='larger'>{:%B %Y}</span>\n<tt>{calendar}</tt>",
+        "calendar": {
+            "mode": "month",
+            "on-scroll": 1,
+            "format": {
+                "months": "<span color='#e8eaed'><b>{}</b></span>",
+                "days": "<span color='#d6dae2'>{}</span>",
+                "weekdays": "<span color='#7b8290'><b>{}</b></span>",
+                "today": "<span color='#cfe6ff'><b><u>{}</u></b></span>"
+            }
+        }
     },
 
     "pulseaudio": {
@@ -60,6 +72,78 @@
         "format-disconnected": "offline",
         "tooltip-format": "{ifname}  {ipaddr}",
         "max-length": 18
+    },
+
+    "custom/power": {
+        "format": "power",
+        "tooltip": false,
+        "on-click": "zen-power"
+    },
+
+    "custom/notifications": {
+        "format": "notifications",
+        "tooltip": false,
+        "on-click": "makoctl dismiss --all"
+    },
+
+    "custom/clipboard": {
+        "format": "clipboard",
+        "tooltip": false,
+        "on-click": "cliphist list | fuzzel --dmenu | cliphist decode | wl-copy"
+    },
+
+    "custom/wallpaper": {
+        "format": "wallpaper",
+        "tooltip": false,
+        "on-click": "zen-wallpaper pick",
+        "on-click-right": "zen-wallpaper next"
+    },
+
+    "custom/overview": {
+        "format": "map",
+        "tooltip": false,
+        "on-click": "zen msg action toggle-overview"
+    },
+
+    "cpu": {
+        "format": "cpu {usage}%",
+        "interval": 5
+    },
+
+    "memory": {
+        "format": "mem {percentage}%",
+        "interval": 10
+    },
+
+    "disk": {
+        "format": "disk {percentage_used}%",
+        "path": "/",
+        "interval": 60
+    },
+
+    "temperature": {
+        "format": "{temperatureC}C",
+        "critical-threshold": 82
+    },
+
+    "idle_inhibitor": {
+        "format": "{icon}",
+        "format-icons": {
+            "activated": "awake",
+            "deactivated": "idle ok"
+        }
+    },
+
+    "mpris": {
+        "format": "{title}",
+        "max-length": 34,
+        "tooltip-format": "{player}: {title}"
+    },
+
+    "bluetooth": {
+        "format": "bt {status}",
+        "format-disabled": "bt off",
+        "on-click": "blueman-manager"
     },
 
     "tray": {

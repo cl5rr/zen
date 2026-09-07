@@ -20,6 +20,15 @@ use crate::App;
 // that is not JSON does not survive. ZEN's shipped config is therefore comment-free.
 const CONFIG: &str = "waybar/config.jsonc";
 
+// The layer-rule ZEN uses to blur behind the bar. Selected by its match rather than by
+// position, because a config has several layer-rules and only one of them is waybar's.
+const WAYBAR_RULE: &str = "layer-rule@namespace=waybar";
+
+const DEFAULT_FILL: f64 = 0.55;
+
+const MODES: [&str; 4] = ["dock", "hide", "overlay", "invisible"];
+const LAYERS: [&str; 3] = ["top", "overlay", "bottom"];
+
 // Every module this page offers, in the order they read on screen.
 //
 // `left` decides which of the three regions a module joins when it is switched on, so a
@@ -95,6 +104,60 @@ const PILLS: &[Pill] = &[
         key: "network",
         label: "Network",
         hint: "The network you are on, or offline",
+        region: Region::Right,
+    },
+    Pill {
+        key: "custom/power",
+        label: "Power menu",
+        hint: "Lock, log out, suspend, restart, shut down",
+        region: Region::Right,
+    },
+    Pill {
+        key: "custom/overview",
+        label: "Map button",
+        hint: "The same thing Mod+O does",
+        region: Region::Left,
+    },
+    Pill {
+        key: "custom/wallpaper",
+        label: "Wallpaper button",
+        hint: "Click to pick one, right click for the next",
+        region: Region::Right,
+    },
+    Pill {
+        key: "custom/clipboard",
+        label: "Clipboard history",
+        hint: "Needs cliphist and fuzzel",
+        region: Region::Right,
+    },
+    Pill {
+        key: "custom/notifications",
+        label: "Dismiss notifications",
+        hint: "Needs mako",
+        region: Region::Right,
+    },
+    Pill {
+        key: "mpris",
+        label: "Now playing",
+        hint: "Whatever a media player is reporting",
+        region: Region::Centre,
+    },
+    Pill {
+        key: "bluetooth",
+        label: "Bluetooth",
+        hint: "",
+        region: Region::Right,
+    },
+    Pill {
+        key: "idle_inhibitor",
+        label: "Keep awake",
+        hint: "Click to stop the idle timer locking the screen",
+        region: Region::Right,
+    },
+    Pill {
+        key: "disk",
+        label: "Disk",
+        hint: "How full the root filesystem is",
         region: Region::Right,
     },
     Pill {
@@ -189,6 +252,15 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
 
     column.append(
         &gtk::Label::builder()
+            .label("LOOK")
+            .halign(Align::Start)
+            .css_classes(["group-label"])
+            .build(),
+    );
+    column.append(&look_card(state));
+
+    column.append(
+        &gtk::Label::builder()
             .label(path.display().to_string())
             .halign(Align::Start)
             .selectable(true)
@@ -272,7 +344,208 @@ fn bar_card(state: &Rc<App>, doc: &Rc<RefCell<Map<String, Value>>>) -> gtk::Widg
         gap.upcast(),
     ));
 
+    separator(&card);
+
+    // Whether the bar reserves its strip so windows stop short of it, or simply sits
+    // over them and covers whatever is underneath.
+    let reserve = gtk::Switch::builder()
+        .valign(Align::Center)
+        .active(
+            doc.borrow()
+                .get("exclusive")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
+        )
+        .build();
+    {
+        let state = state.clone();
+        let doc = doc.clone();
+        reserve.connect_active_notify(move |s| {
+            doc.borrow_mut()
+                .insert("exclusive".into(), Value::Bool(s.is_active()));
+            save(&state, &doc);
+        });
+    }
+    card.append(&row(
+        "Reserve its space",
+        "On, windows stop short of the bar. Off, it floats over them and nothing is \
+         cut down to make room",
+        reserve.upcast(),
+    ));
+
+    separator(&card);
+
+    let current_mode = doc
+        .borrow()
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| "dock".to_owned());
+    let mode = gtk::DropDown::builder()
+        .model(&gtk::StringList::new(&[
+            "Always visible",
+            "Hover to show",
+            "Over fullscreen too",
+            "Hidden",
+        ]))
+        .selected(MODES.iter().position(|m| *m == current_mode).unwrap_or(0) as u32)
+        .valign(Align::Center)
+        .build();
+    {
+        let state = state.clone();
+        let doc = doc.clone();
+        mode.connect_selected_notify(move |d| {
+            let Some(picked) = MODES.get(d.selected() as usize) else {
+                return;
+            };
+            doc.borrow_mut()
+                .insert("mode".into(), Value::String((*picked).into()));
+            save(&state, &doc);
+        });
+    }
+    card.append(&row(
+        "When to show it",
+        "Hover to show keeps it out of the way until the pointer reaches the edge",
+        mode.upcast(),
+    ));
+
+    separator(&card);
+
+    let current_layer = doc
+        .borrow()
+        .get("layer")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| "top".to_owned());
+    let layer = gtk::DropDown::builder()
+        .model(&gtk::StringList::new(&[
+            "Above windows",
+            "Above everything",
+            "Behind windows",
+        ]))
+        .selected(LAYERS.iter().position(|l| *l == current_layer).unwrap_or(0) as u32)
+        .valign(Align::Center)
+        .build();
+    {
+        let state = state.clone();
+        let doc = doc.clone();
+        layer.connect_selected_notify(move |d| {
+            let Some(picked) = LAYERS.get(d.selected() as usize) else {
+                return;
+            };
+            doc.borrow_mut()
+                .insert("layer".into(), Value::String((*picked).into()));
+            save(&state, &doc);
+        });
+    }
+    card.append(&row(
+        "Stacking",
+        "Where the bar sits against windows",
+        layer.upcast(),
+    ));
+
     card.upcast()
+}
+
+// The look of the pills themselves.
+//
+// Opacity is written to zen-pills.css, which style.css imports, so the settings app
+// never has to parse the stylesheet and anything hand-edited there survives. Blur is
+// not something GTK can do behind a layer surface, so that one is a ZEN layer-rule.
+fn look_card(state: &Rc<App>) -> gtk::Widget {
+    let card = gtk::Box::new(Orientation::Vertical, 0);
+    card.add_css_class("card");
+
+    let opacity = gtk::Scale::with_range(Orientation::Horizontal, 0., 1., 0.01);
+    opacity.set_value(current_opacity());
+    opacity.set_draw_value(true);
+    opacity.set_size_request(200, -1);
+    opacity.set_valign(Align::Center);
+    {
+        let state = state.clone();
+        opacity.connect_value_changed(move |s| write_pill_css(&state, s.value()));
+    }
+    card.append(&row(
+        "Fill",
+        "0 is fully transparent, 1 is solid. The shipped look is 0.55",
+        opacity.upcast(),
+    ));
+
+    separator(&card);
+
+    let blur = gtk::Switch::builder()
+        .valign(Align::Center)
+        .active(
+            state
+                .config
+                .borrow()
+                .as_ref()
+                .and_then(|c| c.boolean(&[WAYBAR_RULE, "background-effect"], "blur"))
+                .unwrap_or(false),
+        )
+        .build();
+    {
+        let state = state.clone();
+        blur.connect_active_notify(move |s| {
+            if let Some(config) = state.config.borrow_mut().as_mut() {
+                config.set_boolean(&[WAYBAR_RULE, "background-effect"], "blur", s.is_active());
+            }
+            state.touch();
+        });
+    }
+    card.append(&row(
+        "Blur behind",
+        "ZEN blurs what is behind the bar, which GTK cannot do for itself. Costs a \
+         blur pass across the whole strip",
+        blur.upcast(),
+    ));
+
+    card.upcast()
+}
+
+fn pill_css_path() -> PathBuf {
+    config_path().with_file_name("zen-pills.css")
+}
+
+fn current_opacity() -> f64 {
+    let Ok(text) = std::fs::read_to_string(pill_css_path()) else {
+        return DEFAULT_FILL;
+    };
+    text.lines()
+        .find(|l| l.contains("pill-background"))
+        .and_then(|l| l.rsplit(',').next())
+        .and_then(|tail| {
+            let digits: String = tail
+                .chars()
+                .filter(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            digits.parse().ok()
+        })
+        .unwrap_or(DEFAULT_FILL)
+}
+
+fn write_pill_css(state: &Rc<App>, opacity: f64) {
+    let opacity = opacity.clamp(0., 1.);
+    // The border fades with the fill, or a fully transparent pill is still a visible
+    // outline, which is not what anyone means by transparent.
+    let border = 0.09 + 0.06 * opacity;
+
+    let text = format!(
+        "/* Written by Settings > Status bar. Everything else about the bar lives in\n\
+           style.css, which is never touched from here. */\n\n\
+         @define-color pill-background rgba(14, 16, 20, {opacity:.2});\n\
+         @define-color pill-border rgba(255, 255, 255, {border:.2});\n"
+    );
+
+    let path = pill_css_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Err(err) = std::fs::write(&path, text) {
+        state.say(&format!("could not write {}: {err}", path.display()), "bad");
+        return;
+    }
+    reload(state, "pills updated");
 }
 
 fn pills_card(state: &Rc<App>, doc: &Rc<RefCell<Map<String, Value>>>) -> gtk::Widget {
@@ -396,8 +669,12 @@ fn save(state: &Rc<App>, doc: &Rc<RefCell<Map<String, Value>>>) {
         return;
     }
 
-    // waybar rereads its config on SIGUSR2, so the bar changes without a restart and
-    // without this page having to own its lifetime.
+    reload(state, "bar updated");
+}
+
+// waybar rereads its config and its stylesheet on SIGUSR2, so the bar changes without a
+// restart and without this page having to own its lifetime.
+fn reload(state: &Rc<App>, good: &str) {
     let reloaded = Command::new("pkill")
         .args(["-USR2", "-x", "waybar"])
         .status()
@@ -405,7 +682,7 @@ fn save(state: &Rc<App>, doc: &Rc<RefCell<Map<String, Value>>>) {
         .unwrap_or(false);
 
     if reloaded {
-        state.say("bar updated", "good");
+        state.say(good, "good");
     } else {
         state.say("saved. Start waybar to see it", "");
     }

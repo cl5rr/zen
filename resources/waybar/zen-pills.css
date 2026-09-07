@@ -1,0 +1,12 @@
+/* The pill fill, written by Settings > Status bar.
+ *
+ * This file is generated. Everything else about the bar lives in style.css, which the
+ * settings app never touches, so edits there survive. If you would rather own this one
+ * too, stop using the Look control on that page and it will be left alone.
+ *
+ * "Blurry" is not done here: GTK cannot blur what is behind a layer surface. ZEN does
+ * it instead, with a layer-rule matching the waybar namespace in your config.kdl. This
+ * file only decides how much of that blur shows through. */
+
+@define-color pill-background rgba(14, 16, 20, 0.55);
+@define-color pill-border rgba(255, 255, 255, 0.09);

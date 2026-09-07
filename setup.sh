@@ -870,6 +870,7 @@ install_zen() {
     $SUDO install -Dm755 resources/zen-session      "$PREFIX/bin/zen-session"
     $SUDO install -Dm755 resources/zen-wallpaper    "$PREFIX/bin/zen-wallpaper"
     $SUDO install -Dm755 resources/zen-lock         "$PREFIX/bin/zen-lock"
+    $SUDO install -Dm755 resources/zen-power        "$PREFIX/bin/zen-power"
     $SUDO install -Dm644 resources/default-wallpaper.jpg \
                                                     "$PREFIX/share/zen/default-wallpaper.jpg"
     for wp in resources/wallpapers/*; do
@@ -1350,6 +1351,7 @@ theme_bar() {
     local base="${XDG_CONFIG_HOME:-$HOME/.config}"
     theme_file "$base/waybar/config.jsonc" resources/waybar/config.jsonc "waybar"
     theme_file "$base/waybar/style.css"    resources/waybar/style.css    "the waybar style"
+    theme_file "$base/waybar/zen-pills.css" resources/waybar/zen-pills.css "the pill fill"
 }
 
 theme_lock() {

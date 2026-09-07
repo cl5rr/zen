@@ -2584,6 +2584,61 @@ mod tests {
         -        opacity: 0.15,
         +        off: false,
         +        opacity: 0.3,
+
+        -    layer_rules: [],
+        +    layer_rules: [
+        +        LayerRule {
+        +            matches: [
+        +                Match {
+        +                    namespace: Some(
+        +                        RegexEq(
+        +                            Regex(
+        +                                "^waybar$",
+        +                            ),
+        +                        ),
+        +                    ),
+        +                    at_startup: None,
+        +                    layer: None,
+        +                },
+        +            ],
+        +            excludes: [],
+        +            opacity: None,
+        +            block_out_from: None,
+        +            shadow: ShadowRule {
+        +                off: false,
+        +                on: false,
+        +                offset: None,
+        +                softness: None,
+        +                spread: None,
+        +                draw_behind_window: None,
+        +                color: None,
+        +                inactive_color: None,
+        +            },
+        +            geometry_corner_radius: None,
+        +            place_within_backdrop: None,
+        +            baba_is_float: None,
+        +            background_effect: BackgroundEffectRule {
+        +                xray: None,
+        +                blur: Some(
+        +                    false,
+        +                ),
+        +                glass: None,
+        +                noise: None,
+        +                saturation: None,
+        +            },
+        +            popups: PopupsRule {
+        +                opacity: None,
+        +                geometry_corner_radius: None,
+        +                background_effect: BackgroundEffectRule {
+        +                    xray: None,
+        +                    blur: None,
+        +                    glass: None,
+        +                    noise: None,
+        +                    saturation: None,
+        +                },
+        +            },
+        +        },
+        +    ],
         "#,
         );
     }

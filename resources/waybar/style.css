@@ -5,13 +5,19 @@
  * top off the screen. The colours are the ones in default-config.kdl: the near-white
  * focus ring, and the same dark ground the glass tint pulls toward.
  *
+ * The pill fill and border live in zen-pills.css, which Settings > Status bar writes.
+ * Keeping the generated part in its own file means the settings app never has to parse
+ * this one, so anything you change here survives.
+ *
  * Installed to ~/.config/waybar/style.css only if you do not already have one. It is
  * yours after that; ZEN will not overwrite it. */
+
+@import "zen-pills.css";
 
 * {
     border: none;
     border-radius: 0;
-    font-family: "Inter", "Cantarell", sans-serif;
+    font-family: "Inter", "Noto Sans", "Cantarell", sans-serif;
     font-size: 12.5px;
     min-height: 0;
 }
@@ -30,9 +36,21 @@ window#waybar {
 #backlight,
 #battery,
 #network,
-#tray {
-    background-color: rgba(14, 16, 20, 0.55);
-    border: 1px solid rgba(255, 255, 255, 0.09);
+#bluetooth,
+#cpu,
+#memory,
+#disk,
+#temperature,
+#idle_inhibitor,
+#mpris,
+#tray,
+#custom-power,
+#custom-notifications,
+#custom-clipboard,
+#custom-wallpaper,
+#custom-overview {
+    background-color: @pill-background;
+    border: 1px solid @pill-border;
     border-radius: 14px;
     padding: 2px 12px;
     margin: 0;
@@ -92,13 +110,83 @@ window#waybar.empty #window {
     border-color: rgba(224, 108, 117, 0.45);
 }
 
-#network.disconnected {
+#network.disconnected,
+#bluetooth.disabled {
     color: #7b8290;
 }
 
-#tray menu {
+#temperature.critical {
+    color: #ff8b93;
+}
+
+#custom-power {
+    color: #ffb3b8;
+}
+
+#custom-power:hover {
+    background-color: rgba(224, 108, 117, 0.22);
+    color: #ffffff;
+}
+
+#custom-clipboard:hover,
+#custom-wallpaper:hover,
+#custom-overview:hover,
+#custom-notifications:hover,
+#idle_inhibitor:hover {
+    background-color: rgba(255, 255, 255, 0.10);
+    color: #ffffff;
+}
+
+/* popups
+ *
+ * The calendar and every tooltip are their own toplevel windows, so they inherit none
+ * of the bar's styling. Left alone they arrive in the toolkit's light default, which is
+ * a white card hanging off a dark bar. */
+tooltip {
     background-color: #12151a;
     border: 1px solid rgba(255, 255, 255, 0.10);
-    border-radius: 10px;
+    border-radius: 12px;
     color: #e8eaed;
+    padding: 4px;
+}
+
+tooltip label {
+    color: #e8eaed;
+    padding: 6px 8px;
+}
+
+/* The calendar is drawn as preformatted text in the clock's tooltip, so it needs a
+   monospace face or the columns do not line up. */
+#clock tooltip label,
+tooltip label.text {
+    font-family: monospace;
+}
+
+menu,
+popover,
+popover > contents {
+    background-color: #12151a;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 12px;
+    color: #e8eaed;
+    padding: 4px;
+}
+
+menu menuitem,
+popover button {
+    border-radius: 8px;
+    padding: 5px 10px;
+    color: #d6dae2;
+}
+
+menu menuitem:hover,
+popover button:hover {
+    background-color: rgba(255, 255, 255, 0.09);
+    color: #ffffff;
+}
+
+menu separator,
+popover separator {
+    background-color: rgba(255, 255, 255, 0.08);
+    margin: 4px 2px;
 }
