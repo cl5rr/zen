@@ -535,6 +535,17 @@ load_choices() {
     return 0
 }
 
+keep_what_you_have() {
+    local id
+    PROFILE=recommended
+    apply_profile
+    for id in "${M_IDS[@]}"; do
+        is_pickable "$id" || continue
+        if present "$id"; then M_ON[$id]=1; else M_ON[$id]=0; M_NEW[$id]=1; fi
+    done
+    MIGRATED=1
+}
+
 selected_ids() {
     local id out=""
     for id in "${M_IDS[@]}"; do
@@ -996,6 +1007,10 @@ install_selection() {
         [ "${M_NEW[$id]:-0}" = 1 ] && [ "${M_ON[$id]}" = 1 ] && new="$new $id"
     done
     [ -n "${new# }" ] && dim "new since your last install:${new}"
+    if [ "$MIGRATED" = 1 ]; then
+        dim "setup now lets you choose your apps; this update keeps exactly the ones you have"
+        dim "run ${C_BOLD}./setup.sh${C_RESET} and pick Install to add more"
+    fi
 
     local want
     # shellcheck disable=SC2046
@@ -2040,10 +2055,19 @@ wizard() {
     return 0
 }
 
+MIGRATED=0
+
 init_selection() {
     case "$PRESET" in
         '')
-            load_choices || { PROFILE=recommended; apply_profile; } ;;
+            if ! load_choices; then
+                if [ "$DO_UPDATE" = 1 ]; then
+                    keep_what_you_have
+                else
+                    PROFILE=recommended
+                    apply_profile
+                fi
+            fi ;;
         essentials|recommended|everything)
             PROFILE="$PRESET"; apply_profile ;;
         *)
@@ -2063,7 +2087,11 @@ main() {
 
     # A bare `./setup.sh` on a real terminal gets the guided flow. Anything with a
     # flag, or piped into a script, keeps the old non-interactive behaviour.
-    if [ "$ANY_FLAG" = 0 ] && [ "$UI_TTY" = 1 ]; then
+    if [ "$ANY_FLAG" = 0 ] && [ "${ZEN_SETUP_REEXEC:-0}" = 1 ]; then
+        DO_UPDATE=1; DO_DEPS=1; DO_BUILD=1; DO_INSTALL=1; ASSUME_YES=1
+        banner
+        printf '\n%sZEN setup, carrying on with the update%s\n' "$C_BOLD$C_BLUE" "$C_RESET"
+    elif [ "$ANY_FLAG" = 0 ] && [ "$UI_TTY" = 1 ]; then
         wizard || { printf '\n%snothing done%s\n' "$C_DIM" "$C_RESET"; exit 0; }
         ASSUME_YES=1
     else

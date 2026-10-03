@@ -147,6 +147,27 @@ expect "something new arrives on by its profile" [ "${M_ON[later]}" = 1 ]
 expect "and is marked new" [ "${M_NEW[later]:-0}" = 1 ]
 expect "what was already chosen is not marked new" [ "${M_NEW[fallback]:-0}" = 0 ]
 
+# migration
+
+printf '\nupdating from a version that never asked\n\n'
+
+rm -f "$CHOICES"
+load_manifest "$manifest"
+DO_UPDATE=1
+PRESET=""
+init_selection
+expect "an app you have stays on" [ "${M_ON[native]}" = 1 ]
+expect "an app you never had stays off" [ "${M_ON[nowhere]}" = 0 ]
+expect "even one Recommended would add" [ "${M_ON[later]}" = 0 ]
+expect "core is still installed" [ "${M_ON[core]}" = 1 ]
+expect "the update says what it did" [ "$MIGRATED" = 1 ]
+DO_UPDATE=0
+MIGRATED=0
+rm -f "$CHOICES"
+load_manifest "$manifest"
+init_selection
+expect "a fresh install still gets Recommended" [ "${M_ON[later]}" = 1 ]
+
 # shipped
 
 printf '\nthe shipped manifest\n\n'
