@@ -206,45 +206,58 @@ zen-wallpaper random
 zen-wallpaper set ~/pictures/thing.jpg
 ```
 
-Needs `swaybg`, which `./setup.sh` offers to install. A wallpaper ships with ZEN
+Needs `swaybg`, which `./setup.sh` installs. `awww` (swww's new name on Arch) adds crossfades. A wallpaper ships with ZEN
 and is seeded into that folder on first install.
 
-## Distributions
+## Installing
 
-ZEN is developed on Arch and daily-driven there. Nothing in it is Arch-specific:
-
-- `./setup.sh` detects pacman, apt, dnf, apk and zypper, and translates package
-  names per manager. Anything it cannot recognise it names and asks you to install.
-- `./setup.sh --check` prints exactly what is missing and why it matters, without
-  changing anything. Run it first on a distribution nobody has tried yet.
-- The compositor itself needs the same libraries everywhere: wayland, libinput,
-  libxkbcommon, mesa, libseat, libdisplay-info, pango and dbus, plus pipewire for
-  screen sharing.
-
-The parts that are not the compositor are ordinary packages you may already have:
-alacritty, fuzzel, swaybg, swaylock, swayidle, waybar, mako, wl-clipboard. Swap any
-of them for what you prefer; they are named in your config, not compiled in.
-
-Two things are worth knowing on any distribution:
-
-- **`xwayland-satellite` is what gives you an X server.** ZEN does not run Xwayland
-  directly. Without that binary there is no `$DISPLAY` and every X11 app fails.
-- **A portal backend is separate from the portal.** `xdg-desktop-portal` on its own
-  answers nothing, so file pickers never open and screen sharing hangs on an empty
-  chooser. Install `xdg-desktop-portal-gtk` or `-gnome` as well.
-
-## Building
+ZEN runs on **Arch Linux and distributions built on it** (EndeavourOS, CachyOS,
+Manjaro, Garuda). `./setup.sh` refuses anything without pacman, on purpose: one
+distribution done properly beats five done halfway.
 
 ```sh
-./setup.sh --check          # non-destructive: what is installed vs missing
-./setup.sh -y               # install dependencies and build
+git clone https://github.com/cl5rr/zen && cd zen
+./setup.sh
 ```
 
-Or by hand, on Arch:
+Setup asks how much you want, then lets you untick anything:
+
+| Profile | What you get |
+|---|---|
+| **Essentials** | ZEN, the bar, launcher, terminal, lock screen, portals, fonts, audio, network and Bluetooth. No apps. |
+| **Recommended** | Essentials plus a browser, files, media player, image viewer, editor, recording and a system monitor. |
+| **Everything** | Recommended plus office, creative tools, gaming (Steam, Lutris, Heroic, Prism), dev tools and the fun pack. |
+
+The fun pack is Nyarch's Catgirl Downloader and AI assistant, plus fastfetch, cava,
+cbonsai, pipes and cmatrix. If an NVIDIA card is found you are offered its driver.
+
+**Nothing ends in "install this yourself".** Every package goes through the same
+chain until something works: the Arch repositories, then the AUR (setup installs
+`paru` first if you have no AUR helper), then Flathub (setting up Flatpak if
+needed), then a project's own GitHub release. Whatever still fails is named at the
+end, with a one-key retry, and every command setup ran is in
+`~/.cache/zen/setup-<date>.log`.
+
+What you picked is remembered in `~/.config/zen/setup-choices`, so
+`./setup.sh --update` never brings back something you unticked, and tells you about
+anything new.
+
+```sh
+./setup.sh --check                  # what is installed and what is missing, changes nothing
+./setup.sh --update                 # pull, rebuild, reinstall, install anything new you picked
+./setup.sh --preset essentials -y   # unattended: essentials, recommended, everything, or a file
+./setup.sh --reset-config           # take the shipped config, keeping yours as a backup
+```
+
+Every package is listed in [`resources/packages.list`](resources/packages.list), one
+row each, with how to detect it and where it comes from.
+
+## Building by hand
 
 ```sh
 sudo pacman -S --needed rust gcc clang pkgconf systemd-libs mesa libxkbcommon \
-                        wayland libinput dbus seatd pipewire pango libdisplay-info
+                        wayland libinput dbus seatd pipewire pango libdisplay-info \
+                        gtk4 libadwaita
 cargo build --release
 ```
 

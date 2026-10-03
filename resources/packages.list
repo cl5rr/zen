@@ -1,0 +1,99 @@
+# id | category | profiles | probe | pacman | aur | flatpak | why
+
+# core
+xwayland           | core     | erx | Xwayland | xorg-xwayland | | | runs X11 apps such as Steam and older Electron apps
+xwayland-satellite | core     | erx | xwayland-satellite | | | | starts the X server for those apps
+portal             | core     | erx | /usr/lib/xdg-desktop-portal | xdg-desktop-portal | | | file pickers, screen sharing and app portals
+portal-gnome       | core     | erx | /usr/lib/xdg-desktop-portal-gnome | xdg-desktop-portal-gnome | | | screen sharing for OBS, browsers and calls
+portal-gtk         | core     | erx | /usr/lib/xdg-desktop-portal-gtk | xdg-desktop-portal-gtk | | | the file picker
+dbus               | core     | erx | dbus-daemon,dbus-broker | dbus | | | the session bus nearly every app needs
+fontconfig         | core     | erx | fc-list | | | | finds fonts
+font-text          | core     | erx | /usr/share/fonts/TTF/DejaVuSans.ttf | ttf-dejavu | | | a font to draw text with
+font-emoji         | core     | erx | /usr/share/fonts/noto/NotoColorEmoji.ttf | noto-fonts-emoji | | | emoji instead of hollow boxes
+font-symbols       | core     | erx | /usr/share/fonts/TTF/SymbolsNerdFont*,/usr/share/fonts/*/SymbolsNerdFont* | ttf-nerd-fonts-symbols | | | the icons in the bar
+polkit             | core     | erx | pkexec | | | | lets Settings ask for your password
+polkit-agent       | core     | erx | /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1,/usr/lib/polkit-kde-authentication-agent-1,lxqt-policykit-agent,lxpolkit | polkit-gnome | | | draws the password prompt
+pipewire           | core     | erx | pipewire | | | | audio and screen capture
+wireplumber        | core     | erx | wpctl | | | | the volume keys
+pipewire-pulse     | core     | erx | pipewire-pulse | | | | sound for apps that speak PulseAudio
+
+# desktop
+alacritty          | desktop  | erx | alacritty | | | | the terminal, Mod+T
+fuzzel             | desktop  | erx | fuzzel | | | | the app launcher, Mod+Space
+waybar             | desktop  | erx | waybar | | | | the bar
+swaybg             | desktop  | erx | swaybg | | | | wallpapers
+awww               | desktop  | erx | awww,swww | | swww | | wallpaper crossfades
+swaylock           | desktop  | erx | swaylock | | | | the lock screen
+swayidle           | desktop  | erx | swayidle | | | | locks the screen when idle
+mako               | desktop  | erx | mako,makoctl | | | | notifications
+wl-clipboard       | desktop  | erx | wl-copy | | | | copy and paste
+cliphist           | desktop  | erx | cliphist | | | | clipboard history
+brightnessctl      | desktop  | erx | brightnessctl | | | | the brightness keys
+playerctl          | desktop  | erx | playerctl | | | | the media keys
+xdg-utils          | desktop  | erx | xdg-open | | | | opens links and files
+
+# system
+networkmanager     | system   | erx | nmcli | | | | Wi-Fi and wired networking
+bluetooth          | system   | erx | bluetoothctl | bluez bluez-utils | | | Bluetooth
+power-profiles     | system   | rx  | powerprofilesctl | power-profiles-daemon | | | battery saver and performance modes
+pavucontrol        | system   | rx  | pavucontrol | | | | sound settings
+blueman            | system   | rx  | blueman-manager | | | | Bluetooth settings
+
+# apps
+firefox            | apps     | rx  | firefox | | | | the browser, Mod+W
+nautilus           | apps     | rx  | nautilus | | | | files, Mod+E
+discord            | apps     | rx  | discord,flatpak:com.discordapp.Discord | | | com.discordapp.Discord | chat, Mod+D
+mpv                | apps     | rx  | mpv | | | | plays video and music
+loupe              | apps     | rx  | loupe | | | | views images
+text-editor        | apps     | rx  | gnome-text-editor | gnome-text-editor | | | edits text
+calculator         | apps     | rx  | gnome-calculator | gnome-calculator | | | a calculator
+file-roller        | apps     | rx  | file-roller | | | | opens zip and tar archives
+btop               | apps     | rx  | btop | | | | shows what is using your CPU and memory
+thunderbird        | apps     | x   | thunderbird | | | | email
+
+# media
+mpvpaper           | media    | rx  | mpvpaper | | | | video wallpapers
+wf-recorder        | media    | rx  | wf-recorder | | | | records the screen
+obs                | media    | x   | obs | obs-studio | | com.obsproject.Studio | streaming and recording
+
+# office
+libreoffice        | office   | x   | libreoffice,soffice | libreoffice-fresh | | org.libreoffice.LibreOffice | documents, spreadsheets and slides
+
+# creative
+gimp               | creative | x   | gimp | | | org.gimp.GIMP | edits photos
+inkscape           | creative | x   | inkscape | | | org.inkscape.Inkscape | vector drawing
+krita              | creative | x   | krita | | | org.kde.krita | painting
+blender            | creative | x   | blender | | | org.blender.Blender | 3D
+kdenlive           | creative | x   | kdenlive | | | org.kde.kdenlive | edits video
+
+# gaming
+steam              | gaming   | x   | steam,flatpak:com.valvesoftware.Steam | | | com.valvesoftware.Steam | Steam
+gamemode           | gaming   | x   | gamemoderun | | | | squeezes more speed out of games
+mangohud           | gaming   | x   | mangohud | | | | an FPS overlay
+lutris             | gaming   | x   | lutris,flatpak:net.lutris.Lutris | | | net.lutris.Lutris | runs games from everywhere else
+heroic             | gaming   | x   | heroic,flatpak:com.heroicgameslauncher.hgl | - | heroic-games-launcher-bin | com.heroicgameslauncher.hgl | Epic and GOG games
+prismlauncher      | gaming   | x   | prismlauncher,flatpak:org.prismlauncher.PrismLauncher | | | org.prismlauncher.PrismLauncher | Minecraft
+
+# dev
+code               | dev      | x   | code | | | com.visualstudio.code | VS Code
+neovim             | dev      | x   | nvim | | | | the editor
+github-cli         | dev      | x   | gh | | | | GitHub from the terminal
+
+# fun
+fastfetch          | fun      | x   | fastfetch | | | | system info with a logo
+cava               | fun      | x   | cava | | | | an audio visualiser in the terminal
+cbonsai            | fun      | x   | cbonsai | | | | grows a bonsai in the terminal
+pipes              | fun      | x   | pipes.sh | - | pipes.sh | | the pipes screensaver
+cmatrix            | fun      | x   | cmatrix | | | | the falling green text
+catgirl-downloader | fun      | x   | flatpak:*atgirl* | - | | gh:NyarchLinux/CatgirlDownloader/catgirldownloader.flatpak | Nyarch's catgirl wallpaper downloader
+nyarch-assistant   | fun      | x   | flatpak:moe.nyarchlinux.assistant | - | | gh:NyarchLinux/NyarchAssistant/nyarchassistant.flatpak | Nyarch's AI assistant
+
+# greeter
+ly                 | greeter  | -   | ly,/usr/lib/systemd/system/ly@.service | | | | the Ly login screen
+greetd             | greeter  | -   | greetd | | | | the greetd login daemon
+cage               | greeter  | -   | cage | | | | hosts the graphical greeter
+regreet            | greeter  | -   | regreet | greetd-regreet | | | the graphical greeter
+
+# gpu
+nvidia             | gpu      | -   | nvidia-smi | nvidia-open-dkms nvidia-utils | | | the NVIDIA driver
+nvidia-legacy      | gpu      | -   | nvidia-smi | - | nvidia-580xx-dkms nvidia-580xx-utils | | the NVIDIA driver for cards older than the GTX 16 series

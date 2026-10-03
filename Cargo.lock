@@ -4823,6 +4823,7 @@ dependencies = [
  "serde_json",
  "smithay",
  "smithay-drm-extras",
+ "tempfile",
  "tracing",
  "tracing-subscriber",
  "tracy-client",

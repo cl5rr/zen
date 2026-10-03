@@ -8,6 +8,7 @@ export ZEN_SETUP_LIB
 # shellcheck source=/dev/null
 . ./setup.sh
 set +e
+load_manifest
 
 fail=0
 
@@ -72,7 +73,17 @@ is_there "the waybar config, on the config path" "$XDG_CONFIG_HOME/waybar/config
 
 printf '\n'
 PKG_MGR=pacman
-out=$(pkg_install zen-no-such-package 2>&1)
+M_IDS+=(unreachable)
+M_CAT[unreachable]=apps
+M_PROBE[unreachable]=zen-no-such-command
+M_PAC[unreachable]=""
+M_AUR[unreachable]=""
+M_FLAT[unreachable]=""
+M_WHY[unreachable]="a package with nowhere to come from"
+FAILED_IDS=""
+install_ids unreachable >/dev/null 2>&1
+UI_TTY=0
+out=$(report_failed 2>&1)
 verdict=$?
 
 if [ "$verdict" -eq 0 ]; then
@@ -81,7 +92,7 @@ else
     say_ok "a package that did not install reports failure"
 fi
 
-if printf '%s\n' "$out" | grep -q "still not installed"; then
+if printf '%s\n' "$out" | grep -q "unreachable"; then
     say_ok "and names it"
 else
     say_no "and names it: it did not"

@@ -16,6 +16,7 @@ ZEN_ARGV=("$@")
 ZEN_SELF="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")"
 
 PREFIX="${PREFIX:-/usr/local}"
+PRESET=""
 ASSUME_YES=0
 DO_DEPS=1
 DO_BUILD=1
@@ -101,12 +102,17 @@ ZEN setup
 
 Usage: ./setup.sh [options]
 
+Arch Linux and Arch-based distributions only.
+
   --check            Report what is installed and what is missing, then exit.
   --reset-config     Replace ~/.config/zen/config.kdl with the shipped one, keeping
                      a timestamped backup. The way to pick up new and changed binds.
                      Changes nothing. Safe to run first.
   --update           Pull, rebuild and reinstall. Shows what changed, and any
                      config options you have not got yet.
+  --preset WHICH     What to install without asking: essentials, recommended,
+                     everything, or a file written by an earlier run
+                     (~/.config/zen/setup-choices is the one setup keeps).
   --deps-only        Install missing dependencies and exit.
   --build-only       Skip dependency handling; just build.
   --install          Install ZEN after building (needs root for PREFIX).
@@ -147,6 +153,9 @@ while [ $# -gt 0 ]; do
         --build-only)           DO_DEPS=0 ;;
         --install)              DO_INSTALL=1 ;;
         --greeter)              shift; GREETER="${1:-ask}"; W_GREETER=1 ;;
+        --preset)               [ $# -ge 2 ] || die "--preset needs essentials, recommended, everything or a file"
+                                PRESET="$2"; shift ;;
+        --preset=*)             PRESET="${1#*=}" ;;
         --debug)                BUILD_PROFILE=debug ;;
         --with-visual-tests)    WITH_VISUAL_TESTS=1 ;;
         --features)             [ $# -ge 2 ] || die "--features needs an argument"
@@ -163,33 +172,6 @@ while [ $# -gt 0 ]; do
 done
 
 have() { command -v "$1" >/dev/null 2>&1; }
-
-have_any_cmd() {
-    local names="$1" name
-    for name in ${names//,/ }; do
-        have "$name" && return 0
-    done
-    return 1
-}
-
-any_file() {
-    local candidate
-    for candidate in "$@"; do
-        [ -e "$candidate" ] && return 0
-    done
-    return 1
-}
-
-LIBEXEC_DIRS="/usr/lib /usr/libexec /usr/lib64 /usr/local/lib /usr/local/libexec"
-
-libexec_any() {
-    local name="$1" dir
-    for dir in $LIBEXEC_DIRS; do
-        # shellcheck disable=SC2086
-        any_file "$dir"/$name && return 0
-    done
-    return 1
-}
 
 confirm() {
     [ "$ASSUME_YES" = 1 ] && return 0
@@ -235,526 +217,440 @@ need_root() {
     fi
 }
 
-# -------------------------------------------------------------- detection ---
+# detection
 
-DISTRO_NAME=""; PKG_MGR=""
+DISTRO_NAME="unknown"
+PKG_MGR=unknown
 
 detect_distro() {
+    DISTRO_NAME="unknown"
     if [ -r /etc/os-release ]; then
-        # shellcheck disable=SC1091
-        . /etc/os-release
-        DISTRO_NAME="${PRETTY_NAME:-${ID:-unknown}}"
-        local id="${ID:-}" like="${ID_LIKE:-}"
-        case " $id $like " in
-            *" arch "*|*" archarm "*|*" manjaro "*|*" endeavouros "*) PKG_MGR=pacman ;;
-            *" debian "*|*" ubuntu "*)                                PKG_MGR=apt ;;
-            *" fedora "*|*" rhel "*|*" centos "*)                     PKG_MGR=dnf ;;
-            *" alpine "*)                                             PKG_MGR=apk ;;
-            *" suse "*|*" opensuse "*)                                PKG_MGR=zypper ;;
-        esac
-    else
-        DISTRO_NAME="unknown"
+        DISTRO_NAME="$(. /etc/os-release && printf '%s' "${PRETTY_NAME:-${ID:-unknown}}")"
     fi
-    if [ -z "$PKG_MGR" ]; then
-        for m in pacman apt-get dnf apk zypper; do
-            if have "$m"; then PKG_MGR="${m%-get}"; break; fi
-        done
-    fi
-    [ -n "$PKG_MGR" ] || PKG_MGR=unknown
+    if have pacman; then PKG_MGR=pacman; else PKG_MGR=unknown; fi
 }
 
-# ------------------------------------------------------- dependency model ---
-# Each system library is "pkgconfig-name|human description". The package that
-# provides it differs per distro, so provider lookup is a separate table.
+require_arch() {
+    detect_distro
+    [ "$PKG_MGR" = pacman ] && return 0
+    die "ZEN supports Arch Linux and distributions built on it, and nothing else.
+
+    This looks like $DISTRO_NAME, which has no pacman.
+    Arch, EndeavourOS, CachyOS, Manjaro and Garuda all work."
+}
+
+# log
+
+SETUP_LOG=""
+
+start_log() {
+    local dir="${XDG_CACHE_HOME:-$HOME/.cache}/zen"
+    mkdir -p "$dir" 2>/dev/null || return 0
+    SETUP_LOG="$dir/setup-$(date +%Y%m%d-%H%M%S).log"
+    printf 'ZEN setup, %s, %s\n' "$(date)" "$DISTRO_NAME" > "$SETUP_LOG" 2>/dev/null || SETUP_LOG=""
+}
+
+run() {
+    printf '    %s$ %s%s\n' "$C_DIM" "$*" "$C_RESET"
+    [ -n "$SETUP_LOG" ] && printf '$ %s\n' "$*" >> "$SETUP_LOG"
+    local rc=0
+    "$@" || rc=$?
+    [ -n "$SETUP_LOG" ] && printf '  exit %s\n' "$rc" >> "$SETUP_LOG"
+    return "$rc"
+}
+
+# build deps
 
 LIBS="\
-wayland-server|Wayland compositor core
-wayland-client|Wayland client side (Xwayland, nested backend)
-libinput|input devices: keyboard, mouse, touchpad
-libudev|device discovery and hotplug
-xkbcommon|keyboard layouts and keymaps
-gbm|GPU buffer management (DRM/KMS backend)
-egl|OpenGL ES context creation
-libseat|seat and session management (seatd/logind)
-libdisplay-info|EDID parsing for monitor identification
-pangocairo|text rendering for on-screen UI
-dbus-1|desktop integration
-libpipewire-0.3|screencasting and the screen-share portal"
-
-# Provider package for a given pkg-config name, per package manager.
-provider_for() {
-    local mgr="$1" lib="$2"
-    case "$mgr" in
-    pacman) case "$lib" in
-        wayland-server|wayland-client) echo wayland ;;
-        libinput) echo libinput ;; libudev) echo systemd-libs ;;
-        xkbcommon) echo libxkbcommon ;; gbm|egl) echo mesa ;;
-        libseat) echo seatd ;; libdisplay-info) echo libdisplay-info ;;
-        pangocairo) echo pango ;; dbus-1) echo dbus ;;
-        libpipewire-0.3) echo pipewire ;;
-        esac ;;
-    apt) case "$lib" in
-        wayland-server|wayland-client) echo libwayland-dev ;;
-        libinput) echo libinput-dev ;; libudev) echo libudev-dev ;;
-        xkbcommon) echo libxkbcommon-dev ;; gbm) echo libgbm-dev ;;
-        egl) echo libegl1-mesa-dev ;; libseat) echo libseat-dev ;;
-        libdisplay-info) echo libdisplay-info-dev ;;
-        pangocairo) echo libpango1.0-dev ;; dbus-1) echo libdbus-1-dev ;;
-        libpipewire-0.3) echo libpipewire-0.3-dev ;;
-        esac ;;
-    dnf) case "$lib" in
-        wayland-server|wayland-client) echo wayland-devel ;;
-        libinput) echo libinput-devel ;; libudev) echo systemd-devel ;;
-        xkbcommon) echo libxkbcommon-devel ;; gbm) echo libgbm-devel ;;
-        egl) echo mesa-libEGL-devel ;; libseat) echo libseat-devel ;;
-        libdisplay-info) echo libdisplay-info-devel ;;
-        pangocairo) echo pango-devel ;; dbus-1) echo dbus-devel ;;
-        libpipewire-0.3) echo pipewire-devel ;;
-        esac ;;
-    apk) case "$lib" in
-        wayland-server|wayland-client) echo wayland-dev ;;
-        libinput) echo libinput-dev ;; libudev) echo eudev-dev ;;
-        xkbcommon) echo libxkbcommon-dev ;; gbm|egl) echo mesa-dev ;;
-        libseat) echo libseat-dev ;; libdisplay-info) echo libdisplay-info-dev ;;
-        pangocairo) echo pango-dev ;; dbus-1) echo dbus-dev ;;
-        libpipewire-0.3) echo pipewire-dev ;;
-        esac ;;
-    zypper) case "$lib" in
-        wayland-server|wayland-client) echo wayland-devel ;;
-        libinput) echo libinput-devel ;; libudev) echo systemd-devel ;;
-        xkbcommon) echo libxkbcommon-devel ;; gbm) echo libgbm-devel ;;
-        egl) echo Mesa-libEGL-devel ;; libseat) echo libseat-devel ;;
-        libdisplay-info) echo libdisplay-info-devel ;;
-        pangocairo) echo pango-devel ;; dbus-1) echo dbus-1-devel ;;
-        libpipewire-0.3) echo pipewire-devel ;;
-        esac ;;
-    esac
-}
-
-# Package providing a build tool.
-tool_package_for() {
-    local mgr="$1" tool="$2"
-    case "$mgr:$tool" in
-        pacman:cc)  echo base-devel ;;  pacman:pkg-config) echo pkgconf ;;
-        pacman:clang) echo clang ;;
-        apt:cc)     echo gcc ;;         apt:pkg-config)    echo pkg-config ;;
-        apt:clang)  echo clang ;;
-        dnf:cc)     echo gcc ;;         dnf:pkg-config)    echo pkgconf-pkg-config ;;
-        dnf:clang)  echo clang ;;
-        apk:cc)     echo build-base ;;  apk:pkg-config)    echo pkgconf ;;
-        apk:clang)  echo clang-libclang ;;
-        zypper:cc)  echo gcc ;;         zypper:pkg-config) echo pkg-config ;;
-        zypper:clang) echo clang ;;
-    esac
-}
-
-optional_packages_for() {
-    case "$1" in
-        pacman) echo "pipewire" ;;  apt) echo "libpipewire-0.3-dev" ;;
-        dnf)    echo "pipewire-devel" ;; apk) echo "pipewire-dev" ;;
-        zypper) echo "pipewire-devel" ;;
-    esac
-}
-
-gtk_packages_for() {
-    case "$1" in
-        pacman) echo "gtk4 libadwaita" ;; apt) echo "libgtk-4-dev libadwaita-1-dev" ;;
-        dnf)    echo "gtk4-devel libadwaita-devel" ;; apk) echo "gtk4.0-dev libadwaita-dev" ;;
-        zypper) echo "gtk4-devel libadwaita-devel" ;;
-    esac
-}
-
-# What a session needs at runtime, as opposed to what the build needs. None of this
-# is linked into the binary, so a build can succeed and the session still be unusable:
-# no X11 apps, no file picker, no fonts. Checked by command name, because that is what
-# actually has to be on PATH.
-#   Xwayland             the X server itself
-#   xwayland-satellite   what actually starts it. ZEN does not run Xwayland directly;
-#                        without this binary there is no $DISPLAY and every X11 app
-#                        fails with "Missing X server or $DISPLAY"
-#   xdg-desktop-portal   file pickers, screen sharing, and the "open with" dialog
-#   dbus-daemon          the session bus nearly every desktop app talks to
-#   fc-list              font discovery; with no fonts nothing draws text at all
-RUNTIME_PROGS="Xwayland|the X server, for Discord, Steam and older Electron apps
-xwayland-satellite|what starts it. With no satellite there is no X server at all
-xdg-desktop-portal|file pickers, screen sharing and app portals
-dbus-daemon|the session bus nearly every desktop app needs
-fc-list|font discovery, without which nothing draws text"
-
-runtime_package_for() {
-    local mgr="$1" cmd="$2"
-    case "$mgr" in
-    pacman) case "$cmd" in
-        Xwayland) echo xorg-xwayland ;; xwayland-satellite) echo xwayland-satellite ;;
-        xdg-desktop-portal) echo xdg-desktop-portal ;;
-        dbus-daemon) echo dbus ;; fc-list) echo fontconfig ;;
-        esac ;;
-    apt) case "$cmd" in
-        Xwayland) echo xwayland ;; xwayland-satellite) echo xwayland-satellite ;;
-        xdg-desktop-portal) echo xdg-desktop-portal ;;
-        dbus-daemon) echo dbus ;; fc-list) echo fontconfig ;;
-        esac ;;
-    dnf) case "$cmd" in
-        Xwayland) echo xorg-x11-server-Xwayland ;; xwayland-satellite) echo xwayland-satellite ;;
-        xdg-desktop-portal) echo xdg-desktop-portal ;;
-        dbus-daemon) echo dbus ;; fc-list) echo fontconfig ;;
-        esac ;;
-    apk) case "$cmd" in
-        Xwayland) echo xwayland ;; xwayland-satellite) echo xwayland-satellite ;;
-        xdg-desktop-portal) echo xdg-desktop-portal ;;
-        dbus-daemon) echo dbus ;; fc-list) echo fontconfig ;;
-        esac ;;
-    zypper) case "$cmd" in
-        Xwayland) echo xwayland ;; xwayland-satellite) echo xwayland-satellite ;;
-        xdg-desktop-portal) echo xdg-desktop-portal ;;
-        dbus-daemon) echo dbus ;; fc-list) echo fontconfig ;;
-        esac ;;
-    esac
-}
-
-# A portal with no backend answers nothing, which is the usual reason a file picker
-# never opens and a screen share hangs at a blank chooser. Any one of these will do.
-portal_backend_package_for() {
-    case "$1" in
-        pacman) echo xdg-desktop-portal-gtk ;; apt) echo xdg-desktop-portal-gtk ;;
-        dnf)    echo xdg-desktop-portal-gtk ;; apk) echo xdg-desktop-portal-gtk ;;
-        zypper) echo xdg-desktop-portal-gtk ;;
-    esac
-}
-
-# ScreenCast is only implemented by some backends. gnome is the one ZEN targets.
-screencast_backend_package_for() {
-    case "$1" in
-        pacman) echo xdg-desktop-portal-gnome ;; apt) echo xdg-desktop-portal-gnome ;;
-        dnf)    echo xdg-desktop-portal-gnome ;; apk) echo xdg-desktop-portal-gnome ;;
-        zypper) echo xdg-desktop-portal-gnome ;;
-    esac
-}
-
-# Emoji, plus the symbol and arrow ranges a status bar reaches for. Noto is the one
-# every distro packages and the one with the widest coverage.
-emoji_packages_for() {
-    case "$1" in
-        pacman) echo "noto-fonts noto-fonts-emoji ttf-nerd-fonts-symbols" ;;
-        apt)    echo "fonts-noto-core fonts-noto-color-emoji" ;;
-        dnf)    echo "google-noto-sans-fonts google-noto-color-emoji-fonts" ;;
-        apk)    echo "font-noto font-noto-emoji" ;;
-        zypper) echo "noto-sans-fonts noto-coloremoji-fonts" ;;
-    esac
-}
-
-polkit_agent_package_for() {
-    case "$1" in
-        pacman) echo polkit-gnome ;; apt) echo policykit-1-gnome ;;
-        dnf)    echo polkit-gnome ;; apk) echo polkit-gnome ;;
-        zypper) echo polkit-gnome ;;
-    esac
-}
-
-font_package_for() {
-    case "$1" in
-        pacman) echo ttf-dejavu ;; apt) echo fonts-dejavu-core ;;
-        dnf)    echo dejavu-sans-fonts ;; apk) echo font-dejavu ;;
-        zypper) echo dejavu-fonts ;;
-    esac
-}
-
-git_package_for() {
-    case "$1" in
-        pacman) echo git ;; apt) echo git ;; dnf) echo git ;;
-        apk)    echo git ;; zypper) echo git ;;
-    esac
-}
-
-# ------------------------------------------------------------- the check ----
+wayland-server|wayland|Wayland compositor core
+wayland-client|wayland|Wayland client side
+libinput|libinput|keyboard, mouse and touchpad
+libudev|systemd-libs|device discovery and hotplug
+xkbcommon|libxkbcommon|keyboard layouts
+gbm|mesa|GPU buffer management
+egl|mesa|OpenGL ES contexts
+libseat|seatd|seat and session management
+libdisplay-info|libdisplay-info|monitor identification
+pangocairo|pango|text for on-screen UI
+dbus-1|dbus|desktop integration
+libpipewire-0.3|pipewire|screencasting
+gtk4|gtk4|the settings app
+libadwaita-1|libadwaita|the settings app"
 
 MISSING_PKGS=""
 N_OK=0
 N_MISSING=0
-N_UNKNOWN=0
 
 add_missing() {
-    local pkg="$1"
-    [ -n "$pkg" ] || return 0
-    case " $MISSING_PKGS " in *" $pkg "*) return 0 ;; esac
-    MISSING_PKGS="$MISSING_PKGS $pkg"
+    local pkg
+    for pkg in "$@"; do
+        [ -n "$pkg" ] || continue
+        case " $MISSING_PKGS " in *" $pkg "*) continue ;; esac
+        MISSING_PKGS="$MISSING_PKGS $pkg"
+    done
 }
 
-check_deps() {
-    step "Checking what you have"
-    detect_distro
-    info "$DISTRO_NAME"
-    if [ "$PKG_MGR" = unknown ]; then
-        info "package manager: ${C_YELLOW}not recognized${C_RESET}"
-    else
-        info "package manager: $PKG_MGR"
-    fi
+tool_row() {
+    local label="$1" pkg="$2" cmd
+    shift 2
+    for cmd in "$@"; do
+        if have "$cmd"; then
+            row_ok "$label" ""
+            N_OK=$((N_OK + 1))
+            return 0
+        fi
+    done
+    row_miss "$label" "$pkg"
+    add_missing "$pkg"
+    N_MISSING=$((N_MISSING + 1))
+}
 
+check_build() {
     printf '\n    %sbuild tools%s\n' "$C_BOLD" "$C_RESET"
+    tool_row "C compiler" base-devel cc gcc
+    tool_row "pkg-config" pkgconf pkg-config pkgconf
+    tool_row "clang" clang clang
+    tool_row "git" git git
+    tool_row "curl" curl curl
 
-    if have cc || have gcc || have clang; then
-        local ccname; ccname="$( (have cc && cc --version) || (have gcc && gcc --version) \
-            || clang --version 2>/dev/null )"
-        row_ok "C compiler" "$(printf '%s' "$ccname" | head -1)"
-        N_OK=$((N_OK + 1))
-    else
-        row_miss "C compiler" "required to build native dependencies"
-        add_missing "$(tool_package_for "$PKG_MGR" cc)"
-        N_MISSING=$((N_MISSING + 1))
-    fi
-
-    if have pkg-config || have pkgconf; then
-        row_ok "pkg-config" "$(pkg-config --version 2>/dev/null || pkgconf --version 2>/dev/null)"
-        N_OK=$((N_OK + 1))
-    else
-        row_miss "pkg-config" "required to locate system libraries"
-        add_missing "$(tool_package_for "$PKG_MGR" pkg-config)"
-        N_MISSING=$((N_MISSING + 1))
-    fi
-
-    if have clang; then
-        row_ok "clang" "$(clang --version 2>/dev/null | head -1)"
-        N_OK=$((N_OK + 1))
-    else
-        row_miss "clang" "required by bindgen for libdisplay-info"
-        add_missing "$(tool_package_for "$PKG_MGR" clang)"
-        N_MISSING=$((N_MISSING + 1))
-    fi
-
-    # This script updates itself with git, so an install without git can be built
-    # once and then never updated again.
-    if have git; then
-        row_ok "git" "$(git --version 2>/dev/null)"
-        N_OK=$((N_OK + 1))
-    else
-        row_miss "git" "required by ./setup.sh --update"
-        add_missing "$(git_package_for "$PKG_MGR")"
-        N_MISSING=$((N_MISSING + 1))
-    fi
-
-    # Rust is reported here but installed separately, via rustup.
     local PATH_SAVE="$PATH"
     [ -d "$HOME/.cargo/bin" ] && PATH="$HOME/.cargo/bin:$PATH"
     if have cargo; then
-        # Presence is not enough: a distro rust a few releases behind fails deep in a
-        # dependency with an error that says nothing about the version.
         local rust_ver rust_major rust_minor
-        rust_ver="$(cargo --version 2>/dev/null | awk '{print $2}')"
+        rust_ver="$(cargo --version 2>/dev/null | awk '{print $2}' || true)"
         rust_major="${rust_ver%%.*}"
         rust_minor="${rust_ver#*.}"; rust_minor="${rust_minor%%.*}"
-        if [ "${rust_major:-0}" -gt 1 ] 2>/dev/null             || { [ "${rust_major:-0}" -eq 1 ] && [ "${rust_minor:-0}" -ge 87 ]; } 2>/dev/null; then
-            row_ok "Rust" "$(cargo --version 2>/dev/null)"
+        if [ "${rust_major:-0}" -gt 1 ] 2>/dev/null \
+            || { [ "${rust_major:-0}" -eq 1 ] && [ "${rust_minor:-0}" -ge 87 ]; } 2>/dev/null; then
+            row_ok "Rust" "$rust_ver"
             N_OK=$((N_OK + 1))
         else
-            row_miss "Rust" "$rust_ver is too old, ZEN needs >= 1.87 (rustup update)"
+            row_miss "Rust" "$rust_ver is too old, ZEN needs 1.87 or newer"
             N_MISSING=$((N_MISSING + 1))
         fi
     else
-        row_miss "Rust" "needed >= 1.87; installed via rustup, no root required"
+        row_miss "Rust" "installed with rustup into ~/.cargo, no root needed"
         N_MISSING=$((N_MISSING + 1))
     fi
     PATH="$PATH_SAVE"
 
-    printf '\n    %ssystem libraries%s\n' "$C_BOLD" "$C_RESET"
-
-    if ! have pkg-config && ! have pkgconf; then
-        dim "pkg-config is not installed yet, so these cannot be probed individually."
-        dim "Listing all of them; your package manager will skip any already present."
-        local lib desc
-        while IFS='|' read -r lib desc; do
-            [ -n "$lib" ] || continue
-            row_unknown "$lib" "$desc"
-            add_missing "$(provider_for "$PKG_MGR" "$lib")"
-            N_UNKNOWN=$((N_UNKNOWN + 1))
-        done <<EOF
+    printf '\n    %slibraries%s\n' "$C_BOLD" "$C_RESET"
+    local lib pkg desc
+    while IFS='|' read -r lib pkg desc; do
+        [ -n "$lib" ] || continue
+        if { have pkg-config || have pkgconf; } && pkg-config --exists "$lib" 2>/dev/null; then
+            row_ok "$lib" "$(pkg-config --modversion "$lib" 2>/dev/null || true)"
+            N_OK=$((N_OK + 1))
+        else
+            row_miss "$lib" "$desc"
+            add_missing "$pkg"
+            N_MISSING=$((N_MISSING + 1))
+        fi
+    done <<EOF
 $LIBS
 EOF
+}
+
+install_build_deps() {
+    MISSING_PKGS="${MISSING_PKGS# }"
+    step "Build dependencies"
+    if [ -z "$MISSING_PKGS" ]; then
+        ok "everything already present"
+        return 0
+    fi
+    info "via pacman:"
+    dim "$MISSING_PKGS"
+    if ! confirm; then
+        [ "$DO_UPDATE" = 1 ] || die "aborted"
+        dim "skipped; ZEN will still be rebuilt"
+        return 0
+    fi
+    sync_system
+    local y=""; [ "$ASSUME_YES" = 1 ] && y=1
+    # shellcheck disable=SC2086
+    run $SUDO pacman -S --needed ${y:+--noconfirm} $MISSING_PKGS \
+        || warn "pacman reported a problem; carrying on"
+}
+
+# manifest
+
+MANIFEST="resources/packages.list"
+declare -gA M_CAT M_PROF M_PROBE M_PAC M_AUR M_FLAT M_WHY M_ON M_NEW
+M_IDS=()
+
+PICK_CATS="system apps media office creative gaming dev fun"
+ALWAYS_CATS="core desktop"
+PROFILE=recommended
+
+trim_into() {
+    local -n trim_out="$1"
+    local s="$2"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+    trim_out="$s"
+}
+
+load_manifest() {
+    local file="${1:-$MANIFEST}"
+    [ -f "$file" ] || die "$file is missing; run this from the root of the ZEN repository"
+    M_IDS=()
+    M_CAT=(); M_PROF=(); M_PROBE=(); M_PAC=(); M_AUR=(); M_FLAT=(); M_WHY=()
+    M_ON=(); M_NEW=()
+
+    local line id cat prof probe pac aur flat why
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in ''|'#'*) continue ;; esac
+        IFS='|' read -r id cat prof probe pac aur flat why <<<"$line"
+        trim_into id "$id"
+        [ -n "$id" ] || continue
+        trim_into cat "$cat"; trim_into prof "$prof"; trim_into probe "$probe"
+        trim_into pac "$pac"; trim_into aur "$aur"; trim_into flat "$flat"
+        trim_into why "$why"
+        case "$pac" in '') pac="$id" ;; -) pac="" ;; esac
+
+        M_IDS+=("$id")
+        M_CAT[$id]="$cat"
+        M_PROF[$id]="$prof"
+        M_PROBE[$id]="${probe:-$id}"
+        M_PAC[$id]="$pac"
+        M_AUR[$id]="$aur"
+        M_FLAT[$id]="$flat"
+        M_WHY[$id]="$why"
+        M_ON[$id]=0
+    done < "$file"
+}
+
+# probe
+
+FLATPAK_APPS=""
+FLATPAK_LISTED=0
+
+flatpak_apps() {
+    if [ "$FLATPAK_LISTED" = 0 ]; then
+        FLATPAK_APPS=""
+        have flatpak && FLATPAK_APPS="$(flatpak list --app --columns=application 2>/dev/null || true)"
+        FLATPAK_LISTED=1
+    fi
+    printf '%s\n' "$FLATPAK_APPS"
+}
+
+present() {
+    local id="$1" tok f app
+    local -a toks
+    IFS=, read -ra toks <<<"${M_PROBE[$id]:-$id}"
+    for tok in "${toks[@]}"; do
+        trim_into tok "$tok"
+        case "$tok" in
+            '~/'*|/*)
+                tok="${tok/#\~/$HOME}"
+                for f in $tok; do
+                    [ -e "$f" ] && return 0
+                done ;;
+            flatpak:*)
+                while IFS= read -r app; do
+                    [ -n "$app" ] || continue
+                    # shellcheck disable=SC2053
+                    [[ $app == ${tok#flatpak:} ]] && return 0
+                done < <(flatpak_apps)
+                ;;
+            *)
+                have "$tok" && return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# selection
+
+profile_letter() {
+    case "$1" in
+        essentials) printf e ;;
+        everything) printf x ;;
+        *)          printf r ;;
+    esac
+}
+
+is_pickable() {
+    case " $PICK_CATS " in *" ${M_CAT[$1]} "*) return 0 ;; esac
+    return 1
+}
+
+is_always() {
+    case " $ALWAYS_CATS " in *" ${M_CAT[$1]} "*) return 0 ;; esac
+    return 1
+}
+
+apply_profile() {
+    local letter id
+    letter="$(profile_letter "$PROFILE")"
+    for id in "${M_IDS[@]}"; do
+        if is_always "$id"; then
+            M_ON[$id]=1
+        elif is_pickable "$id"; then
+            case "${M_PROF[$id]}" in
+                *"$letter"*) M_ON[$id]=1 ;;
+                *)           M_ON[$id]=0 ;;
+            esac
+        else
+            M_ON[$id]=0
+        fi
+    done
+}
+
+CHOICES="${XDG_CONFIG_HOME:-$HOME/.config}/zen/setup-choices"
+
+save_choices() {
+    local file="${1:-$CHOICES}" id
+    mkdir -p "$(dirname "$file")" 2>/dev/null || return 0
+    {
+        printf 'profile=%s\n' "$PROFILE"
+        for id in "${M_IDS[@]}"; do
+            is_pickable "$id" && printf '%s=%s\n' "$id" "${M_ON[$id]}"
+        done
+    } > "$file" 2>/dev/null || true
+}
+
+load_choices() {
+    local file="${1:-$CHOICES}" key value id
+    [ -f "$file" ] || return 1
+    local -A seen=()
+
+    PROFILE="$(sed -n 's/^profile=//p' "$file" | head -1)"
+    case "$PROFILE" in essentials|recommended|everything) ;; *) PROFILE=recommended ;; esac
+    apply_profile
+
+    while IFS='=' read -r key value; do
+        [ -n "$key" ] && [ "$key" != profile ] || continue
+        [ -n "${M_CAT[$key]+x}" ] || continue
+        is_pickable "$key" || continue
+        case "$value" in 1) M_ON[$key]=1 ;; *) M_ON[$key]=0 ;; esac
+        seen[$key]=1
+    done < "$file"
+
+    for id in "${M_IDS[@]}"; do
+        if is_pickable "$id" && [ -z "${seen[$id]+x}" ]; then
+            M_NEW[$id]=1
+        fi
+    done
+    return 0
+}
+
+selected_ids() {
+    local id out=""
+    for id in "${M_IDS[@]}"; do
+        [ "${M_ON[$id]:-0}" = 1 ] && out="$out $id"
+    done
+    printf '%s' "${out# }"
+}
+
+missing_ids() {
+    local id out=""
+    for id in "$@"; do
+        present "$id" || out="$out $id"
+    done
+    printf '%s' "${out# }"
+}
+
+# gpu
+
+nvidia_device() {
+    local d vendor class
+    for d in /sys/bus/pci/devices/*; do
+        [ -r "$d/vendor" ] || continue
+        vendor="$(cat "$d/vendor" 2>/dev/null || true)"
+        class="$(cat "$d/class" 2>/dev/null || true)"
+        if [ "$vendor" = 0x10de ]; then
+            case "$class" in 0x03*) cat "$d/device" 2>/dev/null; return 0 ;; esac
+        fi
+    done
+    return 1
+}
+
+nvidia_driver_id() {
+    local dev
+    dev="$(nvidia_device)" || return 1
+    if [ $((dev)) -ge $((0x1e00)) ] 2>/dev/null; then
+        printf nvidia
     else
-        local lib desc ver pkg
-        while IFS='|' read -r lib desc; do
-            [ -n "$lib" ] || continue
-            if pkg-config --exists "$lib" 2>/dev/null; then
-                ver="$(pkg-config --modversion "$lib" 2>/dev/null || true)"
-                row_ok "$lib" "$ver"
+        printf nvidia-legacy
+    fi
+}
+
+kernel_headers() {
+    local k out=""
+    for k in $(pacman -Qq 2>/dev/null | grep -E '^linux(-[a-z0-9]+)?$' || true); do
+        case "$k" in linux-firmware|linux-api-headers) continue ;; esac
+        out="$out $k-headers"
+    done
+    printf '%s' "${out# }"
+}
+
+# check
+
+check_manifest() {
+    local cat id label shown
+    for cat in $ALWAYS_CATS $PICK_CATS greeter gpu; do
+        shown=0
+        for id in "${M_IDS[@]}"; do
+            [ "${M_CAT[$id]}" = "$cat" ] && [ "${M_ON[$id]}" = 1 ] || continue
+            if [ "$shown" = 0 ]; then
+                label="$(cat_label "$cat")"
+                printf '\n    %s%s%s\n' "$C_BOLD" "$label" "$C_RESET"
+                shown=1
+            fi
+            if present "$id"; then
+                row_ok "$id" ""
                 N_OK=$((N_OK + 1))
             else
-                row_miss "$lib" "$desc"
-                pkg="$(provider_for "$PKG_MGR" "$lib")"
-                add_missing "$pkg"
+                row_miss "$id" "${M_WHY[$id]}"
                 N_MISSING=$((N_MISSING + 1))
             fi
-        done <<EOF
-$LIBS
-EOF
-    fi
+        done
+    done
+}
 
-    # The settings app. Optional, but it is a shipped feature on Mod+, so a plain
-    # install should get it rather than silently skipping it.
-    printf '\n    %ssettings app (GTK4)%s\n' "$C_BOLD" "$C_RESET"
-    if pkg-config --exists gtk4 2>/dev/null && pkg-config --exists libadwaita-1 2>/dev/null; then
-        row_ok "gtk4 + libadwaita" "$(pkg-config --modversion gtk4 2>/dev/null)"
-        N_OK=$((N_OK + 1))
-    else
-        row_miss "gtk4 + libadwaita" "zen-settings, and the shader harness"
-        for pkg in $(gtk_packages_for "$PKG_MGR"); do add_missing "$pkg"; done
-        N_MISSING=$((N_MISSING + 1))
-    fi
+cat_label() {
+    case "$1" in
+        core)     printf 'what ZEN needs' ;;
+        desktop)  printf 'what the keybinds open' ;;
+        system)   printf 'System' ;;
+        apps)     printf 'Apps' ;;
+        media)    printf 'Media and recording' ;;
+        office)   printf 'Office' ;;
+        creative) printf 'Creative' ;;
+        gaming)   printf 'Gaming' ;;
+        dev)      printf 'Development' ;;
+        fun)      printf 'Fun, from Nyarch and friends' ;;
+        greeter)  printf 'login screen' ;;
+        gpu)      printf 'graphics driver' ;;
+        *)        printf '%s' "$1" ;;
+    esac
+}
 
-    check_runtime
+check_deps() {
+    step "Checking what you have"
+    info "$DISTRO_NAME"
+    check_build
+    check_manifest
+    check_screencast
     check_system
 
     printf '\n'
-    if [ "$N_MISSING" -eq 0 ] && [ "$N_UNKNOWN" -eq 0 ] && [ -z "${MISSING_PKGS# }" ]; then
-        printf '    %sall %s checks passed - nothing to install.%s\n' "$C_GREEN" "$N_OK" "$C_RESET"
-    elif [ "$N_MISSING" -eq 0 ] && [ "$N_UNKNOWN" -eq 0 ]; then
-        printf '    %sall %s checks passed, plus optional packages below.%s\n' "$C_GREEN" "$N_OK" "$C_RESET"
-    elif [ "$N_UNKNOWN" -gt 0 ]; then
-        printf '    %s%s present, %s missing, %s unverifiable until pkg-config is installed.%s\n' \
-            "$C_BOLD" "$N_OK" "$N_MISSING" "$N_UNKNOWN" "$C_RESET"
+    if [ "$N_MISSING" -eq 0 ]; then
+        printf '    %sall %s checks passed.%s\n' "$C_GREEN" "$N_OK" "$C_RESET"
     else
         printf '    %s%s present, %s missing.%s\n' "$C_BOLD" "$N_OK" "$N_MISSING" "$C_RESET"
     fi
 }
 
-# Everything a session needs once ZEN is running. A build can succeed and leave you
-# with no X11 apps, no file picker and no fonts, and none of that shows up as a build
-# error, so it gets its own pass.
-runtime_present() {
-    case "$1" in
-        xdg-desktop-portal)
-            have xdg-desktop-portal || libexec_any xdg-desktop-portal ;;
-        *) have "$1" ;;
-    esac
-}
-
-check_runtime() {
-    printf '\n    %sruntime programs%s\n' "$C_BOLD" "$C_RESET"
-
-    local cmd desc pkg
-    while IFS='|' read -r cmd desc; do
-        [ -n "$cmd" ] || continue
-        if runtime_present "$cmd"; then
-            row_ok "$cmd" ""
-            N_OK=$((N_OK + 1))
-        else
-            row_miss "$cmd" "$desc"
-            add_missing "$(runtime_package_for "$PKG_MGR" "$cmd")"
-            N_MISSING=$((N_MISSING + 1))
-        fi
-    done <<EOF
-$RUNTIME_PROGS
-EOF
-
-    # Checked whether or not the portal itself is present: installing xdg-desktop-portal
-    # alone leaves you in exactly the broken state this row is about. ZEN's shipped
-    # zen-portals.conf asks for the gnome backend, then the gtk one.
-    if have xdg-desktop-portal-gtk || have xdg-desktop-portal-wlr ||
-        have xdg-desktop-portal-gnome || have xdg-desktop-portal-kde ||
-        libexec_any 'xdg-desktop-portal-*'
-    then
-        row_ok "portal backend" ""
-        N_OK=$((N_OK + 1))
-    else
-        row_miss "portal backend" "a portal with no backend never answers a file picker"
-        add_missing "$(portal_backend_package_for "$PKG_MGR")"
-        N_MISSING=$((N_MISSING + 1))
-    fi
-
-    # Screen sharing is a separate backend from the file picker. ZEN implements
-    # screencasting against xdg-desktop-portal-gnome, and the gtk backend does not
-    # implement ScreenCast at all, so with only gtk installed OBS records a black frame
-    # and nothing says why.
-    if have xdg-desktop-portal-gnome || libexec_any xdg-desktop-portal-gnome; then
-        row_ok "screen sharing" ""
-        N_OK=$((N_OK + 1))
-    else
-        row_miss "screen sharing" "OBS and screen share need xdg-desktop-portal-gnome"
-        add_missing "$(screencast_backend_package_for "$PKG_MGR")"
-        N_MISSING=$((N_MISSING + 1))
-    fi
-
-    # screen sharing needs four separate things and fails the same way when any one of
-    # them is absent: a black frame and no message. Each is asked about separately so
-    # the answer names which one.
-    check_screencast
-
-    # fontconfig being installed says nothing about there being a font to find.
-    if have fc-list; then
-        local nfonts nmono
-        nfonts="$(fc-list 2>/dev/null | wc -l || true)"
-        nmono="$(fc-list :spacing=100 2>/dev/null | wc -l || true)"
-        if [ "${nfonts:-0}" -eq 0 ]; then
-            row_miss "fonts" "fontconfig is installed but finds no font at all"
-            add_missing "$(font_package_for "$PKG_MGR")"
-            N_MISSING=$((N_MISSING + 1))
-        elif [ "${nmono:-0}" -eq 0 ]; then
-            row_miss "monospace font" "the shipped terminal themes ask for one by name"
-            add_missing "$(font_package_for "$PKG_MGR")"
-            N_MISSING=$((N_MISSING + 1))
-        else
-            row_ok "fonts" "$nfonts installed, $nmono monospace"
-            N_OK=$((N_OK + 1))
-        fi
-
-        # pkexec hands the request to polkit, and polkit needs an agent running in the
-    # session to draw the password prompt. Without one, anything that asks for root
-    # from a GUI fails with nothing on screen, which is indistinguishable from a bug.
-    if ! have pkexec; then
-        row_miss "pkexec" "how Settings is allowed to write /etc, for the login screen"
-        add_missing polkit
-        N_MISSING=$((N_MISSING + 1))
-    elif zen-polkit which >/dev/null 2>&1 \
-        || libexec_any 'polkit-*/polkit-*-authentication-agent-1' \
-        || libexec_any 'polkit-*-authentication-agent-1' \
-        || have lxqt-policykit-agent || have lxpolkit; then
-        row_ok "polkit agent" ""
-        N_OK=$((N_OK + 1))
-    else
-        row_miss "polkit agent" "pkexec is here but nothing can draw the password prompt"
-        add_missing "$(polkit_agent_package_for "$PKG_MGR")"
-        N_MISSING=$((N_MISSING + 1))
-    fi
-
-    # Emoji and the symbol ranges are a separate font from the text one, and
-        # nothing degrades gracefully without them: a missing glyph is a hollow box in
-        # a chat window, a bar, or a window title. Asked for by codepoint rather than
-        # by package name, because the package differs per distro and per font.
-        if fc-list ':charset=1F600' 2>/dev/null | grep -q .             && fc-list ':charset=2764' 2>/dev/null | grep -q .; then
-            row_ok "emoji" ""
-            N_OK=$((N_OK + 1))
-        else
-            row_miss "emoji" "without this, emoji render as hollow boxes everywhere"
-            for pkg in $(emoji_packages_for "$PKG_MGR"); do add_missing "$pkg"; done
-            N_MISSING=$((N_MISSING + 1))
-        fi
-    fi
-
-    printf '\n    %swhat the keybinds spawn%s\n' "$C_BOLD" "$C_RESET"
-    local pair
-    for pair in $BIND_APPS; do
-        cmd="${pair%%:*}"
-        pkg="${pair##*:}"
-        if have_any_cmd "$cmd"; then
-            row_ok "${cmd%%,*}" ""
-            N_OK=$((N_OK + 1))
-        else
-            row_miss "$cmd" "$pkg"
-            add_missing "$pkg"
-            N_MISSING=$((N_MISSING + 1))
-        fi
-    done
-}
-
 check_screencast() {
+    printf '\n    %sscreen sharing%s\n' "$C_BOLD" "$C_RESET"
     local zen_bin="$PREFIX/bin/zen"
     [ -x "$zen_bin" ] || zen_bin="target/$BUILD_PROFILE/zen"
 
-    # Built without the feature, the compositor never claims the bus name and every
-    # capture tool records nothing. The interface string is in the binary either way.
     if [ -x "$zen_bin" ] && have strings; then
-        # pipefail plus grep -q is a trap here: grep exits on the first match, strings
-        # takes SIGPIPE, and the pipeline reports failure on a binary that is fine.
-        if (set +o pipefail; strings -a "$zen_bin" 2>/dev/null                 | grep -q "org.gnome.Mutter.ScreenCast"); then
+        if (set +o pipefail; strings -a "$zen_bin" 2>/dev/null \
+                | grep -q "org.gnome.Mutter.ScreenCast"); then
             row_ok "screencast build" ""
             N_OK=$((N_OK + 1))
         else
@@ -767,11 +663,10 @@ check_screencast() {
         row_ok "pipewire running" ""
         N_OK=$((N_OK + 1))
     elif have pipewire; then
-        row_miss "pipewire running" "installed but not started (systemctl --user start pipewire)"
+        row_miss "pipewire running" "installed but not started: systemctl --user start pipewire"
         N_MISSING=$((N_MISSING + 1))
     fi
 
-    # Only meaningful inside a session, where the bus exists at all.
     if [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] && have busctl; then
         if busctl --user status org.gnome.Mutter.ScreenCast >/dev/null 2>&1; then
             row_ok "screencast service" "zen is answering on the bus"
@@ -791,13 +686,12 @@ check_screencast() {
         esac
     fi
 
-    # The routing file. Without it the portal picks a backend by its own defaults, and
-    # on a desktop it does not recognise that is usually none at all.
-    # Installed under PREFIX, which is not /usr by default, and the portal finds it
-    # through XDG_DATA_DIRS. Looking only in /usr reported it missing on every normal
-    # install.
     local routing="" candidate
-    for candidate in         "$PREFIX/share/xdg-desktop-portal/zen-portals.conf"         "/usr/local/share/xdg-desktop-portal/zen-portals.conf"         "/usr/share/xdg-desktop-portal/zen-portals.conf"         "/etc/xdg-desktop-portal/zen-portals.conf"
+    for candidate in \
+        "$PREFIX/share/xdg-desktop-portal/zen-portals.conf" \
+        "/usr/local/share/xdg-desktop-portal/zen-portals.conf" \
+        "/usr/share/xdg-desktop-portal/zen-portals.conf" \
+        "/etc/xdg-desktop-portal/zen-portals.conf"
     do
         [ -f "$candidate" ] && { routing="$candidate"; break; }
     done
@@ -806,12 +700,10 @@ check_screencast() {
         row_ok "portal routing" "$routing"
         N_OK=$((N_OK + 1))
     else
-        row_miss "portal routing" "no zen-portals.conf anywhere; run ./setup.sh --install"
+        row_miss "portal routing" "no zen-portals.conf yet; installing ZEN puts it there"
         N_MISSING=$((N_MISSING + 1))
     fi
 
-    # The layer between OBS and ZEN, and the one most likely to be the problem: the
-    # portal answers only if a backend implementing ScreenCast is installed and picked.
     if [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] && have busctl; then
         local version
         version=$(busctl --user get-property org.freedesktop.portal.Desktop \
@@ -823,29 +715,24 @@ check_screencast() {
             N_OK=$((N_OK + 1))
         else
             row_miss "portal screencast" "the portal offers no ScreenCast; OBS will show nothing"
-            add_missing "$(screencast_backend_package_for "$PKG_MGR")"
             N_MISSING=$((N_MISSING + 1))
         fi
     fi
 }
 
-# Conditions that no package can fix, so these report rather than add to the install
-# list. Each one is something that makes ZEN fail to start in a way whose error
-# message does not name the cause.
 check_system() {
     printf '\n    %ssystem%s\n' "$C_BOLD" "$C_RESET"
 
-    # No render node means no GPU to draw with, and the TTY backend simply exits.
-    if ls /dev/dri/card* >/dev/null 2>&1; then
-        row_ok "GPU" "$(ls -d /dev/dri/card* 2>/dev/null | tr '\n' ' ' || true)"
+    local cards
+    cards="$(ls -d /dev/dri/card* 2>/dev/null | tr '\n' ' ' || true)"
+    if [ -n "$cards" ]; then
+        row_ok "GPU" "$cards"
         N_OK=$((N_OK + 1))
     else
         row_miss "GPU" "no /dev/dri/card*; ZEN can run nested but not on a TTY"
         N_MISSING=$((N_MISSING + 1))
     fi
 
-    # Seat management hands over the GPU and the input devices. With neither, ZEN
-    # starts and then cannot open a single device.
     if [ -d /run/systemd/system ]; then
         row_ok "seat" "systemd-logind"
         N_OK=$((N_OK + 1))
@@ -854,242 +741,281 @@ check_system() {
             row_ok "seat" "seatd running"
             N_OK=$((N_OK + 1))
         else
-            row_miss "seat" "seatd is installed but not running (systemctl enable --now seatd)"
+            row_miss "seat" "seatd is installed but not running"
             N_MISSING=$((N_MISSING + 1))
         fi
     else
         row_miss "seat" "no logind and no seatd; nothing can hand ZEN the GPU"
-        add_missing "seatd"
+        add_missing seatd
         N_MISSING=$((N_MISSING + 1))
     fi
 
-    # Without logind, device access is group membership and nothing else.
-    if [ ! -d /run/systemd/system ]; then
-        local groups; groups="$(id -nG 2>/dev/null || true)"
-        local want missing_groups=""
-        for want in video input seat; do
-            case " $groups " in *" $want "*) ;; *) missing_groups="$missing_groups $want" ;; esac
-        done
-        if [ -n "$missing_groups" ]; then
-            local who="${USER:-$(id -un 2>/dev/null || echo you)}"
-            row_miss "groups" "sudo usermod -aG$(echo "${missing_groups# }" | tr ' ' ',') $who"
-            N_MISSING=$((N_MISSING + 1))
-        else
-            row_ok "groups" "video input seat"
+    local driver
+    if driver="$(nvidia_driver_id)"; then
+        if present "$driver"; then
+            row_ok "NVIDIA driver" ""
             N_OK=$((N_OK + 1))
+        else
+            row_miss "NVIDIA driver" "an NVIDIA card with no NVIDIA driver; setup can install it"
+            N_MISSING=$((N_MISSING + 1))
         fi
     fi
-
-    # Audio and screencasting both ride on PipeWire at runtime, separately from the
-    # headers the build needs.
-    if have pipewire; then
-        row_ok "pipewire" "$(pipewire --version 2>/dev/null | head -1 || true)"
-        N_OK=$((N_OK + 1))
-    else
-        row_miss "pipewire" "audio and screen sharing at runtime"
-        add_missing "pipewire"
-        N_MISSING=$((N_MISSING + 1))
-    fi
 }
 
-# availability
-# One package the repositories have never heard of fails the whole transaction, so a
-# single AUR-only name locks the user out of updating at all. Everything is asked about
-# first, the known ones are installed, and the rest are named rather than attempted.
+# routes
+
+AUR_HELPER=""
+FAILED_IDS=""
+
+SYNCED=0
+
+sync_system() {
+    [ "$SYNCED" = 1 ] && return 0
+    SYNCED=1
+    step "Bringing Arch up to date"
+    dim "Arch expects the system to be current before anything new is installed"
+    need_root
+    local y=""; [ "$ASSUME_YES" = 1 ] && y=1
+    run $SUDO pacman -Syu ${y:+--noconfirm} || warn "the system update did not finish; carrying on"
+}
+
 pkg_available() {
-    local pkg="$1"
-    [ -n "$pkg" ] || return 1
-    case "$PKG_MGR" in
-        pacman) pacman -Si -- "$pkg" >/dev/null 2>&1 ;;
-        apt)    apt-cache show -- "$pkg" >/dev/null 2>&1 ;;
-        dnf)    dnf --quiet info -- "$pkg" >/dev/null 2>&1 ;;
-        apk)    apk search -x -- "$pkg" 2>/dev/null | grep -q . ;;
-        zypper) zypper --quiet info -- "$pkg" 2>/dev/null | grep -q "^Name" ;;
-        *)      return 0 ;;
-    esac
+    local pkg
+    for pkg in "$@"; do
+        pacman -Si -- "$pkg" >/dev/null 2>&1 || return 1
+    done
+    return 0
 }
 
-pkg_installed() {
-    local pkg="$1"
-    [ -n "$pkg" ] || return 1
-    if [ "$pkg" = swww ] && pkg_installed awww; then
+ensure_aur_helper() {
+    [ -n "$AUR_HELPER" ] && return 0
+    local helper
+    for helper in paru yay; do
+        if have "$helper"; then
+            AUR_HELPER="$helper"
+            return 0
+        fi
+    done
+
+    step "Installing paru"
+    dim "some of what you picked lives in the AUR, and paru is what builds it"
+    if [ "$(id -u)" = 0 ]; then
+        warn "the AUR cannot be built as root; run ./setup.sh as your own user"
+        return 1
+    fi
+    need_root
+    if ! run $SUDO pacman -S --needed --noconfirm base-devel git; then
+        warn "base-devel and git did not install, so paru cannot be built"
+        return 1
+    fi
+
+    local tmp rc=0
+    tmp="$(mktemp -d)" || return 1
+    run git clone --depth 1 https://aur.archlinux.org/paru-bin.git "$tmp/paru-bin" \
+        && (cd "$tmp/paru-bin" && run makepkg -si --noconfirm) || rc=$?
+    rm -rf "$tmp"
+
+    if have paru; then
+        AUR_HELPER=paru
+        ok "paru installed"
         return 0
     fi
-    case "$PKG_MGR" in
-        pacman) pacman -Qq -- "$pkg" >/dev/null 2>&1 ;;
-        apt)    dpkg-query -W -f='${Status}' -- "$pkg" 2>/dev/null | grep -q "ok installed" ;;
-        dnf)    rpm -q -- "$pkg" >/dev/null 2>&1 ;;
-        apk)    apk info -e -- "$pkg" 2>/dev/null | grep -q . ;;
-        zypper) rpm -q -- "$pkg" >/dev/null 2>&1 ;;
-        *)      return 0 ;;
-    esac
-}
-
-# Named so the message can say where to get them rather than just that they are absent.
-AUR_ONLY="mpvpaper xwayland-satellite swww"
-
-elsewhere_note() {
-    local pkg="$1"
-    case " $AUR_ONLY " in
-        *" $pkg "*) [ "$PKG_MGR" = pacman ] && printf 'in the AUR' && return 0 ;;
-    esac
-    printf 'not in your repositories'
-}
-
-# aur
-# Naming a package and leaving someone to it is not much help when the reason it is
-# missing is that Arch keeps it in the AUR. An AUR helper does the whole thing; without
-# one, the manual route is four commands and worth printing rather than describing.
-aur_helper() {
-    local helper
-    for helper in paru yay pikaur trizen aurman; do
-        have "$helper" && { printf '%s\n' "$helper"; return 0; }
-    done
+    warn "paru did not install (exit $rc)"
     return 1
 }
 
-install_from_aur() {
-    [ "$PKG_MGR" = pacman ] || {
-        dim "everything else will still be installed"
-        return 0
-    }
+ensure_flatpak() {
+    if ! have flatpak; then
+        need_root
+        run $SUDO pacman -S --needed --noconfirm flatpak || return 1
+    fi
+    run flatpak remote-add --user --if-not-exists flathub \
+        https://dl.flathub.org/repo/flathub.flatpakrepo || return 1
+}
 
-    local wanted="$*"
-    wanted="${wanted# }"
-    [ -n "$wanted" ] || {
-        dim "everything else will still be installed"
-        return 0
-    }
+install_gh_bundle() {
+    local spec="$1" repo asset tmp rc=0
+    repo="${spec%/*}"
+    asset="${spec##*/}"
+    tmp="$(mktemp -d)" || return 1
+    run curl -fL --retry 2 -o "$tmp/$asset" \
+        "https://github.com/$repo/releases/latest/download/$asset" \
+        && run flatpak install --user -y --noninteractive "$tmp/$asset" || rc=$?
+    rm -rf "$tmp"
+    return "$rc"
+}
 
-    local helper
-    if helper=$(aur_helper); then
-        printf '\n'
-        info "$helper can build these from the AUR:"
-        dim "$wanted"
-        if confirm; then
-            # Deliberately not run through $SUDO: every AUR helper refuses to run as
-            # root, and makepkg will not build as root either.
-            local y=""; [ "$ASSUME_YES" = 1 ] && y=1
+flatpak_shim() {
+    local id="$1" ref="${M_FLAT[$1]}" cmd
+    case "$ref" in ''|gh:*) return 0 ;; esac
+    cmd="${M_PROBE[$id]%%,*}"
+    case "$cmd" in ''|/*|'~'*|flatpak:*) return 0 ;; esac
+    have "$cmd" && return 0
+    mkdir -p "$HOME/.local/bin" || return 0
+    printf '#!/bin/sh\nexec flatpak run %s "$@"\n' "$ref" > "$HOME/.local/bin/$cmd"
+    chmod +x "$HOME/.local/bin/$cmd"
+    dim "$cmd now opens the Flatpak $ref"
+}
+
+install_native() {
+    local pkgs="$*" pkg
+    [ -n "$pkgs" ] || return 0
+    need_root
+    # shellcheck disable=SC2086
+    if run $SUDO pacman -S --needed --noconfirm $pkgs; then
+        return 0
+    fi
+    warn "pacman refused the batch, so trying each package on its own"
+    for pkg in $pkgs; do
+        run $SUDO pacman -S --needed --noconfirm "$pkg" \
+            || warn "$pkg did not install"
+    done
+}
+
+install_ids() {
+    local want="$*" id p native="" extra sync=0
+    [ -n "$want" ] || return 0
+    for id in $want; do
+        [ -n "${M_PAC[$id]}${M_AUR[$id]}" ] && sync=1
+    done
+    if [ "$sync" = 1 ]; then sync_system; fi
+
+    for id in $want; do
+        p="${M_PAC[$id]}"
+        [ -n "$p" ] && pkg_available $p && native="$native $p"
+        if [ "$id" = nvidia ] || [ "$id" = nvidia-legacy ]; then
+            extra="$(kernel_headers)"
+            [ -n "$extra" ] && native="$native $extra"
+        fi
+    done
+    # shellcheck disable=SC2086
+    install_native ${native# }
+    FLATPAK_LISTED=0
+
+    local aur=""
+    for id in $want; do
+        present "$id" && continue
+        p="${M_AUR[$id]}"
+        if [ -z "$p" ] && [ -n "${M_PAC[$id]}" ] && ! pkg_available ${M_PAC[$id]}; then
+            p="${M_PAC[$id]}"
+        fi
+        [ -n "$p" ] && aur="$aur $p"
+    done
+    if [ -n "${aur# }" ]; then
+        if ensure_aur_helper; then
             # shellcheck disable=SC2086
-            $helper -S --needed ${y:+--noconfirm} $wanted                 || warn "the AUR build did not finish"
+            run "$AUR_HELPER" -S --needed --noconfirm ${aur# } \
+                || warn "the AUR build did not finish"
+        fi
+    fi
+
+    local flat=""
+    for id in $want; do
+        present "$id" && continue
+        [ -n "${M_FLAT[$id]}" ] && flat="$flat $id"
+    done
+    if [ -n "${flat# }" ] && ensure_flatpak; then
+        for id in $flat; do
+            case "${M_FLAT[$id]}" in
+                gh:*) install_gh_bundle "${M_FLAT[$id]#gh:}" || warn "$id did not install" ;;
+                *)    if run flatpak install --user -y --noninteractive flathub "${M_FLAT[$id]}"; then
+                          FLATPAK_LISTED=0
+                          flatpak_shim "$id"
+                      else
+                          warn "$id did not install"
+                      fi ;;
+            esac
+            FLATPAK_LISTED=0
+        done
+    fi
+
+    FLATPAK_LISTED=0
+    for id in $want; do
+        if ! present "$id"; then
+            case " $FAILED_IDS " in *" $id "*) ;; *) FAILED_IDS="$FAILED_IDS $id" ;; esac
+        fi
+    done
+    FAILED_IDS="${FAILED_IDS# }"
+}
+
+report_failed() {
+    if [ -z "$FAILED_IDS" ]; then
+        ok "everything you picked is installed"
+        return 0
+    fi
+
+    printf '\n'
+    warn "these did not install:"
+    local id
+    for id in $FAILED_IDS; do
+        printf '      %-20s %s\n' "$id" "${M_WHY[$id]}"
+    done
+    [ -n "$SETUP_LOG" ] && dim "every command and its result is in $SETUP_LOG"
+
+    [ "$UI_TTY" = 1 ] || return 1
+    ui_menu "Try those again?" "Yes, try again" "No, carry on without them" || return 1
+    [ "$UI_CHOICE" = 0 ] || return 1
+
+    local again="$FAILED_IDS"
+    FAILED_IDS=""
+    # shellcheck disable=SC2086
+    install_ids $again
+    report_failed
+}
+
+enable_services() {
+    have systemctl || return 0
+    [ -d /run/systemd/system ] || return 0
+
+    if present networkmanager && ! systemctl is-enabled -q NetworkManager 2>/dev/null; then
+        if systemctl is-active -q systemd-networkd iwd connman 2>/dev/null; then
+            dim "another network manager is running, so NetworkManager stays off"
+        else
+            need_root
+            run $SUDO systemctl enable --now NetworkManager || warn "NetworkManager did not start"
+        fi
+    fi
+
+    if present bluetooth && compgen -G "/sys/class/bluetooth/*" >/dev/null \
+        && ! systemctl is-enabled -q bluetooth 2>/dev/null; then
+        need_root
+        run $SUDO systemctl enable --now bluetooth || warn "bluetooth did not start"
+    fi
+
+    if present power-profiles && ! systemctl is-enabled -q power-profiles-daemon 2>/dev/null; then
+        need_root
+        run $SUDO systemctl enable --now power-profiles-daemon \
+            || warn "power-profiles-daemon did not start"
+    fi
+}
+
+install_selection() {
+    step "Installing what you picked"
+    local new="" id
+    for id in "${M_IDS[@]}"; do
+        [ "${M_NEW[$id]:-0}" = 1 ] && [ "${M_ON[$id]}" = 1 ] && new="$new $id"
+    done
+    [ -n "${new# }" ] && dim "new since your last install:${new}"
+
+    local want
+    # shellcheck disable=SC2046
+    want="$(missing_ids $(selected_ids))"
+    if [ -z "$want" ]; then
+        ok "everything you picked is already installed"
+    else
+        info "$(printf '%s\n' $want | wc -l | tr -d ' ' || true) to install:"
+        dim "$want"
+        if confirm; then
+            # shellcheck disable=SC2086
+            install_ids $want
+            report_failed || true
         else
             dim "skipped"
         fi
-        return 0
     fi
 
-    printf '\n'
-    dim "no AUR helper found. Either install one, for example:"
-    printf '      %s\n' "sudo pacman -S --needed git base-devel"
-    printf '      %s\n' "git clone https://aur.archlinux.org/paru.git && cd paru && makepkg -si"
-    dim "or build each of these the same way:"
-    for pkg in $wanted; do
-        printf '      %s\n' "git clone https://aur.archlinux.org/$pkg.git && cd $pkg && makepkg -si"
-    done
-}
-
-install_deps() {
-    MISSING_PKGS="${MISSING_PKGS# }"
-
-    if [ -z "$MISSING_PKGS" ]; then
-        step "Dependencies"
-        ok "everything already present"
-        return 0
-    fi
-
-    if [ "$PKG_MGR" = unknown ]; then
-        warn "unrecognized distribution - install these yourself, then re-run with --build-only:"
-        printf '\n'
-        printf '%s\n' "$LIBS" | while IFS='|' read -r lib desc; do
-            [ -n "$lib" ] && printf '      %-18s %s\n' "$lib" "$desc"
-        done
-        printf '\n    plus a C compiler, clang, pkg-config, and Rust >= 1.87.\n'
-        # Same reasoning as the declined prompt below: on an update this is
-        # information, not a reason to stop, because what is installed still needs
-        # rebuilding from the code that was just pulled.
-        [ "$DO_UPDATE" = 1 ] || exit 1
-        return 0
-    fi
-
-    step "Installing missing packages"
-
-    local have_pkgs="" absent="" pkg
-    for pkg in $MISSING_PKGS; do
-        if pkg_available "$pkg"; then
-            have_pkgs="$have_pkgs $pkg"
-        else
-            absent="$absent $pkg"
-        fi
-    done
-    have_pkgs="${have_pkgs# }"
-    absent="${absent# }"
-
-    if [ -n "$have_pkgs" ]; then
-        # shellcheck disable=SC2086
-        set -- $have_pkgs
-        info "$# package(s) via $PKG_MGR:"
-        dim "$*"
-    fi
-    if [ -n "$absent" ]; then
-        # shellcheck disable=SC2086
-        set -- $absent
-        info "$# package(s) your repositories do not carry:"
-        for pkg in "$@"; do
-            printf '      %-22s %s\n' "$pkg" "$(elsewhere_note "$pkg")"
-        done
-    fi
-
-    if ! confirm; then
-        [ "$DO_UPDATE" = 1 ] || die "aborted"
-        dim "skipped; ZEN will still be built and installed"
-        return 0
-    fi
-
-    if [ -n "$absent" ]; then
-        # shellcheck disable=SC2086
-        install_from_aur $absent
-    fi
-
-    if [ -z "$have_pkgs" ]; then
-        report_not_installed $MISSING_PKGS
-        return 0
-    fi
-
-    need_root
-    local y=""; [ "$ASSUME_YES" = 1 ] && y=1
-    # shellcheck disable=SC2086
-    set -- $have_pkgs
-
-    case "$PKG_MGR" in
-        pacman) $SUDO pacman -S --needed ${y:+--noconfirm} "$@" ;;
-        apt)    $SUDO apt-get update && $SUDO apt-get install ${y:+-y} "$@" ;;
-        dnf)    $SUDO dnf install ${y:+-y} "$@" ;;
-        apk)    $SUDO apk add "$@" ;;
-        zypper) $SUDO zypper install ${y:+-y} "$@" ;;
-    esac || {
-        # A failure here must not take the update with it: the build still has to run.
-        warn "the package manager reported a problem; carrying on"
-        report_not_installed $MISSING_PKGS
-        return 0
-    }
-    ok "packages installed"
-    report_not_installed $MISSING_PKGS
-}
-
-report_not_installed() {
-    [ "$PKG_MGR" = unknown ] && return 0
-    local left="" pkg
-    for pkg in "$@"; do
-        pkg_installed "$pkg" || left="$left $pkg"
-    done
-    [ -n "${left# }" ] || return 0
-
-    printf '\n'
-    warn "still not installed after that:"
-    for pkg in $left; do
-        printf '      %-22s %s\n' "$pkg" "$(elsewhere_note "$pkg")"
-    done
-    dim "ZEN runs without them; what they are for is in the list above"
+    enable_services
+    save_choices
 }
 
 # ------------------------------------------------------------------ rust ----
@@ -1595,145 +1521,75 @@ ui_multi() {
     done
 }
 
-# --------------------------------------------------------- extra install ----
-# The steps a person otherwise has to find out about by reading a guide on their
-# phone. Every one of these was manual friction the first time around.
+# picker
 
-# Everything the shipped keybinds actually spawn, grouped by how much you would
-# miss it. Derived from the spawn lines in resources/default-config.kdl; if you add
-# a bind that spawns something, add its package here too.
-#   core      Mod+T, Mod+Space, the wallpaper, the lock screen
-#   media     the XF86 keys: volume, brightness, play/pause
-#   apps      Mod+W, Mod+E, Mod+D and notifications
-DESKTOP_APPS="alacritty fuzzel swaybg swww swaylock swayidle waybar"
-MEDIA_APPS="wireplumber playerctl brightnessctl xdg-utils wl-clipboard cliphist"
-EXTRA_APPS="firefox nautilus mako mpvpaper pavucontrol blueman discord"
-GREETER_PKGS="greetd cage greetd-regreet"
-GREETER_LY_PKGS="ly"
-
-# Install packages with whatever this machine actually uses.
-# The names come in as Arch names because that is what ZEN is developed on, and
-# translated per manager on the way out. Anything with no translation is passed through,
-# which is right far more often than not: alacritty, fuzzel, waybar, mako, swaybg and
-# most of the rest are called the same thing everywhere.
-pkg_install() {
-    [ "$PKG_MGR" != unknown ] || {
-        warn "unrecognized distribution; install these yourself: $*"
-        return 1
-    }
-
-    local translated="" pkg
-    for pkg in "$@"; do
-        translated="$translated $(app_package_for "$PKG_MGR" "$pkg")"
-    done
-    # shellcheck disable=SC2086
-    set -- $translated
-    [ $# -gt 0 ] || return 0
-
-    local have_pkgs="" pkg
-    for pkg in "$@"; do
-        pkg_available "$pkg" && have_pkgs="$have_pkgs $pkg"
-    done
-    local wanted="$*"
-    local absent=""
-    for pkg in "$@"; do
-        case " $have_pkgs " in *" $pkg "*) ;; *) absent="$absent $pkg" ;; esac
-    done
-
-    if [ -n "${absent# }" ]; then
-        warn "not in your repositories:${absent}"
-        # shellcheck disable=SC2086
-        install_from_aur $absent
-    fi
-
-    if [ -n "${have_pkgs# }" ]; then
-        # shellcheck disable=SC2086
-        set -- $have_pkgs
-
-        need_root
-        local y=""; [ "$ASSUME_YES" = 1 ] && y=1
-
-        case "$PKG_MGR" in
-            pacman) $SUDO pacman -S --needed ${y:+--noconfirm} "$@" ;;
-            apt)    $SUDO apt-get update && $SUDO apt-get install ${y:+-y} "$@" ;;
-            dnf)    $SUDO dnf install ${y:+-y} "$@" ;;
-            apk)    $SUDO apk add "$@" ;;
-            zypper) $SUDO zypper install ${y:+-y} "$@" ;;
-        esac || warn "the package manager reported a problem; carrying on"
-    fi
-
-    local still=""
-    for pkg in $wanted; do
-        pkg_installed "$pkg" || still="$still $pkg"
-    done
-    [ -z "${still# }" ] || {
-        warn "still not installed:${still}"
-        return 1
-    }
-    return 0
-}
-
-# The handful of desktop packages whose name is not the same everywhere. Everything not
-# listed keeps the name it came in with.
-app_package_for() {
-    local mgr="$1" pkg="$2"
-    case "$mgr" in
-    apt) case "$pkg" in
-        xdg-utils) echo xdg-utils ;;
-        wireplumber) echo wireplumber ;;
-        ttf-dejavu) echo fonts-dejavu-core ;;
-        noto-fonts-emoji) echo fonts-noto-color-emoji ;;
-        xorg-xwayland) echo xwayland ;;
-        greetd-regreet) echo "" ;;
-        *) echo "$pkg" ;;
-        esac ;;
-    dnf) case "$pkg" in
-        ttf-dejavu) echo dejavu-sans-fonts ;;
-        noto-fonts-emoji) echo google-noto-emoji-color-fonts ;;
-        xorg-xwayland) echo xorg-x11-server-Xwayland ;;
-        greetd-regreet) echo "" ;;
-        *) echo "$pkg" ;;
-        esac ;;
-    apk) case "$pkg" in
-        ttf-dejavu) echo font-dejavu ;;
-        noto-fonts-emoji) echo font-noto-emoji ;;
-        xorg-xwayland) echo xwayland ;;
-        greetd-regreet) echo "" ;;
-        *) echo "$pkg" ;;
-        esac ;;
-    zypper) case "$pkg" in
-        ttf-dejavu) echo dejavu-fonts ;;
-        noto-fonts-emoji) echo noto-coloremoji-fonts ;;
-        xorg-xwayland) echo xwayland ;;
-        greetd-regreet) echo "" ;;
-        *) echo "$pkg" ;;
-        esac ;;
-    *) echo "$pkg" ;;
+pick_profile() {
+    ui_menu "How much should setup install?" \
+        "Recommended   ZEN plus everyday apps: browser, files, media, recording" \
+        "Essentials    ZEN and what it needs to run, and no apps" \
+        "Everything    adds office, creative, gaming, dev tools and the fun pack" \
+        || return 1
+    case "$UI_CHOICE" in
+        0) PROFILE=recommended ;;
+        1) PROFILE=essentials ;;
+        2) PROFILE=everything ;;
     esac
+    apply_profile
 }
 
-# Kept as a name because the greeter steps read better with it, and because a reader
-# looking for the old one should find it rather than conclude it was dropped.
-pacman_install() { pkg_install "$@"; }
-
-install_desktop_apps() {
-    step "Installing what the keybinds expect"
-    dim "Mod+T terminal, Mod+Space launcher, Mod+Shift+W wallpaper, Mod+Shift+Escape lock"
-    pacman_install $DESKTOP_APPS || return 1
-    ok "terminal, launcher, wallpaper and lock installed"
-
-    dim "media and brightness keys: wpctl, playerctl, brightnessctl"
-    pacman_install $MEDIA_APPS && ok "media keys will work"
+category_counts() {
+    local cat="$1" id on=0 total=0
+    for id in "${M_IDS[@]}"; do
+        [ "${M_CAT[$id]}" = "$cat" ] || continue
+        total=$((total + 1))
+        [ "${M_ON[$id]}" = 1 ] && on=$((on + 1))
+    done
+    printf '%s of %s' "$on" "$total"
 }
 
-# What the shipped keybinds spawn, as "command:package" pairs. Checked by command
-# because that is what a bind actually needs to find on PATH.
-BIND_APPS="waybar:waybar swww,awww:swww mpvpaper:mpvpaper pavucontrol:pavucontrol blueman-manager:blueman makoctl:mako discord:discord wl-copy:wl-clipboard cliphist:cliphist swayidle:swayidle alacritty:alacritty fuzzel:fuzzel swaybg:swaybg swaylock:swaylock wpctl:wireplumber playerctl:playerctl brightnessctl:brightnessctl xdg-open:xdg-utils firefox:firefox nautilus:nautilus mako:mako"
+pick_category() {
+    local cat="$1" id state i
+    local -a ids=() opts=()
+    for id in "${M_IDS[@]}"; do
+        [ "${M_CAT[$id]}" = "$cat" ] || continue
+        ids+=("$id")
+        state=off
+        [ "${M_ON[$id]}" = 1 ] && state=on
+        opts+=("$(printf '%-20s %s' "$id" "${M_WHY[$id]//:/ }"):$state")
+    done
+    [ "${#ids[@]}" -gt 0 ] || return 0
 
-install_extra_apps() {
-    step "Installing optional extras"
-    dim "Mod+W browser, Mod+E files, and a notification daemon"
-    pacman_install $EXTRA_APPS && ok "extras installed"
+    ui_multi "$(cat_label "$cat")" "${opts[@]}" || return 0
+    for id in "${ids[@]}"; do M_ON[$id]=0; done
+    for i in $UI_PICKED; do M_ON[${ids[$i]}]=1; done
+}
+
+pick_groups() {
+    local -a cats opts
+    local cat
+    read -ra cats <<<"$PICK_CATS"
+    while :; do
+        opts=()
+        for cat in "${cats[@]}"; do
+            opts+=("$(printf '%-30s %s' "$(cat_label "$cat")" "$(category_counts "$cat")")")
+        done
+        opts+=("Done, install these")
+        ui_menu "What to install ($PROFILE). Open a group to untick anything." "${opts[@]}" \
+            || return 1
+        [ "$UI_CHOICE" -ge "${#cats[@]}" ] && return 0
+        pick_category "${cats[$UI_CHOICE]}"
+    done
+}
+
+pick_nvidia() {
+    local driver
+    driver="$(nvidia_driver_id)" || return 0
+    present "$driver" && return 0
+    ui_menu "This machine has an NVIDIA card and no NVIDIA driver. Install it?" \
+        "Yes, install the NVIDIA driver" \
+        "No, keep what I have" || return 0
+    [ "$UI_CHOICE" = 0 ] && M_ON[$driver]=1
+    return 0
 }
 
 # reset
@@ -1987,9 +1843,10 @@ install_greeter_ly() {
 
     remove_greetd_if_present
 
-    if ! pacman_install $GREETER_LY_PKGS; then
-        warn "Ly did not get installed, so there is nothing to configure"
-        dim "install it yourself, then run ./setup.sh --greeter ly"
+    present ly || install_ids ly
+    if ! present ly; then
+        warn "Ly did not install, so there is nothing to configure"
+        [ -n "$SETUP_LOG" ] && dim "what pacman said is in $SETUP_LOG"
         return 1
     fi
     need_root
@@ -2004,9 +1861,11 @@ install_greeter_greetd() {
     step "Installing the login screen"
     dim "greetd runs the session, ReGreet draws it, cage hosts it"
 
-    if ! pacman_install $GREETER_PKGS; then
-        warn "greetd did not get installed, so there is nothing to configure"
-        dim "install it yourself, then run ./setup.sh --greeter greetd"
+    # shellcheck disable=SC2046
+    install_ids $(missing_ids greetd cage regreet)
+    if ! present greetd || ! present cage || ! present regreet; then
+        warn "greetd did not install, so there is nothing to configure"
+        [ -n "$SETUP_LOG" ] && dim "what pacman said is in $SETUP_LOG"
         return 1
     fi
 
@@ -2017,12 +1876,26 @@ install_greeter_greetd() {
     fi
 
     $SUDO mkdir -p /etc/greetd
-    printf '%s
-'         '[terminal]'         'vt = 1'         ''         '[default_session]'         'command = "cage -s -- regreet"'         'user = "greeter"'         | $SUDO tee /etc/greetd/config.toml >/dev/null
+    printf '%s\n' \
+        '[terminal]' \
+        'vt = 1' \
+        '' \
+        '[default_session]' \
+        'command = "cage -s -- regreet"' \
+        'user = "greeter"' \
+        | $SUDO tee /etc/greetd/config.toml >/dev/null
 
     if [ ! -f /etc/greetd/regreet.toml ]; then
-        printf '%s
-'             '[background]'             'path = "/usr/share/pixmaps/zen.png"'             'fit = "Cover"'             ''             '[GTK]'             'application_prefer_dark_theme = true'             'cursor_theme_name = "Adwaita"'             'font_name = "Cantarell 14"'             | $SUDO tee /etc/greetd/regreet.toml >/dev/null
+        printf '%s\n' \
+            '[background]' \
+            'path = "/usr/share/pixmaps/zen.png"' \
+            'fit = "Cover"' \
+            '' \
+            '[GTK]' \
+            'application_prefer_dark_theme = true' \
+            'cursor_theme_name = "Adwaita"' \
+            'font_name = "Cantarell 14"' \
+            | $SUDO tee /etc/greetd/regreet.toml >/dev/null
     fi
 
     ok "greetd configured"
@@ -2074,23 +1947,42 @@ greeter_epilogue() {
 # ---------------------------------------------------------------- wizard ----
 
 wizard_summary() {
+    local count
+    # shellcheck disable=SC2046
+    count="$(printf '%s\n' $(missing_ids $(selected_ids)) | grep -c . || true)"
     printf '\n  %sAbout to do this:%s\n\n' "$C_BOLD" "$C_RESET"
-    [ "$DO_UPDATE"   = 1 ] && info "• pull the latest ZEN and show what changed"
-    [ "$DO_DEPS"     = 1 ] && info "• install build dependencies"
-    [ "$W_APPS"      = 1 ] && info "• install a terminal and an app launcher"
-    [ "$W_EXTRAS"    = 1 ] && info "• install optional extras ($EXTRA_APPS)"
-    [ "$DO_BUILD"    = 1 ] && info "• build ZEN (this is the slow part, 5 to 15 minutes)"
-    [ "$DO_INSTALL"  = 1 ] && info "• install ZEN to $PREFIX"
-    [ "$W_CONFIG"    = 1 ] && info "• write your config file"
-    [ "$W_GREETER"   = 1 ] && info "• install and configure the login screen ($GREETER)"
+    [ "$DO_UPDATE"   = 1 ] && info "- pull the latest ZEN and show what changed"
+    [ "$DO_DEPS"     = 1 ] && info "- install what is missing: $count package(s), $PROFILE"
+    [ "$DO_BUILD"    = 1 ] && info "- build ZEN (the slow part, 5 to 15 minutes)"
+    [ "$DO_INSTALL"  = 1 ] && info "- install ZEN to $PREFIX"
+    [ "$W_CONFIG"    = 1 ] && info "- write your config file"
+    [ "$W_GREETER"   = 1 ] && info "- install and set up the login screen ($GREETER)"
     printf '\n'
 }
 
-W_APPS=0
-W_EXTRAS=0
 W_CONFIG=0
 W_GREETER=0
 GREETER=ask
+SELECTION_SET=0
+
+pick_greeter() {
+    ui_menu "Set up a login screen?" \
+        "Ly     a small TTY greeter, nothing else to install" \
+        "greetd + ReGreet  graphical, heavier, needs cage" \
+        "No, I will start ZEN from a TTY" || return 1
+    case "$UI_CHOICE" in
+        0) W_GREETER=1; GREETER=ly ;;
+        1) W_GREETER=1; GREETER=greetd ;;
+        *) W_GREETER=0 ;;
+    esac
+}
+
+pick_apps() {
+    pick_profile || return 1
+    pick_groups || return 1
+    pick_nvidia
+    SELECTION_SET=1
+}
 
 wizard() {
     banner
@@ -2099,56 +1991,66 @@ wizard() {
     have zen && installed=" (you have it already)"
 
     ui_menu "What would you like to do?" \
-        "Install ZEN  (everything: deps, build, apps, config)" \
+        "Install ZEN  (pick what comes with it next)" \
         "Update ZEN   (pull, rebuild, reinstall)$installed" \
-        "Choose what to install" \
+        "Choose the steps yourself" \
         "Just check what is missing, change nothing" \
         "Quit" || return 1
 
     case "$UI_CHOICE" in
-        0)  DO_DEPS=1; DO_BUILD=1; DO_INSTALL=1
-            W_APPS=1; W_CONFIG=1
-            ui_menu "Set up a login screen?" \
-                "Ly     (a small TTY greeter, no GTK, nothing else to install)" \
-                "greetd + ReGreet  (graphical, heavier, needs cage)" \
-                "No, I will start ZEN from a TTY" || return 1
-            case "$UI_CHOICE" in
-                0) W_GREETER=1; GREETER=ly ;;
-                1) W_GREETER=1; GREETER=greetd ;;
-            esac
+        0)  DO_DEPS=1; DO_BUILD=1; DO_INSTALL=1; W_CONFIG=1
+            pick_apps || return 1
+            pick_greeter || return 1
             ;;
         1)  DO_UPDATE=1; DO_DEPS=1; DO_BUILD=1; DO_INSTALL=1 ;;
-        2)  ui_multi "Pick what to do  (space toggles)" \
-                "Install build dependencies:on" \
+        2)  ui_multi "Pick the steps  (space toggles)" \
+                "Install what is missing:on" \
+                "Pick apps and tools first:on" \
                 "Build ZEN:on" \
                 "Install ZEN system-wide:on" \
-                "Install a terminal and launcher:on" \
                 "Write my config file:on" \
                 "Install the login screen:off" \
-                "Install optional extras (browser, wallpaper, notifications):off" \
                 || return 1
             DO_DEPS=0; DO_BUILD=0; DO_INSTALL=0
-            local idx
+            local idx picking=0
             for idx in $UI_PICKED; do
                 case "$idx" in
                     0) DO_DEPS=1 ;;
-                    1) DO_BUILD=1 ;;
-                    2) DO_INSTALL=1 ;;
-                    3) W_APPS=1 ;;
+                    1) picking=1 ;;
+                    2) DO_BUILD=1 ;;
+                    3) DO_INSTALL=1 ;;
                     4) W_CONFIG=1 ;;
                     5) W_GREETER=1 ;;
-                    6) W_EXTRAS=1 ;;
                 esac
             done
+            if [ "$picking" = 1 ]; then
+                DO_DEPS=1
+                pick_apps || return 1
+            fi
+            [ "$W_GREETER" = 1 ] && { pick_greeter || return 1; }
             ;;
         3)  CHECK_ONLY=1; return 0 ;;
         4)  return 1 ;;
     esac
 
+    [ "$SELECTION_SET" = 1 ] || init_selection
     wizard_summary
     ui_menu "Go ahead?" "Yes, do it" "No, quit" || return 1
     [ "$UI_CHOICE" = 0 ] || return 1
     return 0
+}
+
+init_selection() {
+    case "$PRESET" in
+        '')
+            load_choices || { PROFILE=recommended; apply_profile; } ;;
+        essentials|recommended|everything)
+            PROFILE="$PRESET"; apply_profile ;;
+        *)
+            [ -f "$PRESET" ] || die "no preset called $PRESET, and no file by that name"
+            load_choices "$PRESET" || die "could not read $PRESET" ;;
+    esac
+    SELECTION_SET=1
 }
 
 # ------------------------------------------------------------------ main ----
@@ -2156,17 +2058,21 @@ wizard() {
 main() {
     { [ -f Cargo.toml ] && grep -q '^name = "zen"' Cargo.toml; } \
         || die "run this from the root of the ZEN repository"
+    require_arch
+    load_manifest
 
     # A bare `./setup.sh` on a real terminal gets the guided flow. Anything with a
     # flag, or piped into a script, keeps the old non-interactive behaviour.
     if [ "$ANY_FLAG" = 0 ] && [ "$UI_TTY" = 1 ]; then
-        detect_distro
         wizard || { printf '\n%snothing done%s\n' "$C_DIM" "$C_RESET"; exit 0; }
         ASSUME_YES=1
     else
         banner
         printf '\n%sZEN setup%s\n' "$C_BOLD$C_BLUE" "$C_RESET"
     fi
+
+    [ "$SELECTION_SET" = 1 ] || init_selection
+    start_log
 
     if [ "$RESET_CONFIG" = 1 ] && [ "$DO_UPDATE" = 0 ]; then
         DO_DEPS=0; DO_BUILD=0; DO_INSTALL=0
@@ -2175,12 +2081,15 @@ main() {
     if [ "$CHECK_ONLY" = 1 ]; then
         check_deps
         printf '\n'
-        MISSING_PKGS="${MISSING_PKGS# }"
-        if [ -n "$MISSING_PKGS" ]; then
-            dim "would install: $MISSING_PKGS"
+        local would
+        # shellcheck disable=SC2046
+        would="${MISSING_PKGS# } $(missing_ids $(selected_ids))"
+        would="${would# }"
+        if [ -n "${would% }" ]; then
+            dim "would install: $would"
             info "run ${C_BOLD}./setup.sh${C_RESET} to install these and build"
         else
-            info "run ${C_BOLD}./setup.sh --build-only${C_RESET} to build"
+            info "nothing missing; ${C_BOLD}./setup.sh --build-only${C_RESET} builds"
         fi
         exit 0
     fi
@@ -2189,10 +2098,12 @@ main() {
     # An update runs the full audit too. A pull can add a bind that spawns something
     # new, or a library a new feature links against, and neither would ever be offered
     # otherwise: --update does not go through the install steps.
-    if [ "$DO_UPDATE" = 1 ]; then apply_designs; check_deps; install_deps; fi
-    if [ "$DO_DEPS" = 1 ] && [ "$DO_UPDATE" = 0 ]; then check_deps; install_deps; fi
-    if [ "$W_APPS" = 1 ]; then install_desktop_apps; fi
-    if [ "$W_EXTRAS" = 1 ]; then install_extra_apps; fi
+    if [ "$DO_UPDATE" = 1 ]; then apply_designs; fi
+    if [ "$DO_DEPS" = 1 ]; then
+        check_deps
+        install_build_deps
+        install_selection
+    fi
     if [ "$DO_BUILD" = 1 ]; then ensure_rust; build; fi
     if [ "$DO_INSTALL" = 1 ]; then install_zen; fi
     post_install_steps

@@ -12,33 +12,22 @@ fn read(rel: &str) -> String {
 }
 
 fn checked_commands() -> BTreeSet<String> {
-    let setup = read("setup.sh");
+    let manifest = read("resources/packages.list");
     let mut out = BTreeSet::new();
 
-    for line in setup.lines() {
+    for line in manifest.lines() {
         let line = line.trim();
-
-        if let Some(rest) = line.strip_prefix("BIND_APPS=\"") {
-            for pair in rest.trim_end_matches('"').split_whitespace() {
-                if let Some((cmd, _)) = pair.split_once(':') {
-                    out.insert(cmd.to_owned());
-                }
-            }
+        if line.is_empty() || line.starts_with('#') {
+            continue;
         }
-
-        for prefix in ["DESKTOP_APPS=\"", "MEDIA_APPS=\"", "EXTRA_APPS=\""] {
-            if let Some(rest) = line.strip_prefix(prefix) {
-                for pkg in rest.trim_end_matches('"').split_whitespace() {
-                    out.insert(pkg.to_owned());
-                }
-            }
-        }
-    }
-
-    if let Some(block) = setup.split("RUNTIME_PROGS=\"").nth(1) {
-        for line in block.split('"').next().unwrap_or("").lines() {
-            if let Some((cmd, _)) = line.trim_start_matches('\\').trim().split_once('|') {
-                out.insert(cmd.to_owned());
+        let fields: Vec<&str> = line.split('|').map(str::trim).collect();
+        let Some(id) = fields.first() else {
+            continue;
+        };
+        let probe = fields.get(3).copied().filter(|p| !p.is_empty()).unwrap_or(id);
+        for token in probe.split(',').map(str::trim) {
+            if !token.is_empty() && !token.starts_with('/') && !token.starts_with('~') && !token.contains(':') {
+                out.insert(token.to_owned());
             }
         }
     }
@@ -117,18 +106,18 @@ fn every_tool_the_shipped_setup_uses_is_one_the_installer_checks() {
         missing.is_empty(),
         "the shipped config or bar runs these, but setup.sh never checks for them, so \
          nobody is ever told to install them: {missing:?}\n\
-         add each to BIND_APPS as command:package"
+         add a row for each to resources/packages.list"
     );
 }
 
 #[test]
 fn the_optional_renderers_are_offered_too() {
     let checked = checked_commands();
-    for tool in ["swww", "mpvpaper"] {
+    for tool in ["awww", "swww", "mpvpaper"] {
         assert!(
             checked.contains(tool),
-            "zen-wallpaper prefers {tool} but setup.sh never offers it, so it is never \
-             installed and the feature silently never happens"
+            "zen-wallpaper prefers {tool} but resources/packages.list never probes for \
+             it, so it is never installed and the feature silently never happens"
         );
     }
 }

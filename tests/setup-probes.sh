@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+#
+#   bash tests/setup-probes.sh
 
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -12,10 +14,10 @@ set +e
 fail=0
 
 check() {
-    local what="$1" want="$2"
-    shift 2
-    local got
-    if "$@" >/dev/null 2>&1; then got=found; else got=absent; fi
+    local what="$1" want="$2" probe="$3" got
+    M_PROBE[probe]="$probe"
+    FLATPAK_LISTED=0
+    if present probe; then got=found; else got=absent; fi
     if [ "$got" = "$want" ]; then
         printf '  ok   %s\n' "$what"
     else
@@ -25,44 +27,38 @@ check() {
 }
 
 root=$(mktemp -d) || exit 1
+stub=$(mktemp -d) || exit 1
+trap 'rm -rf "$root" "$stub"' EXIT
 
-mkdir -p "$root/lib" "$root/lib/polkit-gnome"
+mkdir -p "$root/lib/polkit-gnome" "$HOME/.zen-probe-test-$$"
 : > "$root/lib/xdg-desktop-portal"
-: > "$root/lib/xdg-desktop-portal-gnome"
 : > "$root/lib/polkit-gnome/polkit-gnome-authentication-agent-1"
+: > "$root/lib/SymbolsNerdFont-Regular.ttf"
+: > "$HOME/.zen-probe-test-$$/here"
 
-LIBEXEC_DIRS="$root/libexec $root/lib"
+printf '#!/bin/sh\n' > "$stub/awww"
+printf '#!/bin/sh\n[ "$1" = list ] && printf "org.mozilla.firefox\\nmoe.nyarchlinux.catgirldownloader\\n"\n' > "$stub/flatpak"
+chmod +x "$stub/awww" "$stub/flatpak"
+PATH="$stub:$PATH"
 
 printf 'setup.sh must not call an installed thing missing\n\n'
 
-check "a file next to a missing one"        found  any_file "$root/nothing" "$root/lib/xdg-desktop-portal"
-check "an unmatched glob beside a real one" found  any_file "$root/nope/"* "$root/lib/xdg-desktop-portal"
-check "nothing at all"                      absent any_file "$root/nothing" "$root/also-nothing"
+check "a file after one that is missing"       found  "/nope/a,$root/lib/xdg-desktop-portal"
+check "a file in a directory that is absent"   found  "/usr/libexec-nope/x,$root/lib/xdg-desktop-portal"
+check "nothing at all"                         absent "/nope/a,/nope/b"
+check "a glob"                                 found  "$root/lib/SymbolsNerdFont*"
+check "a glob one level down"                  found  "$root/*/polkit-*/polkit-*-authentication-agent-1"
+check "a glob that matches nothing"            absent "$root/lib/NoSuchFont*"
+check "a path under your home"                 found  "~/.zen-probe-test-$$/here"
+check "a command"                              found  "awww"
+check "the second of two names"                found  "swww-nope,awww"
+check "neither of two names"                   absent "swww-nope,awww-nope"
+check "a Flatpak by id"                        found  "flatpak:org.mozilla.firefox"
+check "a Flatpak by pattern"                   found  "flatpak:*atgirl*"
+check "a Flatpak that is not installed"        absent "flatpak:org.example.Nope"
+check "spaces around names"                    found  " swww-nope , awww "
 
-check "the portal, in the second dir"       found  libexec_any xdg-desktop-portal
-check "a backend, by glob"                  found  libexec_any 'xdg-desktop-portal-*'
-check "the gnome backend, by name"          found  libexec_any xdg-desktop-portal-gnome
-check "a backend that is not installed"     absent libexec_any xdg-desktop-portal-kde
-check "a polkit agent one level down"       found  libexec_any 'polkit-*/polkit-*-authentication-agent-1'
-
-stub=$(mktemp -d) || exit 1
-trap 'rm -rf "$root" "$stub"' EXIT
-printf '#!/bin/sh\n' > "$stub/awww"
-chmod +x "$stub/awww"
-PATH="$stub:$PATH"
-
-check "swww, installed under its other name" found  have_any_cmd "swww,awww"
-check "neither name installed"               absent have_any_cmd "swww-nope,awww-nope"
-
-if printf '%s' "$BIND_APPS" | grep -q 'swww,awww:swww'; then
-    printf '  ok   the wallpaper bind asks about both names\n'
-else
-    printf '  FAIL the wallpaper bind asks about one name only\n'
-    fail=1
-fi
-
-check "xdg-desktop-portal as a runtime dep" found  runtime_present xdg-desktop-portal
-check "a runtime dep that really is absent" absent runtime_present zen-no-such-program
+rm -rf "$HOME/.zen-probe-test-$$"
 
 offenders=$(awk '
     /^[[:space:]]*#/ { next }
