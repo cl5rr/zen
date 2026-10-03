@@ -82,8 +82,8 @@ pub fn banner(missing: &[&Need]) -> Option<gtk::Widget> {
     card.append(
         &gtk::Label::builder()
             .label(
-                "On another distribution the names may differ; ./setup.sh --check names \
-                 the right ones for yours.",
+                "Or run ./setup.sh, which installs anything missing for you, from the \
+                 AUR or Flathub if it has to.",
             )
             .halign(Align::Start)
             .xalign(0.)

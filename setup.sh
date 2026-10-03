@@ -963,7 +963,7 @@ report_failed() {
     done
     [ -n "$SETUP_LOG" ] && dim "every command and its result is in $SETUP_LOG"
 
-    [ "$UI_TTY" = 1 ] || return 1
+    [ "$UI_TTY" = 1 ] && [ "$ANY_FLAG" = 0 ] || return 1
     ui_menu "Try those again?" "Yes, try again" "No, carry on without them" || return 1
     [ "$UI_CHOICE" = 0 ] || return 1
 
