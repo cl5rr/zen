@@ -39,6 +39,36 @@ pub struct FramebufferEffectElement {
     noise: f32,
     saturation: f32,
     glass: Option<GlassParams>,
+    mask: Option<SurfaceMask>,
+}
+
+// mask
+
+pub const MASK_THRESHOLD: f32 = 0.08;
+
+#[derive(Debug, Clone)]
+pub struct SurfaceMask {
+    pub texture: GlesTexture,
+    pub rect: Rectangle<f64, Logical>,
+}
+
+pub fn geo_to_mask(
+    clip: Rectangle<f64, Logical>,
+    mask: Rectangle<f64, Logical>,
+    flip_y: bool,
+) -> Mat3 {
+    let clip_loc = Vec2::new(clip.loc.x as f32, clip.loc.y as f32);
+    let clip_size = Vec2::new(clip.size.w as f32, clip.size.h as f32);
+    let mask_loc = Vec2::new(mask.loc.x as f32, mask.loc.y as f32);
+    let mask_size = Vec2::new(mask.size.w as f32, mask.size.h as f32).max(Vec2::ONE);
+
+    let m = Mat3::from_translation((clip_loc - mask_loc) / mask_size)
+        * Mat3::from_scale(clip_size / mask_size);
+    if flip_y {
+        Mat3::from_translation(Vec2::new(0., 1.)) * Mat3::from_scale(Vec2::new(1., -1.)) * m
+    } else {
+        m
+    }
 }
 
 // glass
@@ -119,6 +149,7 @@ impl FramebufferEffect {
             noise,
             saturation,
             glass,
+            mask: params.mask,
         }
     }
 }
@@ -163,6 +194,20 @@ impl FramebufferEffectElement {
                 Uniform::new("spec_strength", g.specular),
                 Uniform::new("spec_power", g.spec_power),
                 Uniform::new("light_dir", g.light_dir),
+            ]);
+
+            let (use_mask, to_mask) = match &self.mask {
+                Some(m) => (
+                    1f32,
+                    geo_to_mask(self.clip_geo, m.rect, m.texture.is_y_inverted()),
+                ),
+                None => (0f32, Mat3::IDENTITY),
+            };
+            uniforms.extend([
+                Uniform::new("use_mask", use_mask),
+                Uniform::new("mask_tex", 1i32),
+                mat3_uniform("geo_to_mask", to_mask),
+                Uniform::new("mask_threshold", MASK_THRESHOLD),
             ]);
         }
 
@@ -407,7 +452,17 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
             .then(|| self.compute_uniforms(crop, frame.transformation()));
         let uniforms = uniforms.as_ref().map_or(&[][..], |x| &x[..]);
 
-        frame.render_texture_from_to(
+        let mask = self.mask.as_ref().filter(|_| self.glass.is_some() && program.is_some());
+        if let Some(m) = mask {
+            let id = m.texture.tex_id();
+            frame.with_context(|gl| unsafe {
+                gl.ActiveTexture(ffi::TEXTURE1);
+                gl.BindTexture(ffi::TEXTURE_2D, id);
+                gl.ActiveTexture(ffi::TEXTURE0);
+            })?;
+        }
+
+        let res = frame.render_texture_from_to(
             texture,
             Rectangle::from_size(texture.size().to_f64()),
             clamped_dst,
@@ -417,7 +472,17 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
             1.,
             program.as_ref(),
             uniforms,
-        )
+        );
+
+        if mask.is_some() {
+            frame.with_context(|gl| unsafe {
+                gl.ActiveTexture(ffi::TEXTURE1);
+                gl.BindTexture(ffi::TEXTURE_2D, 0);
+                gl.ActiveTexture(ffi::TEXTURE0);
+            })?;
+        }
+
+        res
     }
 }
 

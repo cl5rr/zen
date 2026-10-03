@@ -8,6 +8,7 @@ mod animations;
 mod camera_input;
 mod canvas;
 mod floating;
+mod glass_mask;
 mod fullscreen;
 mod layer_shell;
 mod remove_output;

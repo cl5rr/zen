@@ -149,6 +149,10 @@ impl Shaders {
                     UniformName::new("spec_strength", UniformType::_1f),
                     UniformName::new("spec_power", UniformType::_1f),
                     UniformName::new("light_dir", UniformType::_2f),
+                    UniformName::new("use_mask", UniformType::_1f),
+                    UniformName::new("mask_tex", UniformType::_1i),
+                    UniformName::new("geo_to_mask", UniformType::Matrix3x3),
+                    UniformName::new("mask_threshold", UniformType::_1f),
                 ],
             )
             .map_err(|err| {

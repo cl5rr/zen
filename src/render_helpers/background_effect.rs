@@ -11,8 +11,11 @@ use crate::zen_render_elements;
 use crate::render_helpers::blur::BlurOptions;
 use crate::render_helpers::damage::ExtraDamage;
 use crate::render_helpers::framebuffer_effect::{
-    FramebufferEffect, FramebufferEffectElement, GlassParams,
+    FramebufferEffect, FramebufferEffectElement, GlassParams, SurfaceMask,
 };
+use smithay::backend::renderer::gles::GlesTexture;
+use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
+use smithay::backend::renderer::Renderer as _;
 use crate::render_helpers::xray::{XrayElement, XrayPos};
 use crate::render_helpers::RenderCtx;
 use crate::utils::region::TransformedRegion;
@@ -32,6 +35,7 @@ pub struct BackgroundEffect {
 pub struct Options {
     pub blur: bool,
     pub glass: bool,
+    pub alpha_mask: bool,
     pub xray: bool,
     pub noise: Option<f64>,
     pub saturation: Option<f64>,
@@ -53,6 +57,7 @@ pub struct RenderParams {
     pub subregion: Option<TransformedRegion>,
     pub clip: Option<(Rectangle<f64, Logical>, CornerRadius)>,
     pub scale: f64,
+    pub mask: Option<SurfaceMask>,
 }
 
 impl RenderParams {
@@ -118,6 +123,7 @@ impl BackgroundEffect {
         let mut options = Options {
             blur,
             glass,
+            alpha_mask: glass && effect.alpha_mask == Some(true),
             xray: !glass && effect.xray == Some(true),
             noise: effect.noise,
             saturation: effect.saturation,
@@ -139,6 +145,10 @@ impl BackgroundEffect {
 
     pub fn is_visible(&self) -> bool {
         self.options.is_visible()
+    }
+
+    pub fn wants_mask(&self) -> bool {
+        self.options.alpha_mask
     }
 
     pub fn render(
@@ -253,6 +263,7 @@ fn render_params_for_tile(
         subregion,
         clip,
         scale,
+        mask: None,
     })
 }
 
@@ -307,7 +318,7 @@ pub fn render_for_tile(
         let mut surface_geo = surface_geo(states).unwrap_or_default().to_f64();
         surface_geo.loc += surface_off;
 
-        let Some(params) = render_params_for_tile(
+        let Some(mut params) = render_params_for_tile(
             geometry,
             scale,
             clip_to_geometry,
@@ -318,6 +329,19 @@ pub fn render_for_tile(
         ) else {
             return;
         };
+
+        if background_effect.wants_mask() && !should_block_out {
+            let context = ctx.renderer.context_id();
+            let texture = states
+                .data_map
+                .get::<RendererSurfaceStateUserData>()
+                .and_then(|d| d.lock().unwrap().texture::<GlesTexture>(context).cloned());
+            if let Some(texture) = texture {
+                let mut rect = surface_geo.upscale(surface_anim_scale);
+                rect.loc += geometry.loc;
+                params.mask = Some(SurfaceMask { texture, rect });
+            }
+        }
 
         let xray_pos = xray_pos.offset(params.geometry.loc - geometry.loc);
         background_effect.render(ctx, ns, params, xray_pos, push);
