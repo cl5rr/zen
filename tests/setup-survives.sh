@@ -1,15 +1,4 @@
 #!/usr/bin/env bash
-#
-# setup.sh runs under `set -euo pipefail`, where a command substitution whose pipeline
-# fails takes the whole script down. That is not a hypothetical: `strings | grep -q`,
-# `diff | grep -c` and `busctl | awk` each locked a user out of installing and updating,
-# and each looked like a missing file rather than a dead script.
-#
-# Every probe here is one that fails on a machine that does not have the thing being
-# probed for, which is exactly when it runs. The check is simply that setup.sh still
-# reaches its own last line.
-#
-#   bash tests/setup-survives.sh
 
 set -u
 cd "$(dirname "$0")/.." || exit 1

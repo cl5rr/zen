@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
-#
 # ZEN setup - checks what you already have, installs only what's missing,
 # builds ZEN, and optionally installs it.
-#
 #   ./setup.sh --check          report what's present and what's missing
 #   ./setup.sh                  install missing deps, then build
 #   ./setup.sh --install        ... and install ZEN system-wide
 #   ./setup.sh --help           full option list
-#
 # System library lists are kept in sync with .github/workflows/ci.yml.
 
 set -euo pipefail
@@ -52,7 +49,6 @@ row_miss()    { printf '      %smiss%s %-18s %s\n' "$C_YELLOW" "$C_RESET" "$1" "
 row_unknown() { printf '      %s?   %s %-18s %s%s%s\n' "$C_DIM" "$C_RESET" "$1" "$C_DIM" "${2:-}" "$C_RESET"; }
 
 # ---------------------------------------------------------------- banner ----
-#
 # Stored with literal backslash-033 sequences and printed with printf's %b, so this file
 # stays plain ASCII instead of carrying raw control bytes. Falls back to the
 # uncoloured art whenever colour is unavailable (NO_COLOR, or not a terminal).
@@ -168,11 +164,6 @@ done
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# `ls a b` reports failure when any one operand is absent, so a probe naming two
-# libexec directories at once failed on every distro that has only one of them, and
-# called an installed portal missing.
-# Some of these go by more than one name. The AUR builds swww as `awww`, and asking
-# only about `swww` reported a wallpaper daemon missing on a machine that had one.
 have_any_cmd() {
     local names="$1" name
     for name in ${names//,/ }; do
@@ -189,14 +180,11 @@ any_file() {
     return 1
 }
 
-# Where a distro puts a daemon that D-Bus activates rather than one you run by hand.
 LIBEXEC_DIRS="/usr/lib /usr/libexec /usr/lib64 /usr/local/lib /usr/local/libexec"
 
 libexec_any() {
     local name="$1" dir
     for dir in $LIBEXEC_DIRS; do
-        # Unquoted so a glob in $name expands; an unmatched glob stays literal and
-        # fails the -e test, which is the wanted answer.
         # shellcheck disable=SC2086
         any_file "$dir"/$name && return 0
     done
@@ -276,7 +264,6 @@ detect_distro() {
 }
 
 # ------------------------------------------------------- dependency model ---
-#
 # Each system library is "pkgconfig-name|human description". The package that
 # provides it differs per distro, so provider lookup is a separate table.
 
@@ -381,7 +368,6 @@ gtk_packages_for() {
 # is linked into the binary, so a build can succeed and the session still be unusable:
 # no X11 apps, no file picker, no fonts. Checked by command name, because that is what
 # actually has to be on PATH.
-#
 #   Xwayland             the X server itself
 #   xwayland-satellite   what actually starts it. ZEN does not run Xwayland directly;
 #                        without this binary there is no $DISPLAY and every X11 app
@@ -633,9 +619,6 @@ EOF
 # Everything a session needs once ZEN is running. A build can succeed and leave you
 # with no X11 apps, no file picker and no fonts, and none of that shows up as a build
 # error, so it gets its own pass.
-# Not everything a session needs is on PATH. The portal is a D-Bus activated daemon
-# living in a libexec directory, so asking `command -v` about it answered "missing" on
-# a machine that had had it installed the whole time.
 runtime_present() {
     case "$1" in
         xdg-desktop-portal)
@@ -910,7 +893,6 @@ check_system() {
 }
 
 # availability
-#
 # One package the repositories have never heard of fails the whole transaction, so a
 # single AUR-only name locks the user out of updating at all. Everything is asked about
 # first, the known ones are installed, and the rest are named rather than attempted.
@@ -927,13 +909,9 @@ pkg_available() {
     esac
 }
 
-# Asked after the install rather than before it. A package manager can report success
-# for a transaction that skipped something, and an AUR helper can stop halfway, and
-# neither says which name did not end up on the system.
 pkg_installed() {
     local pkg="$1"
     [ -n "$pkg" ] || return 1
-    # The AUR builds swww under the name awww; either one means you have it.
     if [ "$pkg" = swww ] && pkg_installed awww; then
         return 0
     fi
@@ -959,7 +937,6 @@ elsewhere_note() {
 }
 
 # aur
-#
 # Naming a package and leaving someone to it is not much help when the reason it is
 # missing is that Arch keeps it in the AUR. An AUR helper does the whole thing; without
 # one, the manual route is four commands and worth printing rather than describing.
@@ -977,10 +954,6 @@ install_from_aur() {
         return 0
     }
 
-    # Everything absent is offered, not just the names ZEN knows are AUR-only. A
-    # helper asked for something the AUR does not have says so and stops; being told
-    # only about the curated list is how "ly is not in your repositories" turned into
-    # a dead end.
     local wanted="$*"
     wanted="${wanted# }"
     [ -n "$wanted" ] || {
@@ -1040,9 +1013,6 @@ install_deps() {
 
     step "Installing missing packages"
 
-    # Split before announcing, not after. Listing an AUR-only name under "via pacman"
-    # and then saying it is not in the repositories two lines later reads as the list
-    # being wrong rather than as two groups.
     local have_pkgs="" absent="" pkg
     for pkg in $MISSING_PKGS; do
         if pkg_available "$pkg"; then
@@ -1069,8 +1039,6 @@ install_deps() {
         done
     fi
 
-    # On an update, declining is a decision about packages, not about the update. Only a
-    # fresh install treats it as aborting, because there the build needs them.
     if ! confirm; then
         [ "$DO_UPDATE" = 1 ] || die "aborted"
         dim "skipped; ZEN will still be built and installed"
@@ -1108,9 +1076,6 @@ install_deps() {
     report_not_installed $MISSING_PKGS
 }
 
-# The one question the install step never answered: of everything it set out to
-# install, what is on the system now. Both halves can quietly do nothing, and an
-# up-to-date warning scrolling past looks the same as a package that was skipped.
 report_not_installed() {
     [ "$PKG_MGR" = unknown ] && return 0
     local left="" pkg
@@ -1246,17 +1211,14 @@ install_zen() {
 # ---------------------------------------------------------------- update ----
 
 # Reports config options that exist in the shipped default but not in yours.
-#
 # Your config is a *copy* taken at install time, not a live view of the default, so
 # options added later never appear in it. They fall back to their defaults, which is
 # harmless, but you would never learn they exist. This is a hint, not a merge: your
 # file is yours, and nothing here edits it.
 # bind drift
-#
 # A rebind keeps the node name and changes what it does, so the node compare cannot see
 # it and the line count says only that something moved. Someone whose Mod+F still runs
 # the old action has no other way to find out.
-#
 # Only single-line binds are read. A chord is recognised by shape rather than by
 # position, so a section header like `layout {` is never mistaken for one.
 bind_pairs() {
@@ -1404,7 +1366,6 @@ zen_is_running() {
 }
 
 # --------------------------------------------------------------- self ----
-#
 # bash executes a script as it reads it, so the copy running right now is the one
 # that was on disk before the pull. Any step added by the very commit being fetched
 # would be skipped, and the next run would be the first to have it. Restarting is
@@ -1506,12 +1467,10 @@ update_epilogue() {
 }
 
 # ------------------------------------------------------------------- tui ----
-#
 # Arrow-key menus, the way archinstall works. Deliberately hand-rolled ANSI
 # rather than dialog/whiptail: this script's whole job is running on a machine
 # where nothing is installed yet, so it cannot depend on a TUI toolkit being
 # there. Everything below is bash builtins and escape codes.
-#
 # Flags still work and still win. The wizard only appears when the script is run
 # with no arguments on a real terminal, so scripting and CI are unaffected.
 
@@ -1637,14 +1596,12 @@ ui_multi() {
 }
 
 # --------------------------------------------------------- extra install ----
-#
 # The steps a person otherwise has to find out about by reading a guide on their
 # phone. Every one of these was manual friction the first time around.
 
 # Everything the shipped keybinds actually spawn, grouped by how much you would
 # miss it. Derived from the spawn lines in resources/default-config.kdl; if you add
 # a bind that spawns something, add its package here too.
-#
 #   core      Mod+T, Mod+Space, the wallpaper, the lock screen
 #   media     the XF86 keys: volume, brightness, play/pause
 #   apps      Mod+W, Mod+E, Mod+D and notifications
@@ -1655,7 +1612,6 @@ GREETER_PKGS="greetd cage greetd-regreet"
 GREETER_LY_PKGS="ly"
 
 # Install packages with whatever this machine actually uses.
-#
 # The names come in as Arch names because that is what ZEN is developed on, and
 # translated per manager on the way out. Anything with no translation is passed through,
 # which is right far more often than not: alacritty, fuzzel, waybar, mako, swaybg and
@@ -1706,9 +1662,6 @@ pkg_install() {
         esac || warn "the package manager reported a problem; carrying on"
     fi
 
-    # Answering the only question that matters. Reporting success for a transaction
-    # that skipped the one package the step was about is how "Ly installed" appeared
-    # above a machine with no Ly on it.
     local still=""
     for pkg in $wanted; do
         pkg_installed "$pkg" || still="$still $pkg"
@@ -1784,7 +1737,6 @@ install_extra_apps() {
 }
 
 # reset
-#
 # Changing a bind in the shipped config does nothing for anyone who already has a
 # config, because theirs is theirs. That is how Mod+F kept opening the old action and
 # why a new bind never appeared. This replaces it, keeping the old one beside it.
@@ -1832,27 +1784,14 @@ write_user_config() {
 }
 
 # designs
-#
-# The wallpapers and the themes for waybar, the launcher, the terminal and the lock
-# screen. None of it depends on the config file, and it used to run only when
-# write_user_config had just created one. ZEN writes that file itself the first time it
-# starts, so anyone who booted the session before finishing setup never got a wallpaper,
-# a themed bar or a themed launcher, and nothing said why.
-#
-# Every step leaves a config of your own alone, so this is safe to run every time.
 apply_designs() {
     seed_wallpapers
     theme_all
 }
 
-# Everything after the build, as a function rather than a run of lines inside main, so
-# a test can set the flags and run it. A test that greps main for the right shape
-# passes for the wrong reason, which is how this one first shipped green.
 post_install_steps() {
     if [ "$RESET_CONFIG" = 1 ]; then reset_user_config; apply_designs; fi
     if [ "$W_CONFIG" = 1 ]; then write_user_config; fi
-    # Not tied to W_CONFIG: someone who installs ZEN wants the bar and the wallpaper
-    # whether or not their config file happens to need writing.
     if [ "$W_CONFIG" = 1 ] || { [ "$DO_INSTALL" = 1 ] && [ "$DO_UPDATE" = 0 ]; }; then
         apply_designs
     fi
@@ -1860,7 +1799,6 @@ post_install_steps() {
 }
 
 # Themes the app launcher, unless you already have a config of your own.
-#
 # fuzzel's stock look is a grey box that reads as an unstyled dialog on a dark
 # canvas. This is the single cheapest thing that stops ZEN looking half-dressed.
 theme_launcher() {
@@ -1869,7 +1807,6 @@ theme_launcher() {
 }
 
 # Themes the terminal, unless you already have a config of your own.
-#
 # Without this the terminal is opaque, which hides the glass material entirely and
 # makes a fresh install look like any other compositor.
 theme_terminal() {
@@ -1947,7 +1884,6 @@ is_unmodified_zen_theme() {
 }
 
 # migration
-#
 # Module definitions moved into zen-modules.jsonc so that they keep updating even after
 # the settings app has rewritten config.jsonc, which it does the moment anyone toggles a
 # pill. A config written before that split has no include, so every new module ZEN ships
@@ -2000,7 +1936,6 @@ theme_all() {
 }
 
 # Puts the shipped wallpaper where the picker looks, so a fresh install has one.
-#
 # Copied rather than symlinked: it lands in a folder the user is invited to fill with
 # their own images, and a symlink into /usr/share would be a surprise to delete.
 seed_wallpapers() {
@@ -2173,8 +2108,6 @@ wizard() {
     case "$UI_CHOICE" in
         0)  DO_DEPS=1; DO_BUILD=1; DO_INSTALL=1
             W_APPS=1; W_CONFIG=1
-            # Asked here rather than at the end, because the end is after the build and
-            # nobody is still watching by then.
             ui_menu "Set up a login screen?" \
                 "Ly     (a small TTY greeter, no GTK, nothing else to install)" \
                 "greetd + ReGreet  (graphical, heavier, needs cage)" \
@@ -2271,6 +2204,4 @@ main() {
     fi
 }
 
-# tests/setup-probes.sh sources this to call the probe helpers directly, which is the
-# only way to test them against a directory layout this machine does not have.
 [ "${ZEN_SETUP_LIB:-0}" = 1 ] || main "$@"

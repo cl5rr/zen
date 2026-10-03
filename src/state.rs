@@ -1725,9 +1725,6 @@ impl State {
         self.reload_output_config();
     }
 
-    // A virtual output shows up in `zen msg outputs` and can be cast from, and until
-    // this there was no way to look at one. The preview is per output rather than
-    // global so two of them do not fight over the same corner.
     pub fn set_virtual_output_preview(&mut self, name: &str, on: bool) -> Result<(), String> {
         let Some(virtual_output) = self.zen.virtual_outputs.get_mut(name) else {
             return Err(format!("{name} is not a virtual output"));
@@ -1735,7 +1732,6 @@ impl State {
         virtual_output.preview = on;
         let id = virtual_output.id;
 
-        // Settings reads this back, so a switch left on survives Settings being closed.
         if let Some(entry) = self.backend.ipc_outputs().lock().unwrap().get_mut(&id) {
             entry.preview = Some(on);
         }
@@ -6219,8 +6215,6 @@ impl Zen {
         let previewed = virtual_output.preview;
         self.virtual_outputs.insert(output.name(), virtual_output);
 
-        // A preview is only live if the screen showing it is told to redraw, and the
-        // real outputs have no reason of their own to think anything changed.
         if previewed && matches!(result, RenderResult::Submitted) {
             let showing: Vec<Output> = self
                 .output_state

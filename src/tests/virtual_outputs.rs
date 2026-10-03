@@ -308,7 +308,6 @@ fn a_backend_refresh_does_not_take_the_virtual_outputs_with_it() {
     existing.insert(real, entry("eDP-1", None));
     existing.insert(virt, entry("stream", Some(true)));
 
-    // What a rebuild from the connectors alone produces: no virtual output in sight.
     let mut rebuilt = IpcOutputMap::new();
     rebuilt.insert(real, entry("eDP-1", None));
 
@@ -328,10 +327,6 @@ fn a_backend_refresh_does_not_take_the_virtual_outputs_with_it() {
 
 #[test]
 fn the_tty_backend_puts_them_back_after_a_refresh() {
-    // The merge itself is tested above. This is about it being called: the tty backend
-    // cannot be driven from a headless fixture, so nothing else in the suite would
-    // notice the call going missing, and the symptom on a real machine is a virtual
-    // output quietly disappearing from `zen msg outputs`.
     let src = include_str!("../backend/tty.rs");
     let replace = src
         .find("*guard = ipc_outputs;")

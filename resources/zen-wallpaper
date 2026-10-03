@@ -106,8 +106,6 @@ apply() {
     fi
 }
 
-# The AUR builds swww under the name awww, binaries and all, so looking only for
-# `swww` fell through to swaybg and lost the crossfade on a machine that had it.
 swww_bin() {
     local name
     for name in swww awww; do

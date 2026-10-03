@@ -1,19 +1,4 @@
 #!/usr/bin/env bash
-#
-# setup.sh decides what to install by asking whether a thing is already there. When a
-# probe answers wrongly it offers to install packages that are installed, and the user
-# watches their package manager say "is up to date -- skipping" for everything setup
-# had just called missing.
-#
-# Two ways that happened, both covered here:
-#
-#   ls /usr/libexec/x-* /usr/lib/x-*    exits non-zero when either operand is absent, so
-#                                       having only one of those two directories, which
-#                                       is every distro, read as the file being missing.
-#   command -v xdg-desktop-portal       the portal is a D-Bus activated libexec daemon
-#                                       and is on no distro's PATH.
-#
-#   bash tests/setup-probes.sh
 
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -41,7 +26,6 @@ check() {
 
 root=$(mktemp -d) || exit 1
 
-# One libexec directory, not both, which is the case that used to fail.
 mkdir -p "$root/lib" "$root/lib/polkit-gnome"
 : > "$root/lib/xdg-desktop-portal"
 : > "$root/lib/xdg-desktop-portal-gnome"
@@ -61,8 +45,6 @@ check "the gnome backend, by name"          found  libexec_any xdg-desktop-porta
 check "a backend that is not installed"     absent libexec_any xdg-desktop-portal-kde
 check "a polkit agent one level down"       found  libexec_any 'polkit-*/polkit-*-authentication-agent-1'
 
-# The AUR builds swww as `awww`, so a machine with a working wallpaper daemon was
-# being told to install one.
 stub=$(mktemp -d) || exit 1
 trap 'rm -rf "$root" "$stub"' EXIT
 printf '#!/bin/sh\n' > "$stub/awww"
@@ -72,7 +54,6 @@ PATH="$stub:$PATH"
 check "swww, installed under its other name" found  have_any_cmd "swww,awww"
 check "neither name installed"               absent have_any_cmd "swww-nope,awww-nope"
 
-# The pair in BIND_APPS has to carry both names or the check above proves nothing.
 if printf '%s' "$BIND_APPS" | grep -q 'swww,awww:swww'; then
     printf '  ok   the wallpaper bind asks about both names\n'
 else
@@ -80,12 +61,9 @@ else
     fail=1
 fi
 
-# The portal is never on PATH, so the generic runtime probe has to know about it.
 check "xdg-desktop-portal as a runtime dep" found  runtime_present xdg-desktop-portal
 check "a runtime dep that really is absent" absent runtime_present zen-no-such-program
 
-# The shape that caused it, so it cannot come back in a probe written later. One
-# operand is fine; it is asking about several at once that silently inverts the answer.
 offenders=$(awk '
     /^[[:space:]]*#/ { next }
     /[^[:alnum:]_-]ls / {

@@ -731,14 +731,11 @@ pub struct Output {
     pub vrr_enabled: bool,
     pub logical: Option<LogicalOutput>,
     pub max_bpc: Option<u8>,
-    // None on a real output, which has nothing to preview.
     #[serde(default)]
     pub preview: Option<bool>,
 }
 
 impl Output {
-    // Only virtual outputs carry a preview flag, so it is also what tells them apart
-    // from a connector without matching on the make and model strings.
     pub fn is_virtual(&self) -> bool {
         self.preview.is_some()
     }

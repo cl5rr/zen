@@ -39,9 +39,6 @@ pub enum RenderResult {
 
 pub type IpcOutputMap = HashMap<OutputId, zen_ipc::Output>;
 
-// A backend rebuilds this map from the connectors it can see, and a virtual output is
-// not one, so replacing the map wholesale dropped every virtual output out of
-// `zen msg outputs` the next time anything was plugged in or the config reloaded.
 pub fn keep_virtual_outputs(existing: &IpcOutputMap, rebuilt: &mut IpcOutputMap) {
     for (id, output) in existing {
         if output.is_virtual() {

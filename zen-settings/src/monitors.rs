@@ -13,9 +13,6 @@ use crate::App;
 const CANVAS_H: i32 = 260;
 const POLL: Duration = Duration::from_millis(900);
 
-// Rebuilding the page from under a drag would fight the pointer, and rebuilding it the
-// instant a drag ends would redraw from compositor state the config change has not
-// reached yet. Both look like the page undoing what you just did.
 const SETTLE: Duration = Duration::from_millis(1500);
 
 type Refresh = Rc<dyn Fn()>;
@@ -68,9 +65,6 @@ fn detect() -> Vec<Screen> {
 
             let current_mode = o["current_mode"].as_u64().map(|i| i as usize);
 
-            // A hidden virtual output has no place on the canvas and so no logical
-            // block, and falling back to 1920x1080 there described a screen that does
-            // not exist. Its mode is the only size it has.
             let mode_size = current_mode
                 .and_then(|i| o["modes"].as_array().and_then(|list| list.get(i)))
                 .map(|m| {
@@ -104,12 +98,6 @@ fn detect() -> Vec<Screen> {
 }
 
 // page
-//
-// Everything here describes hardware that changes without Settings being told: a
-// monitor is plugged in, a virtual one is created from this very page, `zen msg` is
-// run in a terminal. The page used to be built once when Settings opened and then
-// asked the user to reopen it, which meant the answer on screen was only ever right
-// by accident.
 pub fn page(state: &Rc<App>) -> gtk::Widget {
     let host = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -129,7 +117,6 @@ pub fn page(state: &Rc<App>) -> gtk::Widget {
         if watched.root().is_none() {
             return glib::ControlFlow::Break;
         }
-        // Each poll is a process, so only pay for it while the page is on screen.
         if watched.is_mapped() && Instant::now() >= hold.get() {
             let now = detect();
             if signature(&now) != *seen.borrow() {
@@ -186,8 +173,6 @@ fn fill(
         Rc::new(move || rebuild(&state, &host, &seen, &hold))
     };
 
-    // Replacing the child sends the scrollbar back to the top, which on a page that
-    // redraws itself would yank you away from whatever you were reading.
     let keep = host.vadjustment().value();
     host.set_child(Some(&build_column(state, screens, &refresh, hold)));
     let adjustment = host.vadjustment();
@@ -239,9 +224,6 @@ fn build_column(
             .build(),
     );
 
-    // Only real screens count towards "do not turn off the last one". A virtual
-    // output left in this list would let the safety check believe there was
-    // another monitor to fall back to, and there is not one you can look at.
     let names: Vec<String> = screens
         .iter()
         .filter(|s| !s.is_virtual)

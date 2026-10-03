@@ -21,9 +21,6 @@ pub const PREVIEW_WIDTH: f64 = 0.25;
 pub const PREVIEW_MAX_HEIGHT: f64 = 0.4;
 pub const PREVIEW_MARGIN: f64 = 24.;
 
-// A quarter of the screen wide, in the virtual output's own aspect ratio, tucked into
-// the bottom right corner. Height is capped separately so a tall virtual output cannot
-// take over the screen it is being previewed on.
 pub fn preview_rect(
     host: Size<f64, Logical>,
     virtual_size: Size<i32, Physical>,
@@ -98,9 +95,6 @@ impl VirtualOutput {
         }
     }
 
-    // The texture this output renders into is the whole of it: nothing on the desk
-    // shows it, which is the point and also the reason there is no way to tell whether
-    // it is working. The preview puts that texture in a corner of the real screens.
     pub fn preview_texture(&self) -> Option<(&GlesTexture, Size<i32, Physical>)> {
         if !self.preview {
             return None;
