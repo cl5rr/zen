@@ -4445,6 +4445,117 @@ impl<W: LayoutElement> Layout<W> {
         mon.camera.pan_by_view_delta(delta);
     }
 
+    pub fn fly_to_active_window(&mut self) -> bool {
+        let config = self.options.animations.overview_open_close.0;
+        let Some(mon) = self.active_monitor() else {
+            return false;
+        };
+        let Some(rect) = mon.active_window_rect() else {
+            return false;
+        };
+        mon.fly_to(rect, config);
+        true
+    }
+
+    pub fn fly_to_island(&mut self, id: u64) -> bool {
+        let config = self.options.animations.overview_open_close.0;
+        let Some(mon) = self.active_monitor() else {
+            return false;
+        };
+        let rect = {
+            let floating = mon.active_workspace_ref().floating();
+            let Some(island) = floating.islands().islands().find(|i| u64::from(i.id().get()) == id)
+            else {
+                return false;
+            };
+            let rect = island.rect();
+            Rectangle::new(floating.canvas_to_logical(rect.loc), Size::from((rect.size.w, rect.size.h)))
+        };
+        mon.fly_to(rect, config);
+        true
+    }
+
+    pub fn fly_to_point(&mut self, x: f64, y: f64) -> bool {
+        let config = self.options.animations.overview_open_close.0;
+        let Some(mon) = self.active_monitor() else {
+            return false;
+        };
+        let visible = mon.visible_workspace_rect();
+        let rect = Rectangle::new(
+            Point::from((x - visible.size.w / 2., y - visible.size.h / 2.)),
+            visible.size,
+        );
+        mon.fly_to(rect, config);
+        true
+    }
+
+    pub fn island_window_for(&self, id: u64) -> Option<W::Id> {
+        for mon in self.monitors() {
+            for ws in &mon.workspaces {
+                let floating = ws.floating();
+                for island in floating.islands().islands() {
+                    if u64::from(island.id().get()) == id {
+                        return island.active().or_else(|| island.items().first()).cloned();
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub fn canvas_snapshot(
+        &self,
+        window_id: impl Fn(&W::Id) -> Option<u64>,
+    ) -> (Vec<zen_ipc::Island>, Vec<zen_ipc::CameraView>) {
+        let mut islands = Vec::new();
+        let mut cameras = Vec::new();
+        let active_output = self.active_output().map(|o| o.name());
+
+        for mon in self.monitors() {
+            let output = mon.output().name();
+            let active_ws = mon.active_workspace_ref().id();
+            for ws in &mon.workspaces {
+                let floating = ws.floating();
+                let active_island = floating.islands().active_id();
+                for island in floating.islands().islands() {
+                    let rect = island.rect();
+                    let loc = floating.canvas_to_logical(rect.loc);
+                    islands.push(zen_ipc::Island {
+                        id: u64::from(island.id().get()),
+                        output: Some(output.clone()),
+                        workspace_id: ws.id().get(),
+                        rect: zen_ipc::CanvasRect {
+                            x: loc.x,
+                            y: loc.y,
+                            width: rect.size.w,
+                            height: rect.size.h,
+                        },
+                        windows: island.items().iter().filter_map(&window_id).collect(),
+                        active_window_id: island.active().and_then(&window_id),
+                        is_active: ws.id() == active_ws
+                            && active_island == Some(island.id())
+                            && active_output.as_deref() == Some(output.as_str()),
+                    });
+                }
+            }
+
+            let visible = mon.visible_workspace_rect();
+            cameras.push(zen_ipc::CameraView {
+                output,
+                zoom: mon.camera_zoom(),
+                visible: zen_ipc::CanvasRect {
+                    x: visible.loc.x,
+                    y: visible.loc.y,
+                    width: visible.size.w,
+                    height: visible.size.h,
+                },
+                on_map: mon.is_on_map(),
+            });
+        }
+
+        (islands, cameras)
+    }
+
     pub fn camera_maximize(&mut self) -> bool {
         let config = self.options.animations.overview_open_close.0;
         let Some(mon) = self.active_monitor() else {

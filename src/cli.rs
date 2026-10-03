@@ -66,6 +66,7 @@ pub enum Msg {
     RequestError,
     OverviewState,
     Casts,
+    Canvas,
 }
 
 #[derive(Clone, Debug, clap::ValueEnum)]

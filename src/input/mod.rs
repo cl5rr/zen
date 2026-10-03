@@ -2271,6 +2271,29 @@ impl State {
                     self.zen.queue_redraw_all();
                 }
             }
+            Action::FlyToWindow(id) => {
+                let window = self.zen.layout.windows().find(|(_, m)| m.id().get() == id);
+                let window = window.map(|(_, m)| m.window.clone());
+                if let Some(window) = window {
+                    self.focus_window(&window);
+                    if self.zen.layout.fly_to_active_window() {
+                        self.zen.queue_redraw_all();
+                    }
+                }
+            }
+            Action::FlyToIsland(id) => {
+                if let Some(window) = self.zen.layout.island_window_for(id) {
+                    self.focus_window(&window);
+                }
+                if self.zen.layout.fly_to_island(id) {
+                    self.zen.queue_redraw_all();
+                }
+            }
+            Action::FlyToPoint(x, y) => {
+                if self.zen.layout.fly_to_point(x, y) {
+                    self.zen.queue_redraw_all();
+                }
+            }
             Action::FocusIslandLeft => self.focus_island(Direction::Left),
             Action::FocusIslandRight => self.focus_island(Direction::Right),
             Action::FocusIslandUp => self.focus_island(Direction::Up),

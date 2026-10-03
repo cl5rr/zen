@@ -291,3 +291,107 @@ fn manual_pan_breaks_the_follow() {
          {pan_after_manual:?} to {pan_now:?}"
     );
 }
+
+// fly
+fn far_away_window() -> Fixture {
+    let mut f = fixture_with_floating_window();
+    f.zen().layout.move_floating_window(
+        None,
+        PositionChange::SetFixed(4000.),
+        PositionChange::SetFixed(2500.),
+        false,
+    );
+    f.zen_complete_animations();
+    f
+}
+
+fn camera_zoom(f: &mut Fixture) -> f64 {
+    f.zen().layout.active_monitor_ref().unwrap().camera_zoom()
+}
+
+#[test]
+fn a_nearby_target_flies_straight() {
+    use crate::layout::monitor::fly_needs_arc;
+    use smithay::utils::Rectangle;
+
+    let view = Rectangle::<f64, Logical>::new((0., 0.).into(), (1280., 720.).into());
+    let near = Rectangle::new((100., 100.).into(), (200., 150.).into());
+    let just_off = Rectangle::new((1400., 100.).into(), (200., 150.).into());
+    let far = Rectangle::new((4000., 2500.).into(), (200., 150.).into());
+
+    assert!(!fly_needs_arc(view, near), "on screen already");
+    assert!(!fly_needs_arc(view, just_off), "a little off screen is a pan, not a flight");
+    assert!(fly_needs_arc(view, far), "three screens away needs the overview on the way");
+}
+
+#[test]
+fn flying_to_a_far_window_rises_first() {
+    let mut f = far_away_window();
+    assert!(!window_visible(&mut f), "precondition: off screen");
+
+    assert!(f.zen().layout.fly_to_active_window());
+    assert!(
+        f.zen().layout.active_monitor_ref().unwrap().is_flying(),
+        "a far target should go by way of a wider view"
+    );
+
+    f.zen_complete_animations();
+    assert!(
+        camera_zoom(&mut f) < 0.6,
+        "the first leg should zoom out to show where it is going, zoom is {}",
+        camera_zoom(&mut f)
+    );
+}
+
+#[test]
+fn flying_to_a_far_window_lands_on_it() {
+    let mut f = far_away_window();
+    assert!(f.zen().layout.fly_to_active_window());
+
+    f.zen_complete_animations();
+    f.zen_complete_animations();
+
+    assert!(
+        !f.zen().layout.active_monitor_ref().unwrap().is_flying(),
+        "the flight never finished its second leg"
+    );
+    assert!(
+        (camera_zoom(&mut f) - 1.).abs() < 0.01,
+        "it should land at normal size, zoom is {}",
+        camera_zoom(&mut f)
+    );
+    assert!(window_visible(&mut f), "landed, but the window is not under the camera");
+}
+
+#[test]
+fn panning_mid_flight_cancels_it() {
+    let mut f = far_away_window();
+    assert!(f.zen().layout.fly_to_active_window());
+    f.zen().layout.camera_pan_by(Point::from((40., 0.)));
+    assert!(!f.zen().layout.active_monitor_ref().unwrap().is_flying());
+}
+
+#[test]
+fn the_canvas_snapshot_lists_islands_and_cameras() {
+    let mut f = fixture_with_floating_window();
+    let zen = f.zen();
+    let layout = &zen.layout;
+    let (islands, cameras) = layout.canvas_snapshot(|w| {
+        layout
+            .windows()
+            .find(|(_, m)| &m.window == w)
+            .map(|(_, m)| m.id().get())
+    });
+    let window_id = layout.windows().next().map(|(_, m)| m.id().get()).unwrap();
+
+    assert_eq!(islands.len(), 1, "one window, one island: {islands:?}");
+    assert_eq!(islands[0].windows, vec![window_id]);
+    assert_eq!(islands[0].active_window_id, Some(window_id));
+    assert!(islands[0].rect.width > 0. && islands[0].rect.height > 0.);
+
+    assert_eq!(cameras.len(), 1);
+    assert!((cameras[0].zoom - 1.).abs() < 0.001);
+    assert!((cameras[0].visible.width - f64::from(OUTPUT_W)).abs() < 1.);
+    assert!((cameras[0].visible.height - f64::from(OUTPUT_H)).abs() < 1.);
+    assert!(!cameras[0].on_map);
+}

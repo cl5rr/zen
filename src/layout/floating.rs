@@ -423,6 +423,14 @@ impl<W: LayoutElement> FloatingSpace<W> {
         self.working_area.intersection(window_rect)
     }
 
+    pub fn active_window_rect(&self) -> Option<Rectangle<f64, Logical>> {
+        let active_id = self.active_window_id.as_ref()?;
+        let (tile, offset) = self
+            .tiles_with_offsets()
+            .find(|(tile, _)| tile.window().id() == active_id)?;
+        Some(Rectangle::new(offset + tile.window_loc(), tile.window_size()))
+    }
+
     pub fn popup_target_rect(&self, id: &W::Id) -> Option<Rectangle<f64, Logical>> {
         for (tile, pos) in self.tiles_with_offsets() {
             if tile.window().id() == id {

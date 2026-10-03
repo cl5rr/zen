@@ -20,7 +20,7 @@ use zen_ipc::{
     Action, Event, KeyboardLayouts, OutputConfigChanged, Overview, Reply, Request, Response,
     Timestamp, WindowLayout, Workspace,
 };
-use smithay::desktop::layer_map_for_output;
+use smithay::desktop::{layer_map_for_output, Window};
 use smithay::input::pointer::{
     CursorIcon, CursorImageStatus, Focus, GrabStartData as PointerGrabStartData,
 };
@@ -477,6 +477,13 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             let is_open = state.overview.is_open;
             Response::OverviewState(Overview { is_open })
         }
+        Request::Canvas => {
+            let state = ctx.event_stream_state.borrow();
+            let islands = state.canvas.islands.clone().unwrap_or_default();
+            let mut cameras: Vec<_> = state.canvas.cameras.values().cloned().collect();
+            cameras.sort_by(|a, b| a.output.cmp(&b.output));
+            Response::Canvas(zen_ipc::Canvas { islands, cameras })
+        }
         Request::Casts => {
             let state = ctx.event_stream_state.borrow();
             let casts = state.casts.casts.values().cloned().collect();
@@ -608,6 +615,43 @@ impl State {
         self.ipc_refresh_workspaces();
         self.ipc_refresh_windows();
         self.ipc_refresh_overview();
+        self.ipc_refresh_canvas();
+    }
+
+    fn ipc_refresh_canvas(&mut self) {
+        let Some(server) = &self.zen.ipc_server else {
+            return;
+        };
+
+        let _span = tracy_client::span!("State::ipc_refresh_canvas");
+
+        let ids: Vec<(Window, u64)> = self
+            .zen
+            .layout
+            .windows()
+            .map(|(_, m)| (m.window.clone(), m.id().get()))
+            .collect();
+        let (islands, cameras) = self.zen.layout.canvas_snapshot(|w| {
+            ids.iter().find(|(win, _)| win == w).map(|(_, id)| *id)
+        });
+
+        let mut state = server.event_stream_state.borrow_mut();
+        let state = &mut state.canvas;
+
+        let mut events = Vec::new();
+        if state.islands.as_ref() != Some(&islands) {
+            events.push(Event::IslandsChanged { islands });
+        }
+        for camera in cameras {
+            if state.cameras.get(&camera.output) != Some(&camera) {
+                events.push(Event::CameraChanged { camera });
+            }
+        }
+
+        for event in events {
+            state.apply(event.clone());
+            server.send_event(event);
+        }
     }
 
     fn ipc_refresh_workspaces(&mut self) {

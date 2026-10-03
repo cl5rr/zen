@@ -54,6 +54,31 @@ const MAP_SCRIM_ALPHA: f32 = 0.88;
 const MAP_SCRIM_FADE_FROM: f64 = 2.2;
 
 const TRAVEL_PADDING: f64 = 64.;
+const FLY_ARRIVE: f64 = 0.12;
+
+// fly
+#[derive(Debug, Clone, Copy)]
+struct Fly {
+    target: Rectangle<f64, Logical>,
+    waypoint_zoom: f64,
+}
+
+pub fn fly_needs_arc(visible: Rectangle<f64, Logical>, target: Rectangle<f64, Logical>) -> bool {
+    let reach_x = visible.size.w * 0.5;
+    let reach_y = visible.size.h * 0.5;
+    let near = Rectangle::new(
+        Point::from((visible.loc.x - reach_x, visible.loc.y - reach_y)),
+        Size::from((visible.size.w + reach_x * 2., visible.size.h + reach_y * 2.)),
+    );
+    !near.overlaps(target)
+}
+
+pub fn fly_waypoint(
+    visible: Rectangle<f64, Logical>,
+    target: Rectangle<f64, Logical>,
+) -> Rectangle<f64, Logical> {
+    visible.merge(target)
+}
 
 pub const MAP_ZOOM_SLACK: f64 = 1.08;
 
@@ -74,6 +99,7 @@ pub struct Monitor<W: LayoutElement> {
     pub(super) overview_open: bool,
     overview_progress: Option<OverviewProgress>,
     camera_focus: Option<(W::Id, Rectangle<f64, Logical>)>,
+    fly: Option<Fly>,
 
     canvas_clock: CanvasClock,
     map_scrim: SolidColorBuffer,
@@ -322,6 +348,7 @@ impl<W: LayoutElement> Monitor<W> {
             overview_open: false,
             overview_progress: None,
             camera_focus: None,
+            fly: None,
             canvas_clock: CanvasClock::new(options.widgets.clock.clone()),
             map_scrim: SolidColorBuffer::new(view_size, MAP_SCRIM_COLOR),
             camera: Camera::new(
@@ -990,6 +1017,7 @@ impl<W: LayoutElement> Monitor<W> {
     pub fn advance_animations(&mut self) {
         self.sync_camera_focus(self.options.animations.overview_open_close.0);
         self.camera.advance_animations();
+        self.advance_fly(self.options.animations.overview_open_close.0);
         self.sync_camera_scale();
 
         match &mut self.workspace_switch {
@@ -1297,6 +1325,13 @@ impl<W: LayoutElement> Monitor<W> {
         self.active_workspace_ref().active_window_visual_rectangle()
     }
 
+    pub fn active_window_rect(&self) -> Option<Rectangle<f64, Logical>> {
+        if self.overview_open {
+            return None;
+        }
+        self.active_workspace_ref().active_window_rect()
+    }
+
     fn workspace_size(&self, zoom: f64) -> Size<f64, Logical> {
         let ws_size = self.view_size.upscale(zoom);
         let scale = self.scale.fractional_scale();
@@ -1309,9 +1344,9 @@ impl<W: LayoutElement> Monitor<W> {
         padding: f64,
         zoom_cap: f64,
         config: zen_config::Animation,
-    ) {
+    ) -> f64 {
         if rect.size.w <= 0. || rect.size.h <= 0. {
-            return;
+            return self.camera.zoom();
         }
 
         let avail_w = (self.view_size.w - padding * 2.).max(1.);
@@ -1328,6 +1363,51 @@ impl<W: LayoutElement> Monitor<W> {
 
         self.camera.animate_zoom_to(zoom, config);
         self.camera.animate_pan_to(pan, config);
+        zoom
+    }
+
+    pub fn visible_workspace_rect(&self) -> Rectangle<f64, Logical> {
+        let view = self.camera_view_size();
+        let top_left = self.view_to_workspace(Point::from((0., 0.)));
+        let bottom_right = self.view_to_workspace(Point::from((view.w, view.h)));
+        Rectangle::new(
+            top_left,
+            Size::from((
+                (bottom_right.x - top_left.x).max(0.),
+                (bottom_right.y - top_left.y).max(0.),
+            )),
+        )
+    }
+
+    pub fn fly_to(&mut self, target: Rectangle<f64, Logical>, config: zen_config::Animation) {
+        self.clear_camera_focus();
+        let visible = self.visible_workspace_rect();
+        if !fly_needs_arc(visible, target) {
+            self.fit_camera_to(target, TRAVEL_PADDING, 1., config);
+            return;
+        }
+        let waypoint = fly_waypoint(visible, target);
+        let waypoint_zoom = self.fit_camera_to(waypoint, TRAVEL_PADDING, 1., config);
+        self.fly = Some(Fly {
+            target,
+            waypoint_zoom,
+        });
+    }
+
+    pub fn is_flying(&self) -> bool {
+        self.fly.is_some()
+    }
+
+    fn advance_fly(&mut self, config: zen_config::Animation) {
+        let Some(fly) = self.fly else {
+            return;
+        };
+        let zoom = self.camera.zoom().max(f64::EPSILON);
+        let arrived = (zoom / fly.waypoint_zoom.max(f64::EPSILON)).ln().abs() < FLY_ARRIVE;
+        if arrived || !self.camera.is_animating() {
+            self.fly = None;
+            self.fit_camera_to(fly.target, TRAVEL_PADDING, 1., config);
+        }
     }
 
     pub fn view_to_workspace(&self, view: Point<f64, Logical>) -> Point<f64, Logical> {
@@ -1360,6 +1440,7 @@ impl<W: LayoutElement> Monitor<W> {
 
     pub fn clear_camera_focus(&mut self) {
         self.camera_focus = None;
+        self.fly = None;
     }
 
     fn sync_camera_focus(&mut self, config: zen_config::Animation) {

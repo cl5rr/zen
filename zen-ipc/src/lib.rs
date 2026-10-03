@@ -30,6 +30,7 @@ pub enum Request {
     ReturnError,
     OverviewState,
     Casts,
+    Canvas,
 }
 
 pub type Reply = Result<Response, String>;
@@ -51,12 +52,52 @@ pub enum Response {
     OutputConfigChanged(OutputConfigChanged),
     OverviewState(Overview),
     Casts(Vec<Cast>),
+    Canvas(Canvas),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
 pub struct Overview {
     pub is_open: bool,
+}
+
+// canvas
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub struct CanvasRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub struct Island {
+    pub id: u64,
+    pub output: Option<String>,
+    pub workspace_id: u64,
+    pub rect: CanvasRect,
+    pub windows: Vec<u64>,
+    pub active_window_id: Option<u64>,
+    pub is_active: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub struct CameraView {
+    pub output: String,
+    pub zoom: f64,
+    pub visible: CanvasRect,
+    pub on_map: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub struct Canvas {
+    pub islands: Vec<Island>,
+    pub cameras: Vec<CameraView>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -494,6 +535,20 @@ pub enum Action {
     PanCameraDown {},
     FitAllWindows {},
     CameraMaximize {},
+    FlyToWindow {
+        #[cfg_attr(feature = "clap", arg(long))]
+        id: u64,
+    },
+    FlyToIsland {
+        #[cfg_attr(feature = "clap", arg(long))]
+        id: u64,
+    },
+    FlyToPoint {
+        #[cfg_attr(feature = "clap", arg(allow_negative_numbers = true))]
+        x: f64,
+        #[cfg_attr(feature = "clap", arg(allow_negative_numbers = true))]
+        y: f64,
+    },
     MaximizeWindowToView {},
     FocusIslandLeft {},
     FocusIslandRight {},
@@ -963,6 +1018,12 @@ pub enum Event {
     },
     KeyboardLayoutSwitched {
         idx: u8,
+    },
+    IslandsChanged {
+        islands: Vec<Island>,
+    },
+    CameraChanged {
+        camera: CameraView,
     },
     OverviewOpenedOrClosed {
         is_open: bool,

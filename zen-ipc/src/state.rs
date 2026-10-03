@@ -1,7 +1,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
-use crate::{Cast, Event, KeyboardLayouts, Window, Workspace};
+use crate::{CameraView, Cast, Event, Island, KeyboardLayouts, Window, Workspace};
 
 pub trait EventStreamStatePart {
     fn replicate(&self) -> Vec<Event>;
@@ -22,6 +22,14 @@ pub struct EventStreamState {
     pub config: ConfigState,
 
     pub casts: CastsState,
+
+    pub canvas: CanvasState,
+}
+
+#[derive(Debug, Default)]
+pub struct CanvasState {
+    pub islands: Option<Vec<Island>>,
+    pub cameras: HashMap<String, CameraView>,
 }
 
 #[derive(Debug, Default)]
@@ -63,6 +71,7 @@ impl EventStreamStatePart for EventStreamState {
         events.extend(self.overview.replicate());
         events.extend(self.config.replicate());
         events.extend(self.casts.replicate());
+        events.extend(self.canvas.replicate());
         events
     }
 
@@ -73,7 +82,40 @@ impl EventStreamStatePart for EventStreamState {
         let event = self.overview.apply(event)?;
         let event = self.config.apply(event)?;
         let event = self.casts.apply(event)?;
+        let event = self.canvas.apply(event)?;
         Some(event)
+    }
+}
+
+impl EventStreamStatePart for CanvasState {
+    fn replicate(&self) -> Vec<Event> {
+        let mut events = Vec::new();
+        if let Some(islands) = &self.islands {
+            events.push(Event::IslandsChanged {
+                islands: islands.clone(),
+            });
+        }
+        let mut cameras: Vec<&CameraView> = self.cameras.values().collect();
+        cameras.sort_by(|a, b| a.output.cmp(&b.output));
+        for camera in cameras {
+            events.push(Event::CameraChanged {
+                camera: camera.clone(),
+            });
+        }
+        events
+    }
+
+    fn apply(&mut self, event: Event) -> Option<Event> {
+        match event {
+            Event::IslandsChanged { islands } => {
+                self.islands = Some(islands);
+            }
+            Event::CameraChanged { camera } => {
+                self.cameras.insert(camera.output.clone(), camera);
+            }
+            event => return Some(event),
+        }
+        None
     }
 }
 

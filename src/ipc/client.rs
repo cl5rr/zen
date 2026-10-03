@@ -48,6 +48,7 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
         Msg::EventStream => Request::EventStream,
         Msg::RequestError => Request::ReturnError,
         Msg::OverviewState => Request::OverviewState,
+        Msg::Canvas => Request::Canvas,
         Msg::Casts => Request::Casts,
     };
 
@@ -478,6 +479,20 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                     Event::KeyboardLayoutSwitched { idx } => {
                         println!("Keyboard layout switched: {idx}");
                     }
+                    Event::IslandsChanged { islands } => {
+                        println!("Islands changed: {} on the canvas", islands.len());
+                    }
+                    Event::CameraChanged { camera } => {
+                        println!(
+                            "Camera on {}: zoom {:.2}, looking at {:.0},{:.0} {:.0}x{:.0}",
+                            camera.output,
+                            camera.zoom,
+                            camera.visible.x,
+                            camera.visible.y,
+                            camera.visible.width,
+                            camera.visible.height
+                        );
+                    }
                     Event::OverviewOpenedOrClosed { is_open: opened } => {
                         println!("Overview toggled: {opened}");
                     }
@@ -508,6 +523,42 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                         println!("Cast stopped: stream id {stream_id}");
                     }
                 }
+            }
+        }
+        Msg::Canvas => {
+            let Response::Canvas(canvas) = response else {
+                bail!("unexpected response: expected Canvas, got {response:?}");
+            };
+
+            if json {
+                let canvas = serde_json::to_string(&canvas).context("error formatting response")?;
+                println!("{canvas}");
+                return Ok(());
+            }
+
+            for camera in &canvas.cameras {
+                println!(
+                    "Camera on {}: zoom {:.2}, looking at {:.0},{:.0} {:.0}x{:.0}{}",
+                    camera.output,
+                    camera.zoom,
+                    camera.visible.x,
+                    camera.visible.y,
+                    camera.visible.width,
+                    camera.visible.height,
+                    if camera.on_map { ", on the map" } else { "" }
+                );
+            }
+            for island in &canvas.islands {
+                println!(
+                    "Island {}{}: {} window(s) at {:.0},{:.0} {:.0}x{:.0}",
+                    island.id,
+                    if island.is_active { " (active)" } else { "" },
+                    island.windows.len(),
+                    island.rect.x,
+                    island.rect.y,
+                    island.rect.width,
+                    island.rect.height
+                );
             }
         }
         Msg::OverviewState => {

@@ -1631,6 +1631,14 @@ impl<W: LayoutElement> Workspace<W> {
         }
     }
 
+    pub fn active_window_rect(&self) -> Option<Rectangle<f64, Logical>> {
+        if self.floating_is_active.get() {
+            self.floating.active_window_rect()
+        } else {
+            self.scrolling.active_window_visual_rectangle()
+        }
+    }
+
     pub fn popup_target_rect(&self, window: &W::Id) -> Option<Rectangle<f64, Logical>> {
         if self.floating.has_window(window) {
             self.floating.popup_target_rect(window)
