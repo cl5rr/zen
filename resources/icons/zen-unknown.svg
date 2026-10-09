@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#6f7a92"/>
+      <stop offset="1" stop-color="#2b3142"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.26"/>
+      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0.03"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <path d="M256 16C440 16 496 72 496 256C496 440 440 496 256 496C72 496 16 440 16 256C16 72 72 16 256 16Z" fill="url(#tile)"/>
+  <path d="M256 96C268 200 312 244 416 256C312 268 268 312 256 416C244 312 200 268 96 256C200 244 244 200 256 96Z" fill="none" stroke="#ffffff" stroke-opacity="0.88" stroke-width="20" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="30 24"/>
+  <circle cx="256" cy="256" r="20" fill="#ffffff" fill-opacity="0.88"/>
+  <path d="M256 16C440 16 496 72 496 256C496 440 440 496 256 496C72 496 16 440 16 256C16 72 72 16 256 16Z" fill="url(#shine)"/>
+  <path d="M256 16C440 16 496 72 496 256C496 440 440 496 256 496C72 496 16 440 16 256C16 72 72 16 256 16Z" fill="none" stroke="#ffffff" stroke-opacity="0.28" stroke-width="3"/>
+</svg>

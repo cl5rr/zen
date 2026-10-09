@@ -1193,6 +1193,9 @@ install_zen() {
     $SUDO install -Dm644 resources/zen-portals.conf "$PREFIX/share/xdg-desktop-portal/zen-portals.conf"
     $SUDO install -Dm644 resources/zen.png          "$PREFIX/share/pixmaps/zen.png"
     $SUDO install -Dm644 resources/zen.png          "$PREFIX/share/icons/hicolor/512x512/apps/zen.png"
+    for icon in resources/icons/*.svg; do
+        [ -f "$icon" ] && $SUDO install -Dm644 "$icon"             "$PREFIX/share/icons/hicolor/scalable/apps/$(basename "$icon")"
+    done
 
     if [ -x "target/$BUILD_PROFILE/zen-settings" ]; then
         $SUDO install -Dm755 "target/$BUILD_PROFILE/zen-settings" "$PREFIX/bin/zen-settings"

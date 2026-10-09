@@ -339,7 +339,7 @@ fn render_icon(
         })
         .is_some();
     if !drawn {
-        draw_initial(&cr, app_id, size)?;
+        draw_fallback(&cr, app_id, size)?;
     }
 
     drop(cr);
@@ -358,8 +358,11 @@ fn render_icon(
 }
 
 fn draw_svg(cr: &cairo::Context, path: &Path, size: i32) -> anyhow::Result<()> {
-    let data = std::fs::read(path)?;
-    let tree = resvg::usvg::Tree::from_data(&data, &resvg::usvg::Options::default())?;
+    draw_svg_data(cr, &std::fs::read(path)?, size)
+}
+
+fn draw_svg_data(cr: &cairo::Context, data: &[u8], size: i32) -> anyhow::Result<()> {
+    let tree = resvg::usvg::Tree::from_data(data, &resvg::usvg::Options::default())?;
 
     let mut pixmap = resvg::tiny_skia::Pixmap::new(size as u32, size as u32)
         .ok_or_else(|| anyhow::anyhow!("could not allocate a {size}px pixmap"))?;
@@ -444,29 +447,69 @@ fn draw_png(cr: &cairo::Context, path: &Path, size: i32) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn draw_initial(cr: &cairo::Context, app_id: &str, size: i32) -> anyhow::Result<()> {
-    let (r, g, b) = hue_for(app_id);
-    let half = size as f64 / 2.;
+// fallback
+pub const UNKNOWN_ICON: &[u8] = include_bytes!("../../resources/icons/zen-unknown.svg");
 
-    cr.arc(half, half, half, 0., std::f64::consts::TAU);
-    cr.set_source_rgba(r, g, b, 0.95);
-    cr.fill()?;
-
-    let letter: String = app_id
+fn initial_of(app_id: &str) -> Option<String> {
+    app_id
         .rsplit('.')
         .next()
         .unwrap_or(app_id)
         .chars()
-        .next()
+        .find(|c| c.is_alphanumeric())
         .map(|c| c.to_uppercase().to_string())
-        .unwrap_or_else(|| "?".to_owned());
+}
+
+fn tile_path(cr: &cairo::Context, size: i32) {
+    let k = size as f64 / 512.;
+    let p = |v: f64| v * k;
+    cr.new_path();
+    cr.move_to(p(256.), p(16.));
+    cr.curve_to(p(440.), p(16.), p(496.), p(72.), p(496.), p(256.));
+    cr.curve_to(p(496.), p(440.), p(440.), p(496.), p(256.), p(496.));
+    cr.curve_to(p(72.), p(496.), p(16.), p(440.), p(16.), p(256.));
+    cr.curve_to(p(16.), p(72.), p(72.), p(16.), p(256.), p(16.));
+    cr.close_path();
+}
+
+fn draw_fallback(cr: &cairo::Context, app_id: &str, size: i32) -> anyhow::Result<()> {
+    let Some(letter) = initial_of(app_id) else {
+        return draw_svg_data(cr, UNKNOWN_ICON, size);
+    };
+    draw_initial(cr, app_id, &letter, size)
+}
+
+fn draw_initial(cr: &cairo::Context, app_id: &str, letter: &str, size: i32) -> anyhow::Result<()> {
+    let h = hue_for(app_id).3;
+    let (tr, tg, tb) = hsl_to_rgb(h, 0.5, 0.58);
+    let (br, bg, bb) = hsl_to_rgb(h, 0.55, 0.32);
+    let s = size as f64;
+    let half = s / 2.;
+
+    let fill = cairo::LinearGradient::new(0., 0., s * 0.35, s);
+    fill.add_color_stop_rgba(0., tr, tg, tb, 1.);
+    fill.add_color_stop_rgba(1., br, bg, bb, 1.);
+    tile_path(cr, size);
+    cr.set_source(&fill)?;
+    cr.fill()?;
+
+    let shine = cairo::LinearGradient::new(0., 0., 0., s);
+    shine.add_color_stop_rgba(0., 1., 1., 1., 0.26);
+    shine.add_color_stop_rgba(0.55, 1., 1., 1., 0.03);
+    shine.add_color_stop_rgba(1., 1., 1., 1., 0.);
+    tile_path(cr, size);
+    cr.set_source(&shine)?;
+    cr.fill_preserve()?;
+    cr.set_source_rgba(1., 1., 1., 0.28);
+    cr.set_line_width((s / 170.).max(1.));
+    cr.stroke()?;
 
     let mut font = FontDescription::from_string("sans Bold");
     font.set_absolute_size(size as f64 * 0.55 * f64::from(pangocairo::pango::SCALE));
 
     let layout = pangocairo::functions::create_layout(cr);
     layout.set_font_description(Some(&font));
-    layout.set_text(&letter);
+    layout.set_text(letter);
 
     let (tw, th) = layout.pixel_size();
     cr.set_source_rgba(1., 1., 1., 0.92);
@@ -475,7 +518,7 @@ fn draw_initial(cr: &cairo::Context, app_id: &str, size: i32) -> anyhow::Result<
     Ok(())
 }
 
-fn hue_for(app_id: &str) -> (f64, f64, f64) {
+fn hue_for(app_id: &str) -> (f64, f64, f64, f64) {
     let mut hash: u32 = 2166136261;
     for byte in app_id.bytes() {
         hash ^= u32::from(byte);
@@ -483,8 +526,8 @@ fn hue_for(app_id: &str) -> (f64, f64, f64) {
     }
 
     let h = f64::from(hash % 360);
-    let (s, l) = (0.45, 0.45);
-    hsl_to_rgb(h, s, l)
+    let (r, g, b) = hsl_to_rgb(h, 0.45, 0.45);
+    (r, g, b, h)
 }
 
 fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (f64, f64, f64) {
@@ -507,6 +550,44 @@ fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (f64, f64, f64) {
 mod tests {
     use super::*;
 
+    fn paint(app_id: &str) -> Vec<u8> {
+        let surface = ImageSurface::create(cairo::Format::ARgb32, 64, 64).unwrap();
+        {
+            let cr = cairo::Context::new(&surface).unwrap();
+            draw_fallback(&cr, app_id, 64).unwrap();
+        }
+        let mut surface = surface;
+        let px = surface.data().unwrap().to_vec();
+        px
+    }
+
+    fn alpha(px: &[u8], x: usize, y: usize) -> u8 {
+        px[(y * 64 + x) * 4 + 3]
+    }
+
+    #[test]
+    fn an_unknown_app_gets_the_zen_tile() {
+        for app in ["", "...", "-"] {
+            let px = paint(app);
+            assert_eq!(alpha(&px, 0, 0), 0, "{app:?}: the corners are cut, it is a squircle");
+            assert!(alpha(&px, 32, 32) > 200, "{app:?}: the middle is painted");
+        }
+        assert_ne!(paint(""), paint("firefox"), "a named app gets its own letter tile");
+    }
+
+    #[test]
+    fn the_initial_skips_punctuation() {
+        assert_eq!(initial_of("org.gnome.Nautilus").as_deref(), Some("N"));
+        assert_eq!(initial_of("_steam").as_deref(), Some("S"));
+        assert_eq!(initial_of(""), None);
+        assert_eq!(initial_of("..."), None);
+    }
+
+    #[test]
+    fn the_unknown_icon_parses() {
+        assert!(resvg::usvg::Tree::from_data(UNKNOWN_ICON, &resvg::usvg::Options::default()).is_ok());
+    }
+
     #[test]
     fn a_colour_is_stable_and_differs_between_apps() {
         assert_eq!(hue_for("firefox"), hue_for("firefox"));
@@ -516,7 +597,7 @@ mod tests {
     #[test]
     fn every_colour_is_in_range() {
         for app in ["a", "firefox", "org.gnome.Nautilus", "", "zz-long-app-id"] {
-            let (r, g, b) = hue_for(app);
+            let (r, g, b, _) = hue_for(app);
             for c in [r, g, b] {
                 assert!((0. ..=1.).contains(&c), "{app}: {c} is out of range");
             }

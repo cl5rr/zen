@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#7d86ff"/>
+      <stop offset="1" stop-color="#3b2c9c"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.26"/>
+      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0.03"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <path d="M256 16C440 16 496 72 496 256C496 440 440 496 256 496C72 496 16 440 16 256C16 72 72 16 256 16Z" fill="url(#tile)"/>
+  <g stroke="#ffffff" stroke-width="22" stroke-linecap="round" stroke-opacity="0.38">
+    <path d="M128 168H384"/>
+    <path d="M128 256H384"/>
+    <path d="M128 344H384"/>
+  </g>
+  <g fill="#ffffff">
+    <circle cx="316" cy="168" r="36"/>
+    <circle cx="352" cy="344" r="36"/>
+  </g>
+  <path d="M196 196C200 236 216 252 256 256C216 260 200 276 196 316C192 276 176 260 136 256C176 252 192 236 196 196Z" fill="#ffffff"/>
+  <path d="M256 16C440 16 496 72 496 256C496 440 440 496 256 496C72 496 16 440 16 256C16 72 72 16 256 16Z" fill="url(#shine)"/>
+  <path d="M256 16C440 16 496 72 496 256C496 440 440 496 256 496C72 496 16 440 16 256C16 72 72 16 256 16Z" fill="none" stroke="#ffffff" stroke-opacity="0.28" stroke-width="3"/>
+</svg>
