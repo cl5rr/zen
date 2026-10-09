@@ -70,3 +70,56 @@ fn alpha_mask_is_a_background_effect_option() {
     assert_eq!(effect.glass, Some(true));
     assert_eq!(effect.alpha_mask, Some(true));
 }
+
+// glass off
+fn effect_for(glass_off: bool, rule: zen_config::BackgroundEffect) -> crate::render_helpers::background_effect::Options {
+    use crate::render_helpers::background_effect::BackgroundEffect;
+
+    let mut e = BackgroundEffect::new();
+    let glass = zen_config::Glass {
+        off: glass_off,
+        ..Default::default()
+    };
+    e.update_config(zen_config::Blur::default(), glass);
+    e.update_render_elements(Default::default(), rule, false);
+    e.options()
+}
+
+fn shell_rule() -> zen_config::BackgroundEffect {
+    zen_config::BackgroundEffect {
+        glass: Some(true),
+        blur: Some(true),
+        alpha_mask: Some(true),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn turning_glass_off_keeps_the_mask() {
+    let o = effect_for(true, shell_rule());
+    assert!(
+        !o.xray,
+        "with glass off the rule fell back to x-ray, which paints the wallpaper over the whole \
+         layer and hides everything between"
+    );
+    assert!(o.alpha_mask, "the blur still has to follow the shape the layer paints");
+    assert!(o.clear, "and without the glass itself: no tint, bend or rim");
+}
+
+#[test]
+fn with_glass_on_nothing_changes() {
+    let o = effect_for(false, shell_rule());
+    assert!(o.glass && o.alpha_mask && !o.clear && !o.xray);
+}
+
+#[test]
+fn a_rule_with_nothing_left_to_draw_draws_nothing() {
+    let rule = zen_config::BackgroundEffect {
+        glass: Some(true),
+        blur: Some(false),
+        alpha_mask: Some(true),
+        ..Default::default()
+    };
+    let o = effect_for(true, rule);
+    assert!(!o.glass && !o.blur && !o.alpha_mask, "{o:?}");
+}

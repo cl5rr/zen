@@ -84,6 +84,20 @@ pub struct GlassParams {
     pub light_dir: (f32, f32),
 }
 
+impl GlassParams {
+    pub fn clear(g: zen_config::Glass) -> Self {
+        Self {
+            tint: [1., 1., 1., 0.],
+            refraction: 0.,
+            falloff: 1.,
+            squircle: g.squircle as f32,
+            specular: 0.,
+            spec_power: 24.,
+            light_dir: (0., -1.),
+        }
+    }
+}
+
 impl From<zen_config::Glass> for GlassParams {
     fn from(g: zen_config::Glass) -> Self {
         let [r, gr, b, _] = g.tint.to_array_unpremul();

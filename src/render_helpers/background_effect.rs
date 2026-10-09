@@ -35,6 +35,7 @@ pub struct BackgroundEffect {
 pub struct Options {
     pub blur: bool,
     pub glass: bool,
+    pub clear: bool,
     pub alpha_mask: bool,
     pub xray: bool,
     pub noise: Option<f64>,
@@ -118,12 +119,15 @@ impl BackgroundEffect {
             effect.blur == Some(true)
         };
 
-        let glass = effect.glass == Some(true) && !self.glass_config.off;
+        let real_glass = effect.glass == Some(true) && !self.glass_config.off;
+        let masked = effect.alpha_mask == Some(true) && (real_glass || blur);
+        let glass = real_glass || masked;
 
         let mut options = Options {
             blur,
             glass,
-            alpha_mask: glass && effect.alpha_mask == Some(true),
+            clear: glass && !real_glass,
+            alpha_mask: masked,
             xray: !glass && effect.xray == Some(true),
             noise: effect.noise,
             saturation: effect.saturation,
@@ -151,6 +155,10 @@ impl BackgroundEffect {
         self.options.alpha_mask
     }
 
+    pub fn options(&self) -> Options {
+        self.options
+    }
+
     pub fn render(
         &self,
         ctx: RenderCtx<GlesRenderer>,
@@ -169,7 +177,13 @@ impl BackgroundEffect {
         params.fit_clip_radius();
 
         // glass
-        let glass = self.options.glass.then(|| GlassParams::from(self.glass_config));
+        let glass = self.options.glass.then(|| {
+            if self.options.clear {
+                GlassParams::clear(self.glass_config)
+            } else {
+                GlassParams::from(self.glass_config)
+            }
+        });
         if let Some(g) = &glass {
             let margin = f64::from(g.refraction).max(0.).ceil();
             if margin > 0. {
