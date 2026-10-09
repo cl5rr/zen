@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Shapes
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -10,10 +10,17 @@ ShellRoot {
     id: root
 
     readonly property bool preview: !Greetd.available
-    readonly property string session: Quickshell.env("ZEN_SESSION") || "zen-session"
+    readonly property string zenSession: Quickshell.env("ZEN_SESSION") || "zen-session"
+    readonly property string here: Quickshell.env("ZEN_GREETER_DIR") || ""
+    readonly property string wallpaper: Quickshell.env("ZEN_GREETER_WALLPAPER") || ""
+    readonly property string cache: "/var/cache/zen-greeter"
     readonly property var words: ["welcome", "hello", "szia", "bonjour", "hola", "ciao", "hallo", "hej"]
 
     property var users: []
+    property var sessions: []
+    property int sessionIndex: 0
+    property bool choosing: false
+    readonly property var chosen: sessions.length > 0 ? sessions[sessionIndex] : null
     property int userIndex: 0
     readonly property var current: users.length > 0 ? users[userIndex] : null
     property int wordIndex: 0
@@ -37,8 +44,60 @@ ShellRoot {
 
     FileView {
         id: lastUser
-        path: "/var/cache/zen-greeter/last-user"
+        path: root.cache + "/last-user"
         onLoaded: root.pick(text().trim())
+    }
+
+    FileView {
+        id: lastSession
+        path: root.cache + "/last-session"
+        onLoaded: root.pickSession(text().trim())
+    }
+
+    // sessions
+    Process {
+        running: root.here.length > 0
+        command: ["sh", root.here + "/sessions.sh"]
+        stdout: StdioCollector {
+            onStreamFinished: root.readSessions(this.text)
+        }
+    }
+
+    function readSessions(text) {
+        const found = [];
+        for (const line of text.split("\n")) {
+            const f = line.split("\t");
+            if (f.length < 3 || found.some(s => s.name === f[1]))
+                continue;
+            found.push({ kind: f[0], name: f[1], exec: f[2], desktop: f[3] || "" });
+        }
+        found.sort((a, b) => (b.exec.indexOf("zen-session") >= 0) - (a.exec.indexOf("zen-session") >= 0));
+        if (found.length === 0)
+            found.push({ kind: "wayland", name: "ZEN", exec: "zen-session", desktop: "zen" });
+        sessions = found;
+        sessionIndex = 0;
+        if (lastSession.loaded)
+            pickSession(lastSession.text().trim());
+    }
+
+    function pickSession(name) {
+        const i = sessions.findIndex(s => s.name === name);
+        if (i >= 0)
+            sessionIndex = i;
+    }
+
+    function launchCommand(s) {
+        const args = s.exec.replace(/%[a-zA-Z]/g, "").trim().split(/\s+/);
+        if (args[0] === "zen-session")
+            args[0] = zenSession;
+        return s.kind === "x11" ? ["startx", "/usr/bin/env"].concat(args) : args;
+    }
+
+    function launchEnv(s) {
+        const env = ["XDG_SESSION_TYPE=" + s.kind];
+        if (s.desktop.length > 0)
+            env.push("XDG_CURRENT_DESKTOP=" + s.desktop);
+        return env;
     }
 
     function readUsers(text) {
@@ -128,6 +187,8 @@ ShellRoot {
 
         function onReadyToLaunch() {
             lastUser.setText(root.current.name + "\n");
+            if (root.chosen)
+                lastSession.setText(root.chosen.name + "\n");
             root.leaving = true;
             launch.start();
         }
@@ -136,7 +197,10 @@ ShellRoot {
     Timer {
         id: launch
         interval: 700
-        onTriggered: Greetd.launch([root.session])
+        onTriggered: {
+            const s = root.chosen || { kind: "wayland", name: "ZEN", exec: "zen-session", desktop: "zen" };
+            Greetd.launch(root.launchCommand(s), root.launchEnv(s));
+        }
     }
 
     Timer {
@@ -161,74 +225,6 @@ ShellRoot {
     function powerAction(what) {
         power.command = ["systemctl", what];
         power.running = true;
-    }
-
-    component Blob: Shape {
-        id: blob
-
-        property color tint
-        property real size: 600
-        property real ox: 0
-        property real oy: 0
-
-        width: size
-        height: size
-        preferredRendererType: Shape.CurveRenderer
-        transform: Translate {
-            x: blob.ox
-            y: blob.oy
-        }
-
-        ShapePath {
-            strokeWidth: -1
-            strokeColor: "transparent"
-            fillGradient: RadialGradient {
-                centerX: blob.size / 2
-                centerY: blob.size / 2
-                centerRadius: blob.size / 2
-                focalX: blob.size / 2
-                focalY: blob.size / 2
-
-                GradientStop {
-                    position: 0
-                    color: blob.tint
-                }
-                GradientStop {
-                    position: 1
-                    color: Qt.rgba(blob.tint.r, blob.tint.g, blob.tint.b, 0)
-                }
-            }
-
-            PathAngleArc {
-                centerX: blob.size / 2
-                centerY: blob.size / 2
-                radiusX: blob.size / 2
-                radiusY: blob.size / 2
-                startAngle: 0
-                sweepAngle: 360
-            }
-        }
-    }
-
-    component Drift: SequentialAnimation {
-        id: drift
-
-        required property Item target
-        property real dx: 200
-        property real dy: 120
-        property int duration: 16000
-
-        loops: Animation.Infinite
-        running: true
-
-        ParallelAnimation {
-            NumberAnimation { target: drift.target; property: "ox"; from: 0; to: drift.dx; duration: drift.duration; easing.type: Easing.InOutSine }
-            NumberAnimation { target: drift.target; property: "oy"; from: 0; to: drift.dy; duration: drift.duration; easing.type: Easing.InOutSine }
-        }
-        ParallelAnimation {
-            NumberAnimation { target: drift.target; property: "ox"; from: drift.dx; to: 0; duration: drift.duration; easing.type: Easing.InOutSine }
-            NumberAnimation { target: drift.target; property: "oy"; from: drift.dy; to: 0; duration: drift.duration; easing.type: Easing.InOutSine }
-        }
     }
 
     component Pill: Rectangle {
@@ -281,7 +277,7 @@ ShellRoot {
                 id: sky
 
                 screen: scope.modelData
-                color: "#0b1d6b"
+                color: "#10131c"
                 exclusionMode: ExclusionMode.Ignore
                 WlrLayershell.layer: root.preview ? WlrLayer.Top : WlrLayer.Background
                 WlrLayershell.namespace: "zen-greeter-sky"
@@ -292,45 +288,25 @@ ShellRoot {
                     right: true
                 }
 
-                Rectangle {
+                Image {
+                    id: wall
                     anchors.fill: parent
-                    gradient: Gradient {
-                        orientation: Gradient.Horizontal
-                        GradientStop { position: 0; color: "#0a1f86" }
-                        GradientStop { position: 0.55; color: "#1747e6" }
-                        GradientStop { position: 1; color: "#2f8dff" }
-                    }
+                    source: root.wallpaper.length > 0 ? "file://" + root.wallpaper : ""
+                    fillMode: Image.PreserveAspectCrop
+                    sourceSize.width: Math.max(1, sky.width / 2)
+                    asynchronous: true
+                    visible: false
                 }
 
-                Blob {
-                    id: b1
-                    tint: "#63c6ff"
-                    size: sky.height * 1.1
-                    x: sky.width * 0.55
-                    y: -sky.height * 0.25
-                    opacity: 0.75
+                MultiEffect {
+                    anchors.fill: parent
+                    source: wall
+                    visible: wall.status === Image.Ready
+                    blurEnabled: true
+                    blur: 1
+                    blurMax: 64
+                    brightness: -0.06
                 }
-                Drift { target: b1; dx: -sky.width * 0.12; dy: sky.height * 0.1; duration: 19000 }
-
-                Blob {
-                    id: b2
-                    tint: "#0a14a8"
-                    size: sky.height * 1.2
-                    x: -sky.width * 0.2
-                    y: sky.height * 0.25
-                    opacity: 0.9
-                }
-                Drift { target: b2; dx: sky.width * 0.1; dy: -sky.height * 0.08; duration: 23000 }
-
-                Blob {
-                    id: b3
-                    tint: "#7a5cff"
-                    size: sky.height * 0.8
-                    x: sky.width * 0.25
-                    y: sky.height * 0.55
-                    opacity: 0.45
-                }
-                Drift { target: b3; dx: sky.width * 0.16; dy: -sky.height * 0.12; duration: 27000 }
 
                 Rectangle {
                     anchors.fill: parent
@@ -394,18 +370,14 @@ ShellRoot {
                     Item {
                         id: wordBox
 
-                        readonly property real small: 0.42
-
                         width: parent.width
                         height: pen.height
-                        y: root.awake ? glass.height * 0.13 - height / 2 : (glass.height - height) / 2 - glass.height * 0.03
-                        scale: root.awake ? small : 1
+                        y: (glass.height - height) / 2 - glass.height * 0.03
+                        opacity: root.awake ? 0 : 1
+                        visible: opacity > 0
 
-                        Behavior on y {
-                            NumberAnimation { duration: 800; easing.type: Easing.OutCubic }
-                        }
-                        Behavior on scale {
-                            NumberAnimation { duration: 800; easing.type: Easing.OutCubic }
+                        Behavior on opacity {
+                            NumberAnimation { duration: 450; easing.type: Easing.OutCubic }
                         }
 
                         Canvas {
@@ -414,7 +386,7 @@ ShellRoot {
                             property string word: root.words[root.wordIndex]
                             property real progress: 0
                             readonly property real unit: glass.height * 0.2 / 21
-                            readonly property real thick: unit * 3.9
+                            readonly property real thick: unit * 2.9
                             readonly property var shape: build(word)
 
                             x: (parent.width - width) / 2
@@ -472,7 +444,7 @@ ShellRoot {
 
                             function trace(ctx, upto) {
                                 const u = unit, ox = thick * 2, oy = thick * 2 - shape.minY * u;
-                                let left = upto, tip = null;
+                                let left = upto;
                                 ctx.beginPath();
                                 for (const s of shape.strokes) {
                                     if (left <= 0)
@@ -485,8 +457,7 @@ ShellRoot {
                                         const seg = Math.hypot(b[0] - a[0], b[1] - a[1]);
                                         if (seg >= left) {
                                             const t = left / seg;
-                                            tip = [ox + (a[0] + (b[0] - a[0]) * t) * u, oy + (a[1] + (b[1] - a[1]) * t) * u];
-                                            ctx.lineTo(tip[0], tip[1]);
+                                            ctx.lineTo(ox + (a[0] + (b[0] - a[0]) * t) * u, oy + (a[1] + (b[1] - a[1]) * t) * u);
                                             left = 0;
                                             break;
                                         }
@@ -494,7 +465,6 @@ ShellRoot {
                                         left -= seg;
                                     }
                                 }
-                                return tip;
                             }
 
                             function pass(ctx, upto, dx, dy, width, style, op) {
@@ -505,35 +475,17 @@ ShellRoot {
                                 ctx.lineJoin = "round";
                                 ctx.lineWidth = width;
                                 ctx.strokeStyle = style;
-                                const tip = trace(ctx, upto);
+                                trace(ctx, upto);
                                 ctx.stroke();
                                 ctx.restore();
-                                return tip;
                             }
 
                             onPaint: {
                                 const ctx = getContext("2d");
                                 ctx.reset();
                                 const upto = shape.total * progress;
-                                if (upto <= 0)
-                                    return;
-                                const w = thick;
-                                const sheen = ctx.createLinearGradient(0, thick * 2, 0, height - thick * 2);
-                                sheen.addColorStop(0, "rgba(255,255,255,0.5)");
-                                sheen.addColorStop(1, "rgba(200,225,255,0.2)");
-                                const tip = pass(ctx, upto, 0, 0, w, "rgba(255,255,255,0.8)");
-                                pass(ctx, upto, 0, 0, w - 3, "rgba(0,0,0,1)", "destination-out");
-                                pass(ctx, upto, 0, 0, w - 3, sheen);
-                                pass(ctx, upto, w * 0.06, w * 0.26, w * 0.16, "rgba(6,18,90,0.2)");
-                                pass(ctx, upto, -w * 0.06, -w * 0.2, w * 0.22, "rgba(255,255,255,0.32)");
-                                pass(ctx, upto, -w * 0.07, -w * 0.24, w * 0.08, "rgba(255,255,255,0.7)");
-                                if (tip && progress < 1) {
-                                    const glow = ctx.createRadialGradient(tip[0], tip[1], 0, tip[0], tip[1], w * 1.4);
-                                    glow.addColorStop(0, "rgba(255,255,255,0.85)");
-                                    glow.addColorStop(1, "rgba(255,255,255,0)");
-                                    ctx.fillStyle = glow;
-                                    ctx.fillRect(tip[0] - w * 1.5, tip[1] - w * 1.5, w * 3, w * 3);
-                                }
+                                if (upto > 0)
+                                    pass(ctx, upto, 0, 0, thick, "rgba(255,255,255,0.12)");
                             }
 
                             SequentialAnimation {
@@ -816,20 +768,38 @@ ShellRoot {
                         }
                     }
 
-                    Text {
+                    // session
+                    Column {
                         anchors.left: parent.left
                         anchors.bottom: parent.bottom
-                        anchors.margins: 32
-                        text: "ZEN"
-                        color: Qt.rgba(1, 1, 1, 0.75)
-                        font.family: root.sansFamily
-                        font.pixelSize: 15
-                        font.weight: 700
-                        font.letterSpacing: 4
+                        anchors.margins: 28
+                        spacing: 8
                         opacity: root.awake ? 1 : 0
+                        visible: opacity > 0
 
                         Behavior on opacity {
                             NumberAnimation { duration: 400 }
+                        }
+
+                        Repeater {
+                            model: root.choosing ? root.sessions : []
+
+                            Pill {
+                                required property var modelData
+                                required property int index
+                                label: modelData.name
+                                color: index === root.sessionIndex ? Qt.rgba(1, 1, 1, 0.3) : Qt.rgba(1, 1, 1, 0.12)
+                                onClicked: {
+                                    root.sessionIndex = index;
+                                    root.choosing = false;
+                                    field.forceActiveFocus();
+                                }
+                            }
+                        }
+
+                        Pill {
+                            label: (root.chosen ? root.chosen.name : "ZEN") + (root.sessions.length > 1 ? "  ▾" : "")
+                            onClicked: if (root.sessions.length > 1) root.choosing = !root.choosing
                         }
                     }
                 }

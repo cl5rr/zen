@@ -12,6 +12,20 @@ cursor {
     hide-after-inactive-ms 3000
 }
 
+glass {
+    opacity 0.08
+    tint "#ffffff"
+    refraction 22
+    falloff 14
+    saturation 1.25
+    specular 0.55
+}
+
+blur {
+    passes 1
+    offset 1
+}
+
 layer-rule {
     match namespace="^zen-greeter-glass$"
     background-effect {

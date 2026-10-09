@@ -49,6 +49,9 @@ mkdir -p "$PREFIX/bin" "$PREFIX/share/zen/greeter" "$GREETD_DIR"
 printf '#!/bin/sh\n' > "$PREFIX/bin/zen-greeter"
 chmod +x "$PREFIX/bin/zen-greeter"
 : > "$PREFIX/share/zen/greeter/greeter.qml"
+mkdir -p "$XDG_CONFIG_HOME" "$HOME/.local/state/caelestia/wallpaper"
+printf 'jpeg' > "$HOME/mine.jpg"
+printf '%s' "$HOME/mine.jpg" > "$HOME/.local/state/caelestia/wallpaper/path.txt"
 printf '[default_session]\ncommand = "agreety --cmd sway"\n' > "$GREETD_DIR/config.toml"
 
 GREETER=ask
@@ -69,6 +72,7 @@ else
     say_no "the old greetd config is kept"
 fi
 if [ -d "$GREETER_CACHE" ]; then say_ok "the last-user cache exists"; else say_no "the last-user cache exists"; fi
+if [ -s "$GREETER_CACHE/wallpaper" ]; then say_ok "it gets a wallpaper to blur"; else say_no "it gets a wallpaper to blur"; fi
 
 cp "$cfg" "$STUB/first"
 install_greeter_zen >/dev/null 2>&1

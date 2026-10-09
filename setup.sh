@@ -1185,7 +1185,7 @@ install_zen() {
     $SUDO install -Dm755 resources/zen-polkit       "$PREFIX/bin/zen-polkit"
     $SUDO install -Dm755 resources/zen-shell        "$PREFIX/bin/zen-shell"
     $SUDO install -Dm755 resources/zen-greeter      "$PREFIX/bin/zen-greeter"
-    for part in greeter.qml Script.js zen.kdl; do
+    for part in greeter.qml Script.js sessions.sh zen.kdl; do
         $SUDO install -Dm644 "resources/greeter/$part" "$PREFIX/share/zen/greeter/$part"
     done
     $SUDO install -Dm644 resources/default-wallpaper.jpg \
@@ -2037,6 +2037,12 @@ install_greeter_zen() {
     zen_greetd_config | $SUDO tee "$GREETD_DIR/config.toml" >/dev/null
 
     $SUDO mkdir -p "$GREETER_CACHE"
+    local wp=""
+    wp="$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/caelestia/wallpaper/path.txt" 2>/dev/null)"
+    [ -r "$wp" ] || wp="$PREFIX/share/zen/default-wallpaper.jpg"
+    if [ -r "$wp" ]; then
+        $SUDO cp "$wp" "$GREETER_CACHE/wallpaper" 2>/dev/null && dim "the login screen uses your wallpaper, blurred"
+    fi
     if id greeter >/dev/null 2>&1; then
         $SUDO chown greeter "$GREETER_CACHE" 2>/dev/null || true
     fi

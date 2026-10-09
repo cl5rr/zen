@@ -3,6 +3,15 @@ here="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 share="$here/share/zen/greeter"
 
 export ZEN_SESSION="${ZEN_SESSION:-$here/bin/zen-session}"
+export ZEN_GREETER_DIR="$share"
+if [ -z "${ZEN_GREETER_WALLPAPER:-}" ]; then
+    for wp in /var/cache/zen-greeter/wallpaper "$here/share/zen/default-wallpaper.jpg"; do
+        if [ -r "$wp" ]; then
+            export ZEN_GREETER_WALLPAPER="$wp"
+            break
+        fi
+    done
+fi
 export QT_QPA_PLATFORM=wayland
 export XCURSOR_THEME="${XCURSOR_THEME:-Adwaita}"
 [ -d "$here/lib/qt6/qml" ] && export QML_IMPORT_PATH="$here/lib/qt6/qml${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}"
