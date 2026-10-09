@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
-import Quickshell.Hyprland
 import Caelestia.Config
 import qs.components
 import qs.services
@@ -10,7 +9,7 @@ Item {
     id: root
 
     required property ShellScreen screen
-    required property HyprlandToplevel client
+    required property var client
 
     implicitWidth: child.implicitWidth
     implicitHeight: screen.height * Tokens.sizes.winfo.heightMult

@@ -18,8 +18,8 @@ MouseArea {
 
     property bool onClient
 
-    property real realBorderWidth: onClient ? (Hypr.options["general:border_size"] ?? 1) : 2
-    property real realRounding: onClient ? (Hypr.options["decoration:rounding"] ?? 0) : 0
+    property real realBorderWidth: onClient ? (Compositor.options["general:border_size"] ?? 1) : 2
+    property real realRounding: onClient ? (Compositor.options["decoration:rounding"] ?? 0) : 0
 
     property real ssx
     property real ssy
@@ -35,7 +35,7 @@ MouseArea {
     property real sh: Math.abs(sy - ey)
 
     property list<var> clients: {
-        const mon = Hypr.monitorFor(screen);
+        const mon = Compositor.monitorFor(screen);
         if (!mon)
             return [];
 
@@ -44,7 +44,7 @@ MouseArea {
         if (wsId === undefined)
             return [];
 
-        return Hypr.toplevelsForWs(wsId).sort((a, b) => {
+        return Compositor.toplevelsForWs(wsId).sort((a, b) => {
             // Pinned first, then fullscreen, then floating, then any other
             const ac = a?.lastIpcObject;
             const bc = b?.lastIpcObject;
@@ -101,7 +101,7 @@ MouseArea {
     cursorShape: Qt.CrossCursor
 
     Component.onCompleted: {
-        Hypr.extras.refreshOptions();
+        Compositor.extras.refreshOptions();
 
         // Break binding if frozen
         if (loader.freeze)

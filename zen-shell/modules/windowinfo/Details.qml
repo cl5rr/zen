@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Layouts
-import Quickshell.Hyprland
 import Caelestia.Config
 import Caelestia.I18n
 import qs.components
@@ -9,7 +8,7 @@ import qs.services
 ColumnLayout {
     id: root
 
-    required property HyprlandToplevel client
+    required property var client
 
     anchors.fill: parent
     spacing: Tokens.spacing.small

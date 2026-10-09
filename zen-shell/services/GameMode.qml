@@ -13,46 +13,26 @@ Singleton {
 
     property alias enabled: props.enabled
 
-    function setDynamicConfs(): void {
-        Hypr.extras.applyOptions({
-            "animations:enabled": 0,
-            "decoration:shadow:enabled": 0,
-            "decoration:blur:enabled": 0,
-            "general:gaps_in": 0,
-            "general:gaps_out": 0,
-            "general:border_size": 1,
-            "decoration:rounding": 0,
-            "general:allow_tearing": 1
-        });
-    }
-
     onEnabledChanged: {
         if (enabled) {
-            setDynamicConfs();
+            props.dndBefore = Notifs.dnd;
+            Notifs.dnd = true;
             if (GlobalConfig.utilities.toasts.gameModeChanged)
-                Toaster.toast(Tr.tr("Game mode enabled"), Tr.tr("Disabled Hyprland animations, blur, gaps and shadows"), "gamepad");
+                Toaster.toast(Tr.tr("Game mode enabled"), Tr.tr("Notifications wait until you are done"), "gamepad");
         } else {
-            Hypr.extras.message("reload");
+            Notifs.dnd = props.dndBefore;
             if (GlobalConfig.utilities.toasts.gameModeChanged)
-                Toaster.toast(Tr.tr("Game mode disabled"), Tr.tr("Hyprland settings restored"), "gamepad");
+                Toaster.toast(Tr.tr("Game mode disabled"), Tr.tr("Notifications are back"), "gamepad");
         }
     }
 
     PersistentProperties {
         id: props
 
-        property bool enabled: Hypr.options["animations:enabled"] === 0 // qmllint disable missing-property
+        property bool enabled: false
+        property bool dndBefore: false
 
         reloadableId: "gameMode"
-    }
-
-    Connections {
-        function onConfigReloaded(): void {
-            if (props.enabled)
-                root.setDynamicConfs();
-        }
-
-        target: Hypr
     }
 
     IpcHandler {

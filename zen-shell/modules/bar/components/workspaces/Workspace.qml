@@ -3,7 +3,6 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
-import Quickshell.Hyprland
 import M3Shapes
 import Caelestia.Components
 import Caelestia.Config
@@ -18,7 +17,7 @@ Item {
     required property int index
     required property int activeWsId
     required property int ws
-    required property HyprlandMonitor monitor
+    required property var monitor
 
     required property int displayType
     required property bool showWindows
@@ -27,7 +26,7 @@ Item {
     property string occupiedLabel
     property string label
 
-    readonly property list<HyprlandToplevel> toplevels: Hypr.toplevelsForWs(ws, GlobalConfig.bar.workspaces.ignoredTags)
+    readonly property var toplevels: Compositor.toplevelsForWs(ws, GlobalConfig.bar.workspaces.ignoredTags)
     readonly property bool isOccupied: toplevels.length > 0
     readonly property bool hasWindows: isOccupied && showWindows && Config.bar.workspaces.maxWindowIcons > 0
     readonly property bool focused: activeWsId === ws
@@ -37,7 +36,7 @@ Item {
     readonly property bool onOtherMonitor: {
         if (Config.bar.workspaces.perMonitor)
             return false;
-        const mon = Hypr.workspaces.values.find(w => w.id === ws)?.monitor;
+        const mon = Compositor.workspaces.values.find(w => w.id === ws)?.monitor;
         return !!(mon && mon !== monitor);
     }
     readonly property color fgColour: {
@@ -128,8 +127,8 @@ Item {
                 if (label)
                     return label;
 
-                const ws = Hypr.workspaces.values.find(w => w.id === root.ws);
-                const wsName = !ws || ws.name == root.ws ? root.ws : Hypr.trimWsName(ws.name)[0];
+                const ws = Compositor.workspaces.values.find(w => w.id === root.ws);
+                const wsName = !ws || ws.name == root.ws ? root.ws : Compositor.trimWsName(ws.name)[0];
 
                 const capitalisation = Config.bar.workspaces.capitalisation;
                 if (capitalisation === BarWorkspaceCapitalisation.Upper)
@@ -251,8 +250,8 @@ Item {
         id: cacher
 
         property string name
-        readonly property string icon: Icons.matchIconRuleList(Hypr.trimWsName(name), root.iconRules)
-        readonly property HyprlandWorkspace wsObj: Hypr.workspaces.values.find(w => w.id === root.ws) ?? null
+        readonly property string icon: Icons.matchIconRuleList(Compositor.trimWsName(name), root.iconRules)
+        readonly property var wsObj: Compositor.workspaces.values.find(w => w.id === root.ws) ?? null
 
         readonly property Connections conn: Connections {
             function onNameChanged(): void {

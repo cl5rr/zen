@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import Quickshell
-import Quickshell.Hyprland
 import Caelestia
 import Caelestia.Components
 import Caelestia.Config
@@ -13,12 +12,12 @@ import qs.services
 Item {
     id: root
 
-    required property HyprlandMonitor monitor
+    required property var monitor
 
     readonly property int activeSpecialId: monitor?.lastIpcObject.specialWorkspace?.id ?? 0
     readonly property var wsIds: {
         const allMonitors = !Config.bar.workspaces.perMonitor;
-        return Hypr.workspaces.values.filter(w => w.name.startsWith("special:") && (allMonitors || w.monitor === root.monitor)).map(w => w.id);
+        return Compositor.workspaces.values.filter(w => w.name.startsWith("special:") && (allMonitors || w.monitor === root.monitor)).map(w => w.id);
     }
     readonly property int activeIdx: wsIds.indexOf(activeSpecialId)
     readonly property real maxViewY: Math.max(0, view.contentHeight - height)
@@ -223,11 +222,11 @@ Item {
 
             const ws = view.itemAt(event.x, event.y - view.y) as Workspace;
             if (ws) {
-                const match = Hypr.workspaces.values.find(w => w.id === ws.ws);
+                const match = Compositor.workspaces.values.find(w => w.id === ws.ws);
                 if (match)
-                    Hypr.toggleSpecial(Hypr.trimWsName(match.name));
+                    Compositor.toggleSpecial(Compositor.trimWsName(match.name));
             } else {
-                Hypr.toggleSpecial("special");
+                Compositor.toggleSpecial("special");
             }
         }
     }

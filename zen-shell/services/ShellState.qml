@@ -21,9 +21,9 @@ Singleton {
     }
 
     function forActive(): ScreenState {
-        const mon = Hypr.focusedMonitor;
+        const mon = Compositor.focusedMonitor;
         for (const s of states.instances)
-            if (Hypr.monitorFor(s.modelData) === mon)
+            if (Compositor.monitorFor(s.modelData) === mon)
                 return s;
         return null;
     }
@@ -36,9 +36,9 @@ Singleton {
     }
 
     function componentsForActive(): Components {
-        const mon = Hypr.focusedMonitor;
+        const mon = Compositor.focusedMonitor;
         for (const c of components.instances)
-            if (Hypr.monitorFor(c.modelData) === mon)
+            if (Compositor.monitorFor(c.modelData) === mon)
                 return c;
         return null;
     }

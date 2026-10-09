@@ -2,10 +2,10 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import Quickshell
-import Quickshell.Hyprland
 import Quickshell.Wayland
 import Caelestia.Config
 import qs.components
+import qs.components.misc
 import qs.services
 import qs.modules.nexus
 import qs.modules.windowinfo
@@ -90,7 +90,7 @@ Item {
         onDetachRequested: mode => root.detach(mode)
     }
 
-    HyprlandFocusGrab {
+    ZenFocusGrab {
         active: root.isDetached
         windows: [QsWindow.window]
         onCleared: root.close()
@@ -123,7 +123,7 @@ Item {
 
         sourceComponent: WindowInfo {
             screen: root.screen
-            client: Hypr.activeToplevel
+            client: Compositor.activeToplevel
         }
     }
 

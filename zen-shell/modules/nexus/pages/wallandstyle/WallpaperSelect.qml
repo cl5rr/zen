@@ -73,11 +73,11 @@ PageBase {
         WallItem {
             imgHeight: Math.round(width * 0.3)
             radius: Tokens.rounding.extraLarge
-            source: Quickshell.shellPath("assets/wallpaper.webp")
+            source: Quickshell.shellPath("assets/wallpaper.jpg")
             text: Tr.tr("Featured wallpaper")
             fillLabel: false
             onClicked: {
-                Wallpapers.setWallpaper(Quickshell.shellPath("assets/wallpaper.webp"));
+                Wallpapers.setWallpaper(Quickshell.shellPath("assets/wallpaper.jpg"));
                 root.nState.closeSubPage();
             }
         }

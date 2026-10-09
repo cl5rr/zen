@@ -3,7 +3,6 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
-import Quickshell.Hyprland
 import Quickshell.Wayland
 import Caelestia.Config
 import Caelestia.I18n
@@ -14,7 +13,7 @@ Item {
     id: root
 
     required property ShellScreen screen
-    required property HyprlandToplevel client
+    required property var client
 
     Layout.preferredWidth: preview.implicitWidth + Tokens.padding.extraLargeIncreased
     Layout.fillHeight: true

@@ -4,11 +4,11 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Effects
 import Quickshell
-import Quickshell.Hyprland
 import Quickshell.Wayland
 import Caelestia.Blobs
 import Caelestia.Config
 import qs.components
+import qs.components.misc
 import qs.components.containers
 import qs.services
 import qs.modules.bar
@@ -21,7 +21,7 @@ StyledWindow {
 
     readonly property ScreenState screenState: ShellState.forScreen(screen)
 
-    readonly property HyprlandMonitor monitor: Hypr.monitorFor(screen)
+    readonly property var monitor: Compositor.monitorFor(screen)
     readonly property bool hasSpecialWorkspace: (monitor?.lastIpcObject.specialWorkspace?.name.length ?? 0) > 0
     readonly property bool hasFullscreenOnNormalWs: monitor?.activeWorkspace?.toplevels.values.some(t => t.lastIpcObject.fullscreen > 1) ?? false
     readonly property bool hasFullscreen: {
@@ -29,7 +29,7 @@ StyledWindow {
             const specialName = monitor?.lastIpcObject.specialWorkspace?.name;
             if (!specialName)
                 return false;
-            const specialWs = Hypr.workspaces.values.find(ws => ws.name === specialName);
+            const specialWs = Compositor.workspaces.values.find(ws => ws.name === specialName);
             return specialWs?.toplevels.values.some(t => t.lastIpcObject.fullscreen > 1) ?? false;
         }
         return hasFullscreenOnNormalWs;
@@ -68,9 +68,9 @@ StyledWindow {
     name: "drawers"
     WlrLayershell.exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: (fsTransitionProg > 0 && contentItem.Config.general.showOverFullscreen) || (hasSpecialWorkspace && hasFullscreenOnNormalWs) ? WlrLayer.Overlay : WlrLayer.Top
-    WlrLayershell.keyboardFocus: screenState.launcher || screenState.session ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: screenState.launcher || screenState.session ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
-    mask: hasFullscreen ? emptyRegion : regions
+    mask: hasFullscreen ? emptyRegion : focusGrab.active ? null : regions
 
     anchors.top: true
     anchors.bottom: true
@@ -109,7 +109,7 @@ StyledWindow {
         win: root
     }
 
-    HyprlandFocusGrab {
+    ZenFocusGrab {
         id: focusGrab
 
         active: {
@@ -132,6 +132,13 @@ StyledWindow {
             panels.popouts.hasCurrent = false;
             bar.closeTray();
         }
+    }
+
+    MouseArea {
+        anchors.fill: parent
+        enabled: focusGrab.active
+        acceptedButtons: Qt.AllButtons
+        onPressed: focusGrab.clear()
     }
 
     StyledRect {

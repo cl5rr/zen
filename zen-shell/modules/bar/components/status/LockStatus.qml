@@ -9,9 +9,9 @@ ColumnLayout {
     required property color colour
     required property int parentSpacing
 
-    property real gap: Hypr.capsLock && Hypr.numLock ? parentSpacing : 0
-    property real capsHeight: Hypr.capsLock ? capslockIcon.implicitHeight : 0
-    property real numHeight: Hypr.numLock ? numlockIcon.implicitHeight : 0
+    property real gap: Compositor.capsLock && Compositor.numLock ? parentSpacing : 0
+    property real capsHeight: Compositor.capsLock ? capslockIcon.implicitHeight : 0
+    property real numHeight: Compositor.numLock ? numlockIcon.implicitHeight : 0
 
     spacing: Math.round(gap)
 
@@ -42,8 +42,8 @@ ColumnLayout {
 
             anchors.centerIn: parent
 
-            scale: Hypr.capsLock ? 1 : 0.5
-            opacity: Hypr.capsLock ? 1 : 0
+            scale: Compositor.capsLock ? 1 : 0.5
+            opacity: Compositor.capsLock ? 1 : 0
 
             text: "keyboard_capslock_badge"
             color: root.colour
@@ -71,8 +71,8 @@ ColumnLayout {
 
             anchors.centerIn: parent
 
-            scale: Hypr.numLock ? 1 : 0.5
-            opacity: Hypr.numLock ? 1 : 0
+            scale: Compositor.numLock ? 1 : 0.5
+            opacity: Compositor.numLock ? 1 : 0
 
             text: "looks_one"
             color: root.colour

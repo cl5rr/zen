@@ -1,7 +1,16 @@
-import Quickshell.Hyprland
+import QtQuick
+import qs.services
 
-// qmllint disable unresolved-type
-GlobalShortcut {
-    // qmllint enable unresolved-type
-    appid: "caelestia"
+QtObject {
+    id: root
+
+    property string name
+    property string description
+    property string appid: "zen"
+
+    signal pressed
+    signal released
+
+    Component.onCompleted: ShortcutRegistry.add(root)
+    Component.onDestruction: ShortcutRegistry.remove(root)
 }

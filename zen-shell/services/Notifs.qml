@@ -23,7 +23,7 @@ Singleton {
     property bool loaded
 
     function hasFullscreen(): bool {
-        for (const monitor of Hypr.monitors.values) {
+        for (const monitor of Compositor.monitors.values) {
             if (monitor?.activeWorkspace?.toplevels.values.some(t => t.lastIpcObject.fullscreen > 1))
                 return true;
         }

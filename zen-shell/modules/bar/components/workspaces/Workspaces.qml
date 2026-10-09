@@ -3,7 +3,6 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Effects
 import Quickshell
-import Quickshell.Hyprland
 import Caelestia
 import Caelestia.Components
 import Caelestia.Config
@@ -16,7 +15,7 @@ StyledClippingRect {
     required property ShellScreen screen
     required property bool fullscreen
 
-    readonly property HyprlandMonitor monitor: Hypr.monitorFor(screen)
+    readonly property var monitor: Compositor.monitorFor(screen)
     readonly property bool onSpecial: monitor?.lastIpcObject.specialWorkspace?.name !== ""
     readonly property int activeWsId: monitor.activeWorkspace?.id ?? 1
     readonly property int activeWsIdx: workspaceIndex(activeWsId)
@@ -30,7 +29,7 @@ StyledClippingRect {
 
         const allMonitors = !Config.bar.workspaces.perMonitor;
         const ignoredTags = GlobalConfig.bar.workspaces.ignoredTags;
-        const workspaces = Hypr.workspaces.values.filter(w => w.id > 0 && (allMonitors || w.monitor === root.monitor) && (w.id === activeWsId || w.toplevels.values.some(t => !Hypr.isToplevelIgnored(t, ignoredTags))));
+        const workspaces = Compositor.workspaces.values.filter(w => w.id > 0 && (allMonitors || w.monitor === root.monitor) && (w.id === activeWsId || w.toplevels.values.some(t => !Compositor.isToplevelIgnored(t, ignoredTags))));
         const currentIdx = workspaces.findIndex(w => w.id === activeWsId);
         if (currentIdx < 0)
             return [];
@@ -175,10 +174,10 @@ StyledClippingRect {
                 const ws = (workspaces.itemAt(event.x, event.y) as Workspace)?.ws;
                 if (!ws)
                     return;
-                if (Hypr.activeWsId !== ws)
-                    Hypr.focusWorkspace(ws);
+                if (Compositor.activeWsId !== ws)
+                    Compositor.focusWorkspace(ws);
                 else
-                    Hypr.toggleSpecial("special");
+                    Compositor.toggleSpecial("special");
             }
         }
 
