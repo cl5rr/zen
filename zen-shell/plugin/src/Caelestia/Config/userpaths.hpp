@@ -14,7 +14,7 @@ class UserPaths : public settings::ObjectNode {
     CONFIG_NODE(UserPaths, settings::ObjectNode)
 
     CONFIG_GLOBAL_PROPERTY(
-        QString, wallpaperDir, QStandardPaths::writableLocation(QStandardPaths::PicturesLocation) + u"/Wallpapers"_s)
+        QString, wallpaperDir, QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + u"/zen/wallpapers"_s)
     CONFIG_GLOBAL_PROPERTY(
         QString, lyricsDir, QStandardPaths::writableLocation(QStandardPaths::MusicLocation) + u"/Lyrics/"_s)
     CONFIG_PROPERTY(QString, sessionGif, u"root:/assets/kurukuru.gif"_s)

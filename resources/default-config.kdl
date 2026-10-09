@@ -171,6 +171,14 @@ gestures {
 // ~/.config/waybar/zen-pills.css. Off by default because a blur pass behind a bar that
 // spans the screen is not free, and the pills read fine without it.
 layer-rule {
+    match namespace="^caelestia"
+    background-effect {
+        glass true
+        blur true
+        alpha-mask true
+    }
+}
+layer-rule {
     match namespace="^waybar$"
 
     background-effect {
@@ -458,7 +466,7 @@ layout {
 // rather than pinned to a screen edge -- same programs, positioned in the
 // space instead of over it.
 // ---------------------------------------------------------------------
-spawn-at-startup "waybar"
+spawn-at-startup "zen-shell"
 
 // The wallpaper. `zen-wallpaper` re-applies whatever you last picked, so this
 // is all that is needed; there is no daemon to configure and no path to keep in
@@ -648,7 +656,9 @@ binds {
 
     // App launcher. Mod+D is the usual home for this, but ZEN gives D to
     // Discord, so the launcher lives on Mod+Space.
-    Mod+Space hotkey-overlay-title="Run an Application" { spawn "fuzzel"; }
+    Mod+Space hotkey-overlay-title="Run an Application" { spawn "zen-shell" "launcher"; }
+    Mod+A hotkey-overlay-title="Dashboard" { spawn "zen-shell" "dashboard"; }
+    Mod+X hotkey-overlay-title="Power Menu" { spawn "zen-shell" "session"; }
 
     // Settings. Edits this file; ZEN reloads it as you drag a slider.
     Mod+Comma hotkey-overlay-title="Settings" { spawn "zen-settings"; }
@@ -661,7 +671,7 @@ binds {
     // Tap Mod on its own -- press and release with nothing in between -- to open
     // the launcher, the way Hyprland and GNOME do. Holding Mod for a chord like
     // Mod+T never triggers this.
-    ModTap hotkey-overlay-title="Run an Application" { spawn "fuzzel"; }
+    ModTap hotkey-overlay-title="Run an Application" { spawn "zen-shell" "launcher"; }
 
     // Prefers your configured default browser and falls back to Firefox, so
     // this keeps working if you switch browsers. Swap it in for the Mod+W
@@ -677,7 +687,7 @@ binds {
 
     // waybar has no way to reveal itself when the pointer reaches the edge, so hiding
     // the bar has to be a toggle. SIGUSR1 is what waybar listens for.
-    Mod+B hotkey-overlay-title="Show or Hide the Bar" { spawn-sh "pkill -SIGUSR1 -x waybar"; }
+    Mod+B hotkey-overlay-title="Show or Hide the Bar" { spawn "zen-shell" "bar"; }
 
     // Use spawn-sh to run a shell command. Do this if you need pipes, multiple commands, etc.
     // Note: the entire command goes as a single argument. It's passed verbatim to `sh -c`.

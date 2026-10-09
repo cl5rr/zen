@@ -88,6 +88,18 @@ stop_renderers() {
     true
 }
 
+# shell
+SHELL_STATE="${XDG_STATE_HOME:-$HOME/.local/state}/caelestia/wallpaper/path.txt"
+
+tell_shell() {
+    mkdir -p "$(dirname "$SHELL_STATE")" 2>/dev/null || return 0
+    printf '%s\n' "$1" > "$SHELL_STATE"
+}
+
+shell_running() {
+    command -v zen-shell >/dev/null 2>&1 && zen-shell running
+}
+
 # Puts a wallpaper on screen, and remembers it.
 #
 # Three renderers, picked by what the file is and what is installed. Whichever runs,
@@ -96,6 +108,15 @@ stop_renderers() {
 apply() {
     local wp="$1"
     [ -f "$wp" ] || die "no such file: $wp"
+
+    tell_shell "$wp"
+    if shell_running; then
+        stop_renderers
+        pkill -x swww-daemon 2>/dev/null
+        pkill -x awww-daemon 2>/dev/null
+        printf '%s\n' "$wp" > "$STATE"
+        return 0
+    fi
 
     if is_video "$wp"; then
         apply_video "$wp"

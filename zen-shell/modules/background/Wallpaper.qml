@@ -13,24 +13,45 @@ Item {
     id: root
 
     property string source: Wallpapers.current
-    property CachingImage current
+    property Item current
     property bool completed
+
+    function isVideo(path: string): bool {
+        return /\.(mp4|mkv|webm|mov|m4v|avi)$/i.test(path);
+    }
+
+    property Component videoComp
+
+    function show(path: string): void {
+        if (isVideo(path)) {
+            if (!videoComp)
+                videoComp = Qt.createComponent("VideoWallpaper.qml");
+            if (videoComp.status === Component.Ready) {
+                current = videoComp.createObject(this, {
+                    path: path,
+                    owner: root
+                });
+                return;
+            }
+            console.warn("wallpaper: video wallpapers need qt6-multimedia:", videoComp.errorString());
+            return;
+        }
+        current = imgComp.createObject(this, {
+            path: path
+        });
+    }
 
     onSourceChanged: {
         if (!source)
             current = null;
         else
-            current = imgComp.createObject(this, {
-                path: source
-            });
+            show(source);
     }
 
     Component.onCompleted: {
         if (source)
             Qt.callLater(() => {
-                current = imgComp.createObject(this, {
-                    path: source
-                });
+                show(source);
                 completed = true;
             });
     }

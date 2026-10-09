@@ -20,17 +20,37 @@ pipewire-pulse     | core     | erx | pipewire-pulse | | | | sound for apps that
 # desktop
 alacritty          | desktop  | erx | alacritty | | | | the terminal, Mod+T
 fuzzel             | desktop  | erx | fuzzel | | | | the app launcher, Mod+Space
-waybar             | desktop  | erx | waybar | | | | the bar
-swaybg             | desktop  | erx | swaybg | | | | wallpapers
-awww               | desktop  | erx | awww,swww | | swww | | wallpaper crossfades
-swaylock           | desktop  | erx | swaylock | | | | the lock screen
-swayidle           | desktop  | erx | swayidle | | | | locks the screen when idle
-mako               | desktop  | erx | mako,makoctl | | | | notifications
+swaybg             | desktop  | erx | swaybg | | | | wallpapers when the shell is not running
 wl-clipboard       | desktop  | erx | wl-copy | | | | copy and paste
 cliphist           | desktop  | erx | cliphist | | | | clipboard history
 brightnessctl      | desktop  | erx | brightnessctl | | | | the brightness keys
 playerctl          | desktop  | erx | playerctl | | | | the media keys
 xdg-utils          | desktop  | erx | xdg-open | | | | opens links and files
+
+# shell
+quickshell         | shell    | erx | qs,quickshell | - | quickshell-git | | the toolkit ZEN Shell is written in
+qt6-declarative    | shell    | erx | /usr/lib/qt6/qml/QtQuick | | | | Qt Quick
+qt6-imageformats   | shell    | erx | /usr/lib/qt6/plugins/imageformats/libqwebp.so | | | | wallpapers in webp and other formats
+qt6-multimedia     | shell    | erx | /usr/lib/qt6/qml/QtMultimedia | qt6-multimedia qt6-multimedia-ffmpeg | | | video wallpapers
+qt6-shadertools    | shell    | erx | /usr/lib/qt6/bin/qsb | | | | builds the shell's shaders
+m3shapes           | shell    | erx | /usr/lib/qt6/qml/M3Shapes,/usr/local/lib/qt6/qml/M3Shapes | - | qt6-m3shapes-git | | rounded Material shapes
+libcava            | shell    | erx | /usr/lib/libcava.so*,/usr/local/lib/libcava.so* | - | libcava | | the audio visualiser
+libqalculate       | shell    | erx | /usr/lib/libqalculate.so* | | | | the calculator in the launcher
+aubio              | shell    | erx | /usr/lib/libaubio.so* | | | | beat detection for the visualiser
+cmake              | shell    | erx | cmake | | | | builds ZEN Shell
+ninja              | shell    | erx | ninja | | | | builds ZEN Shell
+lm-sensors         | shell    | erx | sensors | lm_sensors | | | temperatures on the dashboard
+ddcutil            | shell    | erx | ddcutil | | | | brightness on external monitors
+font-material      | shell    | erx | /usr/share/fonts/*/MaterialSymbols*,/usr/share/fonts/*/*/MaterialSymbols* | ttf-material-symbols-variable | | | the shell's icons
+font-cascadia      | shell    | erx | /usr/share/fonts/*/CaskaydiaCove*,/usr/share/fonts/*/*/CaskaydiaCove* | ttf-cascadia-code-nerd | | | the shell's monospace font
+font-rubik         | shell    | erx | /usr/share/fonts/*/Rubik*,/usr/share/fonts/*/*/Rubik* | - | ttf-rubik-vf | | the shell's text font
+
+# classic
+waybar             | classic  | -   | waybar | | | | the classic bar
+mako               | classic  | -   | mako,makoctl | | | | classic notifications
+swaylock           | classic  | -   | swaylock | | | | the classic lock screen
+swayidle           | classic  | -   | swayidle | | | | locks the screen when idle
+awww               | classic  | -   | awww,swww | | swww | | wallpaper crossfades
 
 # system
 networkmanager     | system   | erx | nmcli | | | | Wi-Fi and wired networking

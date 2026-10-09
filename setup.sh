@@ -23,6 +23,7 @@ DO_BUILD=1
 DO_INSTALL=0
 DO_UPDATE=0
 RESET_CONFIG=0
+CLASSIC=0
 CHECK_ONLY=0
 WITH_VISUAL_TESTS=0
 BUILD_PROFILE=release
@@ -113,6 +114,7 @@ Arch Linux and Arch-based distributions only.
   --preset WHICH     What to install without asking: essentials, recommended,
                      everything, or a file written by an earlier run
                      (~/.config/zen/setup-choices is the one setup keeps).
+  --classic          Use waybar, fuzzel, mako and swaylock instead of ZEN Shell.
   --deps-only        Install missing dependencies and exit.
   --build-only       Skip dependency handling; just build.
   --install          Install ZEN after building (needs root for PREFIX).
@@ -156,6 +158,7 @@ while [ $# -gt 0 ]; do
         --preset)               [ $# -ge 2 ] || die "--preset needs essentials, recommended, everything or a file"
                                 PRESET="$2"; shift ;;
         --preset=*)             PRESET="${1#*=}" ;;
+        --classic)              CLASSIC=1 ;;
         --debug)                BUILD_PROFILE=debug ;;
         --with-visual-tests)    WITH_VISUAL_TESTS=1 ;;
         --features)             [ $# -ge 2 ] || die "--features needs an argument"
@@ -379,7 +382,7 @@ declare -gA M_CAT M_PROF M_PROBE M_PAC M_AUR M_FLAT M_WHY M_ON M_NEW
 M_IDS=()
 
 PICK_CATS="system apps media office creative gaming dev fun"
-ALWAYS_CATS="core desktop"
+ALWAYS_CATS="core desktop shell"
 PROFILE=recommended
 
 trim_into() {
@@ -484,7 +487,11 @@ apply_profile() {
     local letter id
     letter="$(profile_letter "$PROFILE")"
     for id in "${M_IDS[@]}"; do
-        if is_always "$id"; then
+        if [ "$CLASSIC" = 1 ] && [ "${M_CAT[$id]}" = shell ]; then
+            M_ON[$id]=0
+        elif [ "$CLASSIC" = 1 ] && [ "${M_CAT[$id]}" = classic ]; then
+            M_ON[$id]=1
+        elif is_always "$id"; then
             M_ON[$id]=1
         elif is_pickable "$id"; then
             case "${M_PROF[$id]}" in
@@ -504,6 +511,7 @@ save_choices() {
     mkdir -p "$(dirname "$file")" 2>/dev/null || return 0
     {
         printf 'profile=%s\n' "$PROFILE"
+        printf 'classic=%s\n' "$CLASSIC"
         for id in "${M_IDS[@]}"; do
             is_pickable "$id" && printf '%s=%s\n' "$id" "${M_ON[$id]}"
         done
@@ -516,11 +524,15 @@ load_choices() {
     local -A seen=()
 
     PROFILE="$(sed -n 's/^profile=//p' "$file" | head -1)"
+    if [ "$CLASSIC" = 0 ]; then
+        CLASSIC="$(sed -n 's/^classic=//p' "$file" | head -1)"
+        [ "$CLASSIC" = 1 ] || CLASSIC=0
+    fi
     case "$PROFILE" in essentials|recommended|everything) ;; *) PROFILE=recommended ;; esac
     apply_profile
 
     while IFS='=' read -r key value; do
-        [ -n "$key" ] && [ "$key" != profile ] || continue
+        [ -n "$key" ] && [ "$key" != profile ] && [ "$key" != classic ] || continue
         [ -n "${M_CAT[$key]+x}" ] || continue
         is_pickable "$key" || continue
         case "$value" in 1) M_ON[$key]=1 ;; *) M_ON[$key]=0 ;; esac
@@ -600,7 +612,7 @@ kernel_headers() {
 
 check_manifest() {
     local cat id label shown
-    for cat in $ALWAYS_CATS $PICK_CATS greeter gpu; do
+    for cat in $ALWAYS_CATS classic $PICK_CATS greeter gpu; do
         shown=0
         for id in "${M_IDS[@]}"; do
             [ "${M_CAT[$id]}" = "$cat" ] && [ "${M_ON[$id]}" = 1 ] || continue
@@ -623,6 +635,8 @@ check_manifest() {
 cat_label() {
     case "$1" in
         core)     printf 'what ZEN needs' ;;
+        shell)    printf 'ZEN Shell' ;;
+        classic)  printf 'the classic desktop' ;;
         desktop)  printf 'what the keybinds open' ;;
         system)   printf 'System' ;;
         apps)     printf 'Apps' ;;
@@ -1094,6 +1108,61 @@ build() {
     else
         dim "gtk4/libadwaita missing, skipping the settings app (pacman -S gtk4 libadwaita)"
     fi
+
+    [ "$CLASSIC" = 1 ] || build_shell
+}
+
+# shell
+
+SHELL_BUILD="target/zen-shell"
+SHELL_FONT_URL="https://raw.githubusercontent.com/google/fonts/main/ofl/googlesansflex/GoogleSansFlex%5BGRAD%2CROND%2Copsz%2Cslnt%2Cwdth%2Cwght%5D.ttf"
+SHELL_FONT_NAME="GoogleSansFlex-VariableFont_GRAD,ROND,opsz,slnt,wdth,wght.ttf"
+
+build_shell() {
+    step "Building ZEN Shell"
+    if ! have cmake || ! have ninja; then
+        warn "cmake and ninja are missing, so ZEN Shell cannot be built"
+        return 0
+    fi
+
+    local rev
+    rev="$(git rev-parse --short HEAD 2>/dev/null || printf zen)"
+    rm -rf "$SHELL_BUILD"
+    if run cmake -GNinja -S zen-shell -B "$SHELL_BUILD" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+            -DINSTALL_QSCONFDIR="$PREFIX/share/zen/shell" \
+            -DVERSION=1.0.0 -DGIT_REVISION="$rev" >/dev/null \
+        && run cmake --build "$SHELL_BUILD"; then
+        ok "ZEN Shell built"
+    else
+        rm -rf "$SHELL_BUILD"
+        warn "ZEN Shell did not build; ZEN will fall back to waybar and fuzzel"
+        [ -n "$SETUP_LOG" ] && dim "the build output is above, and the commands are in $SETUP_LOG"
+    fi
+}
+
+install_shell() {
+    [ -d "$SHELL_BUILD" ] || return 0
+    step "Installing ZEN Shell"
+    run $SUDO cmake --install "$SHELL_BUILD" >/dev/null || {
+        warn "ZEN Shell did not install"
+        return 0
+    }
+
+    local fonts="$PREFIX/share/zen/shell/assets/google-sans-flex"
+    if [ ! -f "$fonts/$SHELL_FONT_NAME" ]; then
+        local tmp
+        tmp="$(mktemp)" || return 0
+        if run curl -fsSL --retry 2 -o "$tmp" "$SHELL_FONT_URL"; then
+            $SUDO install -Dm644 "$tmp" "$fonts/$SHELL_FONT_NAME"
+        else
+            warn "could not download Google Sans Flex; the shell will use Rubik instead"
+        fi
+        rm -f "$tmp"
+    fi
+    rm -rf "$SHELL_BUILD"
+    ok "ZEN Shell installed to $PREFIX/share/zen/shell"
 }
 
 # --------------------------------------------------------------- install ----
@@ -1113,6 +1182,7 @@ install_zen() {
     $SUDO install -Dm755 resources/zen-power        "$PREFIX/bin/zen-power"
     $SUDO install -Dm755 resources/zen-ly           "$PREFIX/bin/zen-ly"
     $SUDO install -Dm755 resources/zen-polkit       "$PREFIX/bin/zen-polkit"
+    $SUDO install -Dm755 resources/zen-shell        "$PREFIX/bin/zen-shell"
     $SUDO install -Dm644 resources/default-wallpaper.jpg \
                                                     "$PREFIX/share/zen/default-wallpaper.jpg"
     for wp in resources/wallpapers/*; do
@@ -2133,7 +2203,7 @@ main() {
         install_selection
     fi
     if [ "$DO_BUILD" = 1 ]; then ensure_rust; build; fi
-    if [ "$DO_INSTALL" = 1 ]; then install_zen; fi
+    if [ "$DO_INSTALL" = 1 ]; then install_zen; install_shell; fi
     post_install_steps
 
     printf '\n%sdone%s\n' "$C_GREEN$C_BOLD" "$C_RESET"

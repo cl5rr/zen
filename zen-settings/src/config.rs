@@ -532,12 +532,12 @@ mod tests {
         let mut c = shipped();
         let shipped_startup = c.startup();
         assert!(
-            shipped_startup.iter().any(|cmd| cmd.first().is_some_and(|p| p == "waybar")),
+            shipped_startup.iter().any(|cmd| cmd.first().is_some_and(|p| p == "zen-shell")),
             "the shipped config should start the bar, got {shipped_startup:?}"
         );
 
         let wanted = vec![
-            vec!["waybar".to_owned()],
+            vec!["zen-shell".to_owned()],
             vec!["zen-wallpaper".to_owned(), "restore".to_owned()],
             vec!["something-new".to_owned(), "--flag".to_owned()],
         ];

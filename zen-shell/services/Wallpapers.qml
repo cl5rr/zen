@@ -30,12 +30,12 @@ Searcher {
     }
 
     function setRandom(): void {
-        Quickshell.execDetached(["caelestia", "wallpaper", "-r", ...smartArg]);
+        Quickshell.execDetached(["zen-wallpaper", "random"]);
     }
 
     function setWallpaper(path: string): void {
         actualCurrent = path;
-        Quickshell.execDetached(["caelestia", "wallpaper", "-f", path, ...smartArg]);
+        Quickshell.execDetached(["zen-wallpaper", "set", path]);
     }
 
     function preview(path: string): void {

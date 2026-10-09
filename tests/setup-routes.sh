@@ -147,6 +147,25 @@ expect "something new arrives on by its profile" [ "${M_ON[later]}" = 1 ]
 expect "and is marked new" [ "${M_NEW[later]:-0}" = 1 ]
 expect "what was already chosen is not marked new" [ "${M_NEW[fallback]:-0}" = 0 ]
 
+# classic
+
+printf '\nZEN Shell or the classic desktop\n\n'
+
+load_manifest
+CLASSIC=0; PROFILE=recommended; apply_profile
+expect "the shell is installed by default" [ "${M_ON[quickshell]}" = 1 ]
+expect "the classic bar is not" [ "${M_ON[waybar]}" = 0 ]
+CLASSIC=1; apply_profile
+expect "--classic drops the shell" [ "${M_ON[quickshell]}" = 0 ]
+expect "and takes the classic bar" [ "${M_ON[waybar]}" = 1 ]
+save_choices "$STUB/classic-choices"
+CLASSIC=0
+load_choices "$STUB/classic-choices"
+expect "an update remembers the classic choice" [ "$CLASSIC" = 1 ]
+expect "and keeps the shell out" [ "${M_ON[quickshell]}" = 0 ]
+CLASSIC=0
+load_manifest "$manifest"
+
 # migration
 
 printf '\nupdating from a version that never asked\n\n'
@@ -177,7 +196,7 @@ expect "it parses" [ "${#M_IDS[@]}" -gt 20 ]
 bad=""
 for id in "${M_IDS[@]}"; do
     case "${M_CAT[$id]}" in
-        core|desktop|system|apps|media|office|creative|gaming|dev|fun|greeter|gpu) ;;
+        core|desktop|shell|classic|system|apps|media|office|creative|gaming|dev|fun|greeter|gpu) ;;
         *) bad="$bad $id" ;;
     esac
 done

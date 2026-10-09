@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -u
+
+usage() {
+    cat <<'EOF'
+zen-shell: ZEN's desktop shell, and the commands that open its parts
+
+  zen-shell              start the shell
+  zen-shell launcher     open or close the app launcher
+  zen-shell dashboard    open or close the dashboard
+  zen-shell session      open or close the power menu
+  zen-shell bar          show or hide the bar
+  zen-shell lock         lock the screen
+  zen-shell restart      restart the shell
+  zen-shell running      exit 0 if the shell is running
+  zen-shell ipc ...      call the shell's IPC directly
+  zen-shell where        print which copy of the shell is used
+
+A copy in ~/.config/quickshell/zen is used instead of the installed one, so
+the shell can be edited without touching the system.
+
+Each part falls back to the classic tool when the shell is not running:
+fuzzel for the launcher, waybar for the bar, swaylock for the lock.
+EOF
+}
+
+here="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+
+shell_dir() {
+    local d
+    for d in "${ZEN_SHELL_DIR:-}" \
+             "${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/zen" \
+             "$here/share/zen/shell"; do
+        [ -n "$d" ] && [ -f "$d/shell.qml" ] && { printf '%s\n' "$d"; return 0; }
+    done
+    return 1
+}
+
+export QML_IMPORT_PATH="$here/lib/qt6/qml${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}"
+export LD_LIBRARY_PATH="$here/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+SHELL_QML=""
+if dir=$(shell_dir); then SHELL_QML="$dir/shell.qml"; fi
+
+running() {
+    [ -n "$SHELL_QML" ] && command -v qs >/dev/null 2>&1 || return 1
+    qs -p "$SHELL_QML" ipc show >/dev/null 2>&1
+}
+
+call() {
+    qs -p "$SHELL_QML" ipc call "$@" >/dev/null 2>&1
+}
+
+case "${1:-run}" in
+    run)
+        if ! command -v qs >/dev/null 2>&1 || [ -z "$SHELL_QML" ]; then
+            printf 'zen-shell: ZEN Shell is not installed; run ./setup.sh\n' >&2
+            command -v waybar >/dev/null 2>&1 && exec waybar
+            exit 1
+        fi
+        exec qs -p "$SHELL_QML"
+        ;;
+    launcher)
+        if running; then call drawers toggle launcher; else exec fuzzel; fi
+        ;;
+    dashboard)
+        running && call drawers toggle dashboard
+        ;;
+    session)
+        if running; then call drawers toggle session; else exec zen-power; fi
+        ;;
+    bar)
+        if running; then call drawers toggle bar; else pkill -SIGUSR1 -x waybar; fi
+        ;;
+    lock)
+        if running; then call lock lock; else exec swaylock; fi
+        ;;
+    restart)
+        [ -n "$SHELL_QML" ] || exit 1
+        qs -p "$SHELL_QML" kill >/dev/null 2>&1
+        setsid -f qs -p "$SHELL_QML" >/dev/null 2>&1
+        ;;
+    running)
+        running
+        ;;
+    ipc)
+        shift
+        [ -n "$SHELL_QML" ] || exit 1
+        exec qs -p "$SHELL_QML" ipc call "$@"
+        ;;
+    where)
+        [ -n "$SHELL_QML" ] && printf '%s\n' "$(dirname "$SHELL_QML")"
+        ;;
+    -h|--help|help)
+        usage
+        ;;
+    *)
+        printf 'zen-shell: unknown command: %s (try --help)\n' "$1" >&2
+        exit 1
+        ;;
+esac
