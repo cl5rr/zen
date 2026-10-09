@@ -170,7 +170,7 @@ use crate::screencasting::Screencasting;
 use crate::ui::config_error_notification::ConfigErrorNotification;
 use crate::ui::exit_confirm_dialog::{ExitConfirmDialog, ExitConfirmDialogRenderElement};
 use crate::ui::hotkey_overlay::HotkeyOverlay;
-use crate::backend::virtual_output::preview_rect;
+use crate::backend::virtual_output::{preview_rect, shows_view, view_rect, View};
 use crate::backend::VirtualOutput;
 use crate::ui::welcome::{Welcome, WelcomeRenderElement};
 use crate::ui::mru::{MruCloseRequest, WindowMruUi, WindowMruUiRenderElement};
@@ -334,6 +334,7 @@ pub struct Zen {
     pub hotkey_overlay: HotkeyOverlay,
     pub welcome: Option<Welcome>,
     pub virtual_outputs: HashMap<String, VirtualOutput>,
+    pub viewing: HashMap<String, View>,
     pub mod_tap_armed: bool,
     pub pending_mod_tap: bool,
     pub exit_confirm_dialog: ExitConfirmDialog,
@@ -1789,7 +1790,127 @@ impl State {
         Ok(())
     }
 
+    pub fn view_output(&mut self, name: Option<&str>) -> Result<(), String> {
+        let pointer = self.zen.seat.get_pointer().unwrap();
+        let pos = pointer.current_location();
+
+        let target = match name {
+            Some(name) => Some(
+                self.zen
+                    .virtual_outputs
+                    .get(name)
+                    .map(|v| v.output.clone())
+                    .ok_or_else(|| format!("{name} is not a virtual output"))?,
+            ),
+            None => None,
+        };
+
+        let viewing_now = self.zen.viewing.iter().next().map(|(k, v)| (k.clone(), v.clone()));
+        if let Some((real, view)) = viewing_now {
+            let Some(target) = target.filter(|t| t.name() != view.virtual_name) else {
+                self.zen.viewing.remove(&real);
+                self.leave_view(&real, &view);
+                return Ok(());
+            };
+            self.zen.viewing.insert(
+                real,
+                View {
+                    virtual_name: target.name(),
+                    ..view
+                },
+            );
+            self.move_cursor_to_output(&target);
+            self.zen.layout.focus_output(&target);
+            self.zen.queue_redraw_all();
+            return Ok(());
+        }
+
+        let Some(target) = target else {
+            return Ok(());
+        };
+
+        let under = self
+            .zen
+            .global_space
+            .output_under(pos)
+            .next()
+            .filter(|o| !self.zen.is_virtual_output(o))
+            .cloned();
+        let real = under
+            .clone()
+            .or_else(|| {
+                self.zen
+                    .global_space
+                    .outputs()
+                    .find(|o| !self.zen.is_virtual_output(o))
+                    .cloned()
+            })
+            .ok_or_else(|| "there is no real screen to show it on".to_owned())?;
+
+        let real_geo = self.zen.global_space.output_geometry(&real).unwrap();
+        let return_pos = if under.is_some() {
+            pos - real_geo.loc.to_f64()
+        } else {
+            (center(real_geo) - real_geo.loc).to_f64()
+        };
+
+        self.zen.viewing.insert(
+            real.name(),
+            View {
+                virtual_name: target.name(),
+                return_pos,
+            },
+        );
+        self.move_cursor_to_output(&target);
+        self.zen.layout.focus_output(&target);
+        self.zen.queue_redraw_all();
+        Ok(())
+    }
+
+    fn leave_view(&mut self, real: &str, view: &View) {
+        let out = self
+            .zen
+            .global_space
+            .outputs()
+            .find(|o| o.name() == real)
+            .or_else(|| self.zen.global_space.outputs().next())
+            .cloned();
+        if let Some(out) = out {
+            let geo = self.zen.global_space.output_geometry(&out).unwrap();
+            let pos = crate::backend::virtual_output::confine(
+                geo.loc.to_f64() + view.return_pos,
+                geo.to_f64(),
+            );
+            self.move_cursor(pos);
+            self.zen.layout.focus_output(&out);
+        }
+        self.zen.queue_redraw_all();
+    }
+
+    pub fn cycle_view(&mut self) -> Result<(), String> {
+        let mut names: Vec<String> = self.zen.virtual_outputs.keys().cloned().collect();
+        names.sort();
+        if names.is_empty() {
+            return Err("there are no virtual monitors to switch to".to_owned());
+        }
+        let next = match self.zen.viewing.values().next() {
+            None => names.first().cloned(),
+            Some(view) => names
+                .iter()
+                .position(|n| *n == view.virtual_name)
+                .and_then(|i| names.get(i + 1))
+                .cloned(),
+        };
+        self.view_output(next.as_deref())
+    }
+
     pub fn destroy_virtual_output(&mut self, name: &str) -> Result<(), String> {
+        let viewed = self
+            .zen
+            .viewing
+            .iter()
+            .find(|(_, v)| v.virtual_name == name)
+            .map(|(k, v)| (k.clone(), v.clone()));
         let Some(virtual_output) = self.zen.virtual_outputs.remove(name) else {
             return Err(format!("{name} is not a virtual output"));
         };
@@ -1802,6 +1923,9 @@ impl State {
         self.zen.ipc_outputs_changed = true;
 
         self.zen.remove_output(&output);
+        if let Some((real, view)) = viewed {
+            self.leave_view(&real, &view);
+        }
         Ok(())
     }
 
@@ -2479,6 +2603,7 @@ impl Zen {
             hotkey_overlay,
             welcome,
             virtual_outputs: HashMap::new(),
+            viewing: HashMap::new(),
             mod_tap_armed: false,
             pending_mod_tap: false,
             exit_confirm_dialog,
@@ -2762,6 +2887,8 @@ impl Zen {
             layer.layer_surface().send_close();
         }
 
+        self.viewing.remove(&output.name());
+        self.viewing.retain(|_, v| v.virtual_name != output.name());
         self.layout.remove_output(output);
         self.global_space.unmap_output(output);
         self.reposition_outputs(None);
@@ -3984,6 +4111,38 @@ impl Zen {
         } else {
             push
         };
+
+        // view
+        if shows_view(ctx.target, self.is_locked()) {
+            let shown = self
+                .viewing
+                .get(&output.name())
+                .and_then(|view| self.virtual_outputs.get(&view.virtual_name))
+                .and_then(|vo| vo.texture());
+            if let Some((texture, size)) = shown {
+                if let Some(rect) = view_rect(output_size(output), size) {
+                    let buffer = TextureBuffer::from_texture(
+                        ctx.renderer.as_gles_renderer(),
+                        texture.clone(),
+                        1.,
+                        Transform::Normal,
+                        Vec::new(),
+                    );
+                    push(
+                        PrimaryGpuTextureRenderElement(TextureRenderElement::from_texture_buffer(
+                            buffer,
+                            rect.loc,
+                            1.,
+                            None,
+                            Some(rect.size),
+                            Kind::Unspecified,
+                        ))
+                        .into(),
+                    );
+                    return;
+                }
+            }
+        }
 
         if let Some(welcome) = &self.welcome {
             if !welcome.is_done() {
@@ -6198,6 +6357,50 @@ impl Zen {
         self.virtual_outputs.get(name).is_some_and(|v| v.preview)
     }
 
+    pub fn viewer_of(&self, virtual_name: &str) -> Option<&str> {
+        self.viewing
+            .iter()
+            .find(|(_, v)| v.virtual_name == virtual_name)
+            .map(|(real, _)| real.as_str())
+    }
+
+    pub fn through_view(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
+        let Some(real) = self.global_space.output_under(pos).next() else {
+            return pos;
+        };
+        let Some(target) = self
+            .viewing
+            .get(&real.name())
+            .and_then(|v| self.virtual_outputs.get(&v.virtual_name))
+        else {
+            return pos;
+        };
+        let (Some(real_geo), Some(virt_geo)) = (
+            self.global_space.output_geometry(real),
+            self.global_space.output_geometry(&target.output),
+        ) else {
+            return pos;
+        };
+        let virt_geo = virt_geo.to_f64();
+        let Some(rect) = view_rect(output_size(real), virt_geo.size.to_physical(1.).to_i32_round())
+        else {
+            return pos;
+        };
+        let local = pos - real_geo.loc.to_f64() - rect.loc;
+        let x = (local.x / rect.size.w).clamp(0., 1.);
+        let y = (local.y / rect.size.h).clamp(0., 1.);
+        crate::backend::virtual_output::confine(
+            Point::from((virt_geo.loc.x + x * virt_geo.size.w, virt_geo.loc.y + y * virt_geo.size.h)),
+            virt_geo,
+        )
+    }
+
+    pub fn viewed_rect(&self, pos: Point<f64, Logical>) -> Option<Rectangle<f64, Logical>> {
+        let output = self.global_space.output_under(pos).next()?;
+        self.viewer_of(&output.name())?;
+        self.global_space.output_geometry(output).map(|g| g.to_f64())
+    }
+
     pub fn render_virtual_output(
         &mut self,
         backend: &mut Backend,
@@ -6212,7 +6415,7 @@ impl Zen {
             .unwrap_or(RenderResult::Skipped);
 
         let interval = virtual_output.refresh_interval();
-        let previewed = virtual_output.preview;
+        let previewed = virtual_output.preview || self.viewer_of(&output.name()).is_some();
         self.virtual_outputs.insert(output.name(), virtual_output);
 
         if previewed && matches!(result, RenderResult::Submitted) {

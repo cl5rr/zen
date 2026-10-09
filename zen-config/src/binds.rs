@@ -371,6 +371,9 @@ pub enum Action {
     PanCameraDown,
     FitAllWindows,
     CameraMaximize,
+    CycleView,
+    ViewOutput(#[knuffel(argument)] String),
+    StopView,
     #[knuffel(skip)]
     FlyToWindow(u64),
     #[knuffel(skip)]
@@ -732,6 +735,9 @@ impl From<zen_ipc::Action> for Action {
             zen_ipc::Action::PanCameraDown {} => Self::PanCameraDown,
             zen_ipc::Action::FitAllWindows {} => Self::FitAllWindows,
             zen_ipc::Action::CameraMaximize {} => Self::CameraMaximize,
+            zen_ipc::Action::CycleView {} => Self::CycleView,
+            zen_ipc::Action::ViewOutput { output } => Self::ViewOutput(output),
+            zen_ipc::Action::StopView {} => Self::StopView,
             zen_ipc::Action::FlyToWindow { id } => Self::FlyToWindow(id),
             zen_ipc::Action::FlyToIsland { id } => Self::FlyToIsland(id),
             zen_ipc::Action::FlyToPoint { x, y } => Self::FlyToPoint(x, y),

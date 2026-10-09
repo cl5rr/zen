@@ -47,6 +47,42 @@ pub fn preview_rect(
     Some(Rectangle::new(Point::from((x, y)), Size::from((w, h))))
 }
 
+// view
+pub fn view_rect(
+    host: Size<f64, Logical>,
+    virtual_size: Size<i32, Physical>,
+) -> Option<Rectangle<f64, Logical>> {
+    if host.w <= 0. || host.h <= 0. || virtual_size.w <= 0 || virtual_size.h <= 0 {
+        return None;
+    }
+    let vw = f64::from(virtual_size.w);
+    let vh = f64::from(virtual_size.h);
+    let scale = (host.w / vw).min(host.h / vh);
+    let w = vw * scale;
+    let h = vh * scale;
+    Some(Rectangle::new(
+        Point::from(((host.w - w) / 2., (host.h - h) / 2.)),
+        Size::from((w, h)),
+    ))
+}
+
+pub fn confine(pos: Point<f64, Logical>, rect: Rectangle<f64, Logical>) -> Point<f64, Logical> {
+    Point::from((
+        pos.x.clamp(rect.loc.x, rect.loc.x + (rect.size.w - 1.).max(0.)),
+        pos.y.clamp(rect.loc.y, rect.loc.y + (rect.size.h - 1.).max(0.)),
+    ))
+}
+
+pub fn shows_view(target: crate::render_helpers::RenderTarget, locked: bool) -> bool {
+    target == crate::render_helpers::RenderTarget::Output && !locked
+}
+
+#[derive(Debug, Clone)]
+pub struct View {
+    pub virtual_name: String,
+    pub return_pos: Point<f64, Logical>,
+}
+
 pub struct VirtualOutput {
     pub output: Output,
     pub id: OutputId,
@@ -95,6 +131,10 @@ impl VirtualOutput {
         }
     }
 
+    pub fn texture(&self) -> Option<(&GlesTexture, Size<i32, Physical>)> {
+        Some((self.texture.as_ref()?, self.size))
+    }
+
     pub fn preview_texture(&self) -> Option<(&GlesTexture, Size<i32, Physical>)> {
         if !self.preview {
             return None;
@@ -118,7 +158,8 @@ impl VirtualOutput {
             target: RenderTarget::Output,
             xray: None,
         };
-        let elements = zen.render_to_vec(ctx, &self.output, false);
+        let viewed = zen.viewer_of(&self.output.name()).is_some();
+        let elements = zen.render_to_vec(ctx, &self.output, viewed);
 
         if self.texture.is_none() {
             let buffer_size = self.size.to_logical(1).to_buffer(1, Transform::Normal);

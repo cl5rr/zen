@@ -337,3 +337,171 @@ fn the_tty_backend_puts_them_back_after_a_refresh() {
         "the map is replaced without putting the virtual outputs back into it"
     );
 }
+
+// view
+fn pointer_at(f: &mut Fixture) -> smithay::utils::Point<f64, smithay::utils::Logical> {
+    f.zen().seat.get_pointer().unwrap().current_location()
+}
+
+fn geometry(f: &mut Fixture, name: &str) -> smithay::utils::Rectangle<f64, smithay::utils::Logical> {
+    let zen = f.zen();
+    let output = zen.global_space.outputs().find(|o| o.name() == name).cloned().unwrap();
+    zen.global_space.output_geometry(&output).unwrap().to_f64()
+}
+
+#[test]
+fn viewing_moves_you_into_the_virtual_monitor_and_back() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.zen_state().create_virtual_output("stream", 1280, 720, 60_000, false).unwrap();
+    let real = f.zen().global_space.outputs().find(|o| o.name() != "stream").unwrap().name();
+    let home = geometry(&mut f, &real).loc + smithay::utils::Point::from((300., 200.));
+
+    f.zen_state().move_cursor(home);
+    assert!(f.zen_state().view_output(Some("stream")).is_ok());
+
+    assert_eq!(f.zen().viewer_of("stream"), Some(real.as_str()));
+    let inside = geometry(&mut f, "stream");
+    assert!(inside.contains(pointer_at(&mut f)), "the pointer should be on the virtual monitor");
+    let at = pointer_at(&mut f);
+    assert!(f.zen().viewed_rect(at).is_some());
+
+    assert!(f.zen_state().view_output(None).is_ok());
+    assert!(f.zen().viewer_of("stream").is_none());
+    assert_eq!(pointer_at(&mut f), home, "and it comes back where it was");
+}
+
+#[test]
+fn cycling_goes_through_every_virtual_monitor_then_home() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.zen_state().create_virtual_output("a", 1280, 720, 60_000, false).unwrap();
+    f.zen_state().create_virtual_output("b", 800, 600, 60_000, false).unwrap();
+
+    f.zen_state().cycle_view().unwrap();
+    assert!(f.zen().viewer_of("a").is_some());
+    f.zen_state().cycle_view().unwrap();
+    assert!(f.zen().viewer_of("a").is_none());
+    assert!(f.zen().viewer_of("b").is_some());
+    assert!(geometry(&mut f, "b").contains(pointer_at(&mut f)));
+    f.zen_state().cycle_view().unwrap();
+    assert!(f.zen().viewing.is_empty(), "the last one hands the screen back");
+}
+
+#[test]
+fn switching_between_virtual_monitors_still_returns_home() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.zen_state().create_virtual_output("a", 1280, 720, 60_000, false).unwrap();
+    f.zen_state().create_virtual_output("b", 800, 600, 60_000, false).unwrap();
+
+    let real = f.zen().global_space.outputs().find(|o| !o.name().starts_with(['a', 'b'])).unwrap().name();
+    let home = geometry(&mut f, &real).loc + smithay::utils::Point::from((300., 200.));
+    f.zen_state().move_cursor(home);
+    f.zen_state().view_output(Some("a")).unwrap();
+    f.zen_state().view_output(Some("b")).unwrap();
+    assert!(f.zen().viewer_of("b").is_some());
+    f.zen_state().view_output(Some("b")).unwrap();
+    assert!(f.zen().viewing.is_empty(), "asking for the one you are on switches back");
+    assert_eq!(pointer_at(&mut f), home);
+}
+
+#[test]
+fn cycling_with_nothing_to_view_says_so() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    assert!(f.zen_state().cycle_view().is_err());
+    assert!(f.zen_state().view_output(Some("never-made")).is_err());
+}
+
+#[test]
+fn destroying_the_viewed_monitor_gives_the_screen_back() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.zen_state().create_virtual_output("stream", 1280, 720, 60_000, false).unwrap();
+    f.zen_state().view_output(Some("stream")).unwrap();
+
+    f.zen_state().destroy_virtual_output("stream").unwrap();
+    assert!(f.zen().viewing.is_empty());
+    let at = pointer_at(&mut f);
+    assert!(
+        f.zen().global_space.output_under(at).next().is_some(),
+        "the pointer was left in a hole: {at:?}"
+    );
+}
+
+#[test]
+fn shares_of_the_real_screen_never_show_the_virtual_one() {
+    use crate::backend::virtual_output::shows_view;
+    use crate::render_helpers::RenderTarget;
+
+    assert!(shows_view(RenderTarget::Output, false));
+    assert!(!shows_view(RenderTarget::Screencast, false));
+    assert!(!shows_view(RenderTarget::ScreenCapture, false));
+    assert!(!shows_view(RenderTarget::Output, true), "the lock screen always wins");
+}
+
+#[test]
+fn the_view_keeps_its_shape() {
+    use crate::backend::virtual_output::view_rect;
+    use smithay::utils::Size;
+
+    let full = view_rect(Size::from((1920., 1080.)), Size::from((1280, 720))).unwrap();
+    assert_eq!(full.loc, (0., 0.).into());
+    assert_eq!(full.size, (1920., 1080.).into());
+
+    let boxed = view_rect(Size::from((1920., 1080.)), Size::from((1080, 1080))).unwrap();
+    assert_eq!(boxed.size, (1080., 1080.).into());
+    assert_eq!(boxed.loc, (420., 0.).into());
+
+    assert!(view_rect(Size::from((1920., 1080.)), Size::from((0, 720))).is_none());
+}
+
+#[test]
+fn the_pointer_stays_inside_while_viewing() {
+    use crate::backend::virtual_output::confine;
+    use smithay::utils::Rectangle;
+
+    let rect = Rectangle::new((2000., 0.).into(), (1280., 720.).into());
+    assert_eq!(confine((10., 10.).into(), rect), (2000., 10.).into());
+    assert_eq!(confine((5000., 900.).into(), rect), (3279., 719.).into());
+    assert_eq!(confine((2500., 300.).into(), rect), (2500., 300.).into());
+}
+
+#[test]
+fn an_absolute_pointer_lands_where_you_see_it() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.zen_state().create_virtual_output("stream", 1280, 720, 60_000, false).unwrap();
+    let real = f.zen().global_space.outputs().find(|o| o.name() != "stream").unwrap().name();
+    let screen = geometry(&mut f, &real);
+    let virt = geometry(&mut f, "stream");
+
+    use smithay::utils::Point;
+    let middle = screen.loc + Point::from((screen.size.w / 2., screen.size.h / 2.));
+    assert_eq!(f.zen().through_view(middle), middle, "nothing changes until you switch");
+
+    f.zen_state().view_output(Some("stream")).unwrap();
+    let landed = f.zen().through_view(middle);
+    assert_eq!(landed, virt.loc + Point::from((virt.size.w / 2., virt.size.h / 2.)));
+    let corner = f.zen().through_view(screen.loc);
+    assert_eq!(corner, virt.loc);
+}
+
+#[test]
+fn the_screen_draws_the_view_only_for_itself() {
+    let src = include_str!("../state.rs");
+    let inner = src.find("fn render_inner<").expect("render_inner moved; check this test");
+    let body = &src[inner..inner + 2000];
+    assert!(
+        body.contains("if shows_view(ctx.target, self.is_locked())"),
+        "render_inner draws the view without asking who it is drawing for"
+    );
+}
+
+#[test]
+fn pointer_motion_is_kept_on_the_view() {
+    let src = include_str!("../input/mod.rs");
+    assert!(src.contains("if let Some(rect) = self.zen.viewed_rect(pos) {"));
+    assert!(src.contains("let pos = self.zen.through_view(pos);"));
+}

@@ -2271,6 +2271,19 @@ impl State {
                     self.zen.queue_redraw_all();
                 }
             }
+            Action::CycleView => {
+                if let Err(err) = self.cycle_view() {
+                    warn!("{err}");
+                }
+            }
+            Action::ViewOutput(name) => {
+                if let Err(err) = self.view_output(Some(&name)) {
+                    warn!("{err}");
+                }
+            }
+            Action::StopView => {
+                let _ = self.view_output(None);
+            }
             Action::FlyToWindow(id) => {
                 let window = self.zen.layout.windows().find(|(_, m)| m.id().get() == id);
                 let window = window.map(|(_, m)| m.window.clone());
@@ -2521,6 +2534,11 @@ impl State {
             }
         }
 
+        // view
+        if let Some(rect) = self.zen.viewed_rect(pos) {
+            new_pos = crate::backend::virtual_output::confine(new_pos, rect);
+        }
+
         // hidden outputs
         if let Some(from) = self
             .zen
@@ -2723,6 +2741,7 @@ impl State {
         }) else {
             return;
         };
+        let pos = self.zen.through_view(pos);
 
         let serial = SERIAL_COUNTER.next_serial();
 

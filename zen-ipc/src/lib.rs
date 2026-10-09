@@ -535,6 +535,12 @@ pub enum Action {
     PanCameraDown {},
     FitAllWindows {},
     CameraMaximize {},
+    CycleView {},
+    ViewOutput {
+        #[cfg_attr(feature = "clap", arg())]
+        output: String,
+    },
+    StopView {},
     FlyToWindow {
         #[cfg_attr(feature = "clap", arg(long))]
         id: u64,

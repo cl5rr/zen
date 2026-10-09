@@ -427,6 +427,9 @@ impl SessionLockHandler for State {
     }
 
     fn lock(&mut self, confirmation: SessionLocker) {
+        if !self.zen.viewing.is_empty() {
+            let _ = self.view_output(None);
+        }
         self.zen.lock(confirmation);
     }
 

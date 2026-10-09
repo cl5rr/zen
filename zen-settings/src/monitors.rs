@@ -292,31 +292,31 @@ fn virtual_card(state: &Rc<App>, screens: &[Screen], reload: &Refresh) -> gtk::W
             card.append(&row(&screen.name, &where_, remove.upcast()));
             separator(&card);
 
-            let show = gtk::Switch::builder()
+            let go = gtk::Button::builder()
+                .label("Switch to it")
                 .valign(Align::Center)
-                .active(screen.preview.unwrap_or(false))
+                .css_classes(["suggested-action"])
                 .build();
             {
                 let state = state.clone();
                 let name = screen.name.clone();
-                let reload = reload.clone();
-                show.connect_state_set(move |_, on| {
-                    let arg: &[&str] = if on { &["preview"] } else { &["preview", "--off"] };
-                    run_output(
-                        &state,
-                        &name,
-                        arg,
-                        if on { "showing it on screen" } else { "hidden again" },
-                        &reload,
-                    );
-                    glib::Propagation::Proceed
+                go.connect_clicked(move |_| {
+                    let out = Command::new("zen")
+                        .args(["msg", "action", "view-output", &name])
+                        .output();
+                    match out {
+                        Ok(out) if out.status.success() => {
+                            state.say("Super+` brings you back", "good")
+                        }
+                        Ok(_) => state.say("zen msg refused that", "bad"),
+                        Err(_) => state.say("zen is not on PATH", "bad"),
+                    }
                 });
             }
             card.append(&row(
-                "Show it on screen",
-                "Draws what this monitor is rendering in the corner of your real screens, \
-                 so you can see what a capture would get",
-                show.upcast(),
+                "Show it on this screen",
+                "Your screen becomes this monitor until you press Super+`.                  Sharing your screen still shares your screen; share this monitor to show it",
+                go.upcast(),
             ));
             separator(&card);
         }

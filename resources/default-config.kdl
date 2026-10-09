@@ -685,9 +685,11 @@ binds {
     // is installed and the blurred wallpaper otherwise.
     Mod+Shift+Escape hotkey-overlay-title="Lock the Screen" { spawn "zen-lock"; }
 
-    // waybar has no way to reveal itself when the pointer reaches the edge, so hiding
-    // the bar has to be a toggle. SIGUSR1 is what waybar listens for.
     Mod+B hotkey-overlay-title="Show or Hide the Bar" { spawn "zen-shell" "bar"; }
+
+    // Switches this screen to each virtual monitor in turn, then back to itself.
+    // Sharing this screen keeps showing this screen; share the virtual one to show it.
+    Mod+Grave hotkey-overlay-title="Switch to a Virtual Monitor" { cycle-view; }
 
     // Use spawn-sh to run a shell command. Do this if you need pipes, multiple commands, etc.
     // Note: the entire command goes as a single argument. It's passed verbatim to `sh -c`.
