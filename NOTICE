@@ -35,3 +35,25 @@ layer and the IPC. Those parts carry niri's copyright above.
 
 This is a modified version. It is not endorsed by, affiliated with, or supported
 by the niri project, and problems with ZEN should not be reported to them.
+
+
+ZEN Shell
+---------
+
+zen-shell/ is a fork of Caelestia's shell, vendored at commit
+454f46da16ae75cc57f34adf48dea74db0fa5175.
+
+    caelestia-dots/shell
+    Copyright (C) the Caelestia contributors
+    https://github.com/caelestia-dots/shell
+    Licensed under the GNU General Public License, version 3.
+
+The first commit that adds zen-shell/ is Caelestia unchanged, minus its bundled
+wallpaper and font. Every change since is ZEN's: the Hyprland service replaced by
+one that speaks ZEN's IPC, a ZEN focus grab and shortcuts, islands and the
+minimap, and the Material Glass style. Those parts carry ZEN's copyright above,
+and the rest carries Caelestia's. Its license is kept at zen-shell/LICENSE.
+
+This is a modified version. It is not endorsed by, affiliated with, or supported
+by the Caelestia project, and problems with ZEN Shell should not be reported to
+them.
