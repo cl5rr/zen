@@ -172,6 +172,7 @@ gestures {
 // spans the screen is not free, and the pills read fine without it.
 layer-rule {
     match namespace="^caelestia"
+    match namespace="^zen-greeter-glass$"
     background-effect {
         glass true
         blur true

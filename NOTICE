@@ -37,6 +37,19 @@ This is a modified version. It is not endorsed by, affiliated with, or supported
 by the niri project, and problems with ZEN should not be reported to them.
 
 
+ZEN greeter
+-----------
+
+The handwriting in resources/greeter/Script.js is converted from the Hershey
+script font (scripts.jhf, via github.com/kamalmostafa/hershey-fonts).
+
+- The Hershey Fonts were originally created by Dr. A. V. Hershey while working
+  at the U. S. National Bureau of Standards.
+- The format of the Font data in this distribution was originally created by
+  James Hurt, Cognition, Inc., 900 Technology Park Drive, Billerica, MA 01821
+  (mit-eddie!ci-dandelion!hurt).
+
+
 ZEN Shell
 ---------
 

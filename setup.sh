@@ -118,8 +118,9 @@ Arch Linux and Arch-based distributions only.
   --deps-only        Install missing dependencies and exit.
   --build-only       Skip dependency handling; just build.
   --install          Install ZEN after building (needs root for PREFIX).
-  --greeter WHICH    Set up a login screen: ly, greetd, or none. Choosing ly
-                     removes greetd first, since both want VT 1.
+  --greeter WHICH    Set up a login screen: zen, ly, greetd, or none. zen is
+                     ZEN's own glass greeter on greetd. Choosing ly removes
+                     greetd first, since both want VT 1.
   --debug            Build the debug profile instead of release.
   --with-visual-tests
                      Also build zen-visual-tests, the shader iteration harness.
@@ -1183,6 +1184,10 @@ install_zen() {
     $SUDO install -Dm755 resources/zen-ly           "$PREFIX/bin/zen-ly"
     $SUDO install -Dm755 resources/zen-polkit       "$PREFIX/bin/zen-polkit"
     $SUDO install -Dm755 resources/zen-shell        "$PREFIX/bin/zen-shell"
+    $SUDO install -Dm755 resources/zen-greeter      "$PREFIX/bin/zen-greeter"
+    for part in greeter.qml Script.js zen.kdl; do
+        $SUDO install -Dm644 "resources/greeter/$part" "$PREFIX/share/zen/greeter/$part"
+    done
     $SUDO install -Dm644 resources/default-wallpaper.jpg \
                                                     "$PREFIX/share/zen/default-wallpaper.jpg"
     for wp in resources/wallpapers/*; do
@@ -1952,17 +1957,23 @@ seed_wallpapers() {
 
 install_greeter() {
     if [ "$UI_TTY" = 1 ] && [ "$GREETER" = ask ]; then
-        ui_menu "Which login screen?"             "Ly    (a small TTY greeter, no GTK, no Wayland session of its own)"             "greetd + ReGreet  (graphical, heavier, needs cage)"             "Skip" || return 0
+        ui_menu "Which login screen?" \
+            "ZEN greeter  (glass, written welcome, runs on greetd)" \
+            "Ly    (a small TTY greeter, no GTK, no Wayland session of its own)" \
+            "greetd + ReGreet  (graphical, heavier, needs cage)" \
+            "Skip" || return 0
         case "$UI_CHOICE" in
-            0) GREETER=ly ;;
-            1) GREETER=greetd ;;
+            0) GREETER=zen ;;
+            1) GREETER=ly ;;
+            2) GREETER=greetd ;;
             *) return 0 ;;
         esac
     fi
 
     case "$GREETER" in
+        zen|ask) install_greeter_zen ;;
         ly) install_greeter_ly ;;
-        greetd|ask) install_greeter_greetd ;;
+        greetd) install_greeter_greetd ;;
         none) return 0 ;;
     esac
 }
@@ -1987,6 +1998,57 @@ install_greeter_ly() {
 
     ok "Ly installed"
     greeter_epilogue "ly"
+}
+
+GREETD_DIR="${GREETD_DIR:-/etc/greetd}"
+GREETER_CACHE="${GREETER_CACHE:-/var/cache/zen-greeter}"
+
+zen_greetd_config() {
+    printf '%s\n' \
+        '[terminal]' \
+        'vt = 1' \
+        '' \
+        '[default_session]' \
+        "command = \"$PREFIX/bin/zen-greeter\"" \
+        'user = "greeter"'
+}
+
+install_greeter_zen() {
+    step "Installing the login screen"
+    dim "greetd runs the login, ZEN draws it: the same glass as your desktop"
+
+    present greetd || install_ids greetd
+    if ! present greetd; then
+        warn "greetd did not install, so there is nothing to configure"
+        [ -n "$SETUP_LOG" ] && dim "what pacman said is in $SETUP_LOG"
+        return 1
+    fi
+    if [ ! -x "$PREFIX/bin/zen-greeter" ] || [ ! -f "$PREFIX/share/zen/greeter/greeter.qml" ]; then
+        warn "the ZEN greeter is not installed yet; run ./setup.sh --install first"
+        return 1
+    fi
+
+    need_root
+    if [ -f "$GREETD_DIR/config.toml" ] && ! grep -q zen-greeter "$GREETD_DIR/config.toml" 2>/dev/null; then
+        $SUDO cp "$GREETD_DIR/config.toml" "$GREETD_DIR/config.toml.bak"
+        dim "existing config saved as $GREETD_DIR/config.toml.bak"
+    fi
+    $SUDO mkdir -p "$GREETD_DIR"
+    zen_greetd_config | $SUDO tee "$GREETD_DIR/config.toml" >/dev/null
+
+    $SUDO mkdir -p "$GREETER_CACHE"
+    if id greeter >/dev/null 2>&1; then
+        $SUDO chown greeter "$GREETER_CACHE" 2>/dev/null || true
+    fi
+
+    if have systemctl && systemctl is-enabled ly@tty2.service >/dev/null 2>&1; then
+        info "Ly is enabled too; turn it off once the ZEN greeter works:"
+        info "  ${C_BOLD}sudo systemctl disable ly@tty2.service${C_RESET}"
+    fi
+
+    ok "greetd configured for the ZEN greeter"
+    dim "try it first without logging out: ${C_BOLD}zen-greeter --preview${C_RESET}"
+    greeter_epilogue "greetd"
 }
 
 install_greeter_greetd() {
@@ -2099,12 +2161,14 @@ SELECTION_SET=0
 
 pick_greeter() {
     ui_menu "Set up a login screen?" \
+        "ZEN greeter  glass, a written welcome, same look as the desktop" \
         "Ly     a small TTY greeter, nothing else to install" \
         "greetd + ReGreet  graphical, heavier, needs cage" \
         "No, I will start ZEN from a TTY" || return 1
     case "$UI_CHOICE" in
-        0) W_GREETER=1; GREETER=ly ;;
-        1) W_GREETER=1; GREETER=greetd ;;
+        0) W_GREETER=1; GREETER=zen ;;
+        1) W_GREETER=1; GREETER=ly ;;
+        2) W_GREETER=1; GREETER=greetd ;;
         *) W_GREETER=0 ;;
     esac
 }

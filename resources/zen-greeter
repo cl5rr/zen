@@ -1,0 +1,24 @@
+#!/bin/sh
+here="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+share="$here/share/zen/greeter"
+
+export ZEN_SESSION="${ZEN_SESSION:-$here/bin/zen-session}"
+export QT_QPA_PLATFORM=wayland
+export XCURSOR_THEME="${XCURSOR_THEME:-Adwaita}"
+[ -d "$here/lib/qt6/qml" ] && export QML_IMPORT_PATH="$here/lib/qt6/qml${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}"
+
+case "${1:-}" in
+    --shell)
+        exec qs -p "$share/greeter.qml"
+        ;;
+    --preview)
+        exec qs -p "$share/greeter.qml"
+        ;;
+    -h | --help)
+        echo "usage: zen-greeter            run the login screen (greetd does this)"
+        echo "       zen-greeter --preview  try it inside your session; any password closes it"
+        exit 0
+        ;;
+esac
+
+exec zen -c "$share/zen.kdl"

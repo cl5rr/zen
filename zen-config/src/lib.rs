@@ -2609,6 +2609,17 @@ mod tests {
         +                    at_startup: None,
         +                    layer: None,
         +                },
+        +                Match {
+        +                    namespace: Some(
+        +                        RegexEq(
+        +                            Regex(
+        +                                "^zen-greeter-glass$",
+        +                            ),
+        +                        ),
+        +                    ),
+        +                    at_startup: None,
+        +                    layer: None,
+        +                },
         +            ],
         +            excludes: [],
         +            opacity: None,

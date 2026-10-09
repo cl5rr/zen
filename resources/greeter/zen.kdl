@@ -1,0 +1,27 @@
+welcome {
+    off
+}
+
+hotkey-overlay {
+    skip-at-startup
+}
+
+prefer-no-csd
+
+cursor {
+    hide-after-inactive-ms 3000
+}
+
+layer-rule {
+    match namespace="^zen-greeter-glass$"
+    background-effect {
+        glass true
+        blur true
+        alpha-mask true
+    }
+}
+
+binds {
+}
+
+spawn-sh-at-startup "zen-greeter --shell; zen msg action quit --skip-confirmation"
