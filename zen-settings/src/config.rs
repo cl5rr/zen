@@ -216,6 +216,7 @@ fn selects(node: &KdlNode, selector: Option<&str>) -> bool {
     let Some((prop, want)) = selector.split_once('=') else {
         return false;
     };
+    let want = want.trim_end_matches('*');
     match_nodes(node).any(|m| {
         m.get(prop).is_some_and(|entry| match entry.value() {
             KdlValue::Bool(b) => b.to_string() == want,
@@ -233,7 +234,10 @@ fn add_match(node: &mut KdlNode, selector: &str, depth: usize) {
     let (value, repr) = match want.parse::<bool>() {
         Ok(flag) => (KdlValue::Bool(flag), flag.to_string()),
         Err(_) => {
-            let pattern = format!("^{want}$");
+            let pattern = match want.strip_suffix('*') {
+                Some(prefix) => format!("^{prefix}"),
+                None => format!("^{want}$"),
+            };
             (KdlValue::String(pattern.clone()), format!("{pattern:?}"))
         }
     };
@@ -751,6 +755,11 @@ impl Config {
                     .and_then(|e| e.value().as_string())
                     .is_some_and(|n| n == name)
         })
+    }
+
+    #[cfg(test)]
+    pub fn text(&self) -> String {
+        self.doc.to_string()
     }
 
     #[cfg(test)]

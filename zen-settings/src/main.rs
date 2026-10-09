@@ -5,6 +5,7 @@ mod lists;
 mod monitors;
 mod require;
 mod spec;
+mod style;
 mod wallpaper;
 
 use std::cell::RefCell;
@@ -110,6 +111,7 @@ fn build(app: &adw::Application) {
         .hexpand(true)
         .build();
 
+    stack.add_named(&style::page(&state), Some("Style"));
     for page in PAGES {
         stack.add_named(&build_page(&state, page), Some(page.name));
     }
@@ -166,7 +168,8 @@ fn build_sidebar(stack: &gtk::Stack) -> gtk::Widget {
         .selection_mode(gtk::SelectionMode::Single)
         .build();
 
-    let mut names: Vec<&str> = PAGES.iter().map(|p| p.name).collect();
+    let mut names: Vec<&str> = vec!["Style"];
+    names.extend(PAGES.iter().map(|p| p.name));
     names.push("Monitors");
     names.push("Keybinds");
     names.push("Startup apps");

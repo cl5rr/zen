@@ -525,3 +525,20 @@ scale value {
     font-size: 12px;
     font-feature-settings: "tnum";
 }
+
+.style-card {
+    padding: 10px;
+    border-radius: 16px;
+    background: alpha(currentColor, 0.04);
+    border: 2px solid transparent;
+}
+
+.style-card:checked {
+    border-color: @accent_color;
+    background: alpha(@accent_color, 0.10);
+}
+
+.style-title {
+    font-weight: 600;
+    font-size: 1.05em;
+}
