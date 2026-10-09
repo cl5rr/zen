@@ -1733,6 +1733,7 @@ apply_designs() {
 post_install_steps() {
     if [ "$RESET_CONFIG" = 1 ]; then reset_user_config; apply_designs; fi
     if [ "$W_CONFIG" = 1 ]; then write_user_config; fi
+    if [ "$DO_INSTALL" = 1 ] || [ "$DO_UPDATE" = 1 ]; then migrate_to_shell; fi
     if [ "$W_CONFIG" = 1 ] || { [ "$DO_INSTALL" = 1 ] && [ "$DO_UPDATE" = 0 ]; }; then
         apply_designs
     fi
@@ -1842,6 +1843,49 @@ migrate_waybar_include() {
         mv "$dst.bak" "$dst"
         warn "could not add the module include to $dst; add it by hand"
     fi
+}
+
+# shell migration
+
+SHELL_RULE='layer-rule {
+    match namespace="^caelestia"
+    background-effect {
+        glass true
+        blur true
+        alpha-mask true
+    }
+}'
+
+migrate_to_shell() {
+    local dst="${1:-${XDG_CONFIG_HOME:-$HOME/.config}/zen/config.kdl}"
+    [ -f "$dst" ] || return 0
+    [ "$CLASSIC" = 1 ] && return 0
+
+    local tmp
+    tmp="$(mktemp)" || return 0
+    sed -E \
+        -e 's|^([[:space:]]*)spawn-at-startup "waybar"[[:space:]]*$|\1spawn-at-startup "zen-shell"|' \
+        -e 's|\{ spawn "fuzzel"; \}|{ spawn "zen-shell" "launcher"; }|' \
+        -e 's|\{ spawn-sh "pkill -SIGUSR1 -x waybar"; \}|{ spawn "zen-shell" "bar"; }|' \
+        "$dst" > "$tmp"
+    if ! grep -q 'namespace="^caelestia' "$tmp"; then
+        printf '\n%s\n' "$SHELL_RULE" >> "$tmp"
+    fi
+
+    if cmp -s "$dst" "$tmp"; then
+        rm -f "$tmp"
+        return 0
+    fi
+
+    local backup
+    backup="$dst.$(date +%Y%m%d-%H%M%S).bak"
+    cp "$dst" "$backup" || { rm -f "$tmp"; return 0; }
+    step "Moving your config to ZEN Shell"
+    diff "$dst" "$tmp" | grep -E '^[<>]' | sed 's/^/      /' | head -12 || true
+    cat "$tmp" > "$dst"
+    rm -f "$tmp"
+    ok "your old config is at $backup"
+    dim "ZEN reloads it live; ./setup.sh --classic puts waybar back"
 }
 
 theme_file() {

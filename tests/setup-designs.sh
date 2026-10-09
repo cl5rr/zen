@@ -71,6 +71,52 @@ W_CONFIG=1
 post_install_steps >/dev/null 2>&1
 is_there "the waybar config, on the config path" "$XDG_CONFIG_HOME/waybar/config.jsonc"
 
+printf '\nan old config moves to ZEN Shell\n\n'
+
+old="$XDG_CONFIG_HOME/zen/old.kdl"
+if git show 31966e64:resources/default-config.kdl > "$old" 2>/dev/null; then
+    CLASSIC=0
+    migrate_to_shell "$old" >/dev/null 2>&1
+    expect_in() {
+        if grep -qF -- "$2" "$old"; then say_ok "$1"; else say_no "$1: no '$2'"; fi
+    }
+    expect_not_in() {
+        if grep -qF -- "$2" "$old"; then say_no "$1: still has '$2'"; else say_ok "$1"; fi
+    }
+    expect_in "the shell starts with the session" 'spawn-at-startup "zen-shell"'
+    expect_not_in "waybar no longer does" 'spawn-at-startup "waybar"'
+    expect_in "Mod+Space opens the shell launcher" 'Mod+Space hotkey-overlay-title="Run an Application" { spawn "zen-shell" "launcher"; }'
+    expect_in "Mod+B toggles the shell bar" '{ spawn "zen-shell" "bar"; }'
+    expect_in "the shell layers get glass" 'namespace="^caelestia"'
+    if ls "$old".*.bak >/dev/null 2>&1; then say_ok "the old config is kept"; else say_no "the old config is kept: no backup"; fi
+
+    before="$(cat "$old")"
+    migrate_to_shell "$old" >/dev/null 2>&1
+    if [ "$(cat "$old")" = "$before" ]; then
+        say_ok "running it again changes nothing"
+    else
+        say_no "running it again changes nothing: it changed"
+    fi
+    if [ "$(grep -c 'namespace="^caelestia"' "$old")" = 1 ]; then
+        say_ok "the glass rule is added once"
+    else
+        say_no "the glass rule is added once"
+    fi
+
+    cp "$old" "$old.classic"
+    CLASSIC=1
+    printf 'spawn-at-startup "waybar"\n' > "$old.classic"
+    migrate_to_shell "$old.classic" >/dev/null 2>&1
+    if grep -q 'spawn-at-startup "waybar"' "$old.classic"; then
+        say_ok "classic configs are left alone"
+    else
+        say_no "classic configs are left alone: it was migrated"
+    fi
+    CLASSIC=0
+else
+    say_ok "no git history here, skipping the migration check"
+fi
+
 printf '\n'
 PKG_MGR=pacman
 M_IDS+=(unreachable)
